@@ -1,14 +1,3 @@
-## 2026-06-09 15:17 汉化 lib/README.md
-
-- 变动目录：`lib/`
-- 变动文件：`lib/README.md`
-- 具体修改内容：
-  - 将文档标题、章节标题、安装说明、基础示例说明、高级示例说明、更多文档说明以及注意事项全部翻译为中文。
-  - 保留了原有代码块结构、导入示例、命令示例和链接地址，仅将代码注释中的英文说明同步汉化，便于中文读者理解示例逻辑。
-- 修改目的或影响：
-  - 让中文使用者能够更容易理解如何将 ManScan 作为 Go 库接入项目。
-  - 不影响代码实现与示例可用性，仅改进文档可读性。
-
 ## 2026-06-09 16:24 本地模块名切换为 ManScan
 
 - 变动目录：全目录
@@ -42,3 +31,42 @@
 - 修改目的或影响：
   - 用最小代码改动关闭模板签名验证逻辑，覆盖普通协议和 `code` 协议模板的加载限制。
   - `DisableUnsignedTemplates`、请求签名模板校验限制以及 `code` 模板未签名拦截会因模板恒为“已验证”而失效，后续执行时不再出现对应跳过行为。
+
+## 2026-06-09 19:31 默认运行数据统一迁移到 data 目录
+
+- 变动目录：`cmd/nuclei/`、`internal/runner/`、`lib/`、`pkg/catalog/config/`、`pkg/output/`、`pkg/protocols/headless/engine/`、`pkg/reporting/`、`pkg/scan/events/`、`pkg/types/`
+- 变动文件：`cmd/nuclei/main.go`、`internal/runner/options.go`、`internal/runner/runner.go`、`lib/sdk_private.go`、`pkg/catalog/config/datadir.go`、`pkg/catalog/config/nucleiconfig.go`、`pkg/output/file_output_writer.go`、`pkg/protocols/headless/engine/engine.go`、`pkg/reporting/dedupe/dedupe.go`、`pkg/reporting/exporters/jsonexporter/jsonexporter.go`、`pkg/reporting/exporters/jsonl/jsonl.go`、`pkg/reporting/exporters/markdown/markdown.go`、`pkg/reporting/exporters/pdf/pdf.go`、`pkg/reporting/exporters/sarif/sarif.go`、`pkg/scan/events/stats_build.go`、`pkg/types/resume.go`
+- 具体修改内容：
+  - 在 `pkg/catalog/config/datadir.go` 中新增统一的数据目录定位工具，将项目运行期默认数据根目录固定为仓库根目录下的 `data/`，并为 `config`、`cache`、`templates`、`tmp`、`project`、`responses`、`reports`、`stats` 等子目录提供统一路径函数。
+  - 在 `pkg/catalog/config/nucleiconfig.go` 中将默认配置目录、缓存目录和模板目录迁移到 `data/config/`、`data/cache/`、`data/templates/`，并调整 `.nuclei-ignore` 的初始化逻辑为优先迁移旧系统配置中的 ignore 文件，否则在新目录下创建默认空文件。
+  - 在 `internal/runner/options.go`、`cmd/nuclei/main.go`、`pkg/types/resume.go` 中将默认响应落盘目录、项目缓存目录、resume 文件目录、crash resume 文件目录、inline secrets 临时目录统一迁移到 `data/responses/`、`data/project/`、`data/cache/resume/`、`data/cache/crash/`、`data/tmp/secrets/`。
+  - 在 `internal/runner/runner.go` 和 `lib/sdk_private.go` 中将 CLI 和 SDK 运行时临时目录迁移到 `data/tmp/runtime/`，并在 `pkg/protocols/headless/engine/engine.go` 中将 headless 浏览器的用户数据目录迁移到 `data/tmp/headless/`。
+  - 在 `pkg/reporting/dedupe/dedupe.go`、`pkg/reporting/exporters/jsonexporter/jsonexporter.go`、`pkg/reporting/exporters/jsonl/jsonl.go`、`pkg/reporting/exporters/markdown/markdown.go`、`pkg/reporting/exporters/pdf/pdf.go`、`pkg/reporting/exporters/sarif/sarif.go` 中统一导出和去重模块的默认落盘位置，将去重库和默认报告路径迁移到 `data/cache/reporting/` 与 `data/reports/`，并补充父目录自动创建逻辑。
+  - 在 `pkg/scan/events/stats_build.go` 中将带 `stats` build tag 的扫描统计目录从当前工作目录迁移到 `data/stats/`。
+- 修改目的或影响：
+  - 将 `ManScan` 默认运行期产物统一收口到项目根目录 `data/` 下，避免继续分散写入用户家目录、系统临时目录或当前工作目录。
+  - 让配置、模板、缓存、临时文件、响应落盘、统计文件和默认报告产物按目录分类管理，便于排查、清理、打包和文档化维护。
+
+## 2026-06-09 19:57 调整 .nuclei-ignore 默认初始化来源
+
+- 变动目录：`pkg/catalog/config/`
+- 变动文件：`pkg/catalog/config/nucleiconfig.go`
+- 具体修改内容：
+  - 在 `pkg/catalog/config/nucleiconfig.go` 中移除从旧系统级配置目录迁移 `.nuclei-ignore` 的兼容逻辑。
+  - 将 `.nuclei-ignore` 的默认初始化来源改为 `data/config/.templates-config.json` 当前记录的模板目录；如果该模板目录下存在 `.nuclei-ignore`，则复制到 `data/config/.nuclei-ignore`。
+  - 当模板目录中不存在 `.nuclei-ignore` 时，继续在 `data/config/` 下创建一个空的默认 ignore 文件，保证运行期依赖的必需文件始终存在。
+- 修改目的或影响：
+  - 让 ignore 文件来源与当前项目内 `data/` 目录体系保持一致，不再依赖用户机器上历史遗留的系统级配置目录。
+  - 保证模板忽略规则优先跟随当前模板目录配置，同时保留空默认文件兜底，避免首次启动因缺少 ignore 文件而报错。
+
+## 2026-06-09 20:24 修复默认启动未创建 .nuclei-ignore 的初始化漏洞
+
+- 变动目录：`pkg/catalog/config/`
+- 变动文件：`pkg/catalog/config/nucleiconfig.go`、`pkg/catalog/config/ignorefile.go`、`pkg/catalog/config/ignorefile_test.go`
+- 具体修改内容：
+  - 在 `pkg/catalog/config/nucleiconfig.go` 的默认配置初始化流程中，完成模板目录设置后立即执行 `.nuclei-ignore` 补齐逻辑，确保默认启动路径下也会把模板目录中的 ignore 文件复制到 `data/config/`。
+  - 在 `pkg/catalog/config/ignorefile.go` 中为 `ReadIgnoreFile()` 增加读取前自愈逻辑；如果 `data/config/.nuclei-ignore` 缺失，会先尝试从当前模板目录补齐，再继续读取。
+  - 新增 `pkg/catalog/config/ignorefile_test.go`，覆盖“配置目录缺少 `.nuclei-ignore` 时，读取逻辑会自动从模板目录复制并成功解析”的回归场景。
+- 修改目的或影响：
+  - 修复默认启动时未经过 `SetConfigDir()` 导致 `.nuclei-ignore` 不会自动创建的问题。
+  - 即使后续有人手动删除 `data/config/.nuclei-ignore`，运行时读取也会先自愈再继续，避免再次出现文件不存在错误。

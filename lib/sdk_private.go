@@ -231,7 +231,10 @@ func (e *NucleiEngine) init(ctx context.Context) error {
 	}
 
 	if e.tmpDir == "" {
-		tmpDir, err := os.MkdirTemp("", "nuclei-tmp-*")
+		if err := os.MkdirAll(config.DefaultRuntimeTmpDir(), 0700); err != nil {
+			return err
+		}
+		tmpDir, err := os.MkdirTemp(config.DefaultRuntimeTmpDir(), "nuclei-tmp-*")
 		if err != nil {
 			return err
 		}

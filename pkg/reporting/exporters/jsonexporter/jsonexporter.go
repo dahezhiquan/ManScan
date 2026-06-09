@@ -2,8 +2,10 @@ package jsonexporter
 
 import (
 	"os"
+	"path/filepath"
 	"sync"
 
+	"ManScan/pkg/catalog/config"
 	"ManScan/pkg/output"
 	"ManScan/pkg/utils/json"
 	"github.com/pkg/errors"
@@ -24,9 +26,16 @@ type Options struct {
 
 // New creates a new JSON exporter integration client based on options.
 func New(options *Options) (*Exporter, error) {
+	opts := &Options{}
+	if options != nil {
+		*opts = *options
+	}
+	if opts.File == "" {
+		opts.File = config.DefaultJSONReportPath()
+	}
 	exporter := &Exporter{
 		mutex:   &sync.Mutex{},
-		options: options,
+		options: opts,
 		rows:    []output.ResultEvent{},
 	}
 	return exporter, nil
@@ -59,6 +68,9 @@ func (exporter *Exporter) Close() error {
 	obj, err := json.Marshal(exporter.rows)
 	if err != nil {
 		return errors.Wrap(err, "failed to generate JSON report")
+	}
+	if err := os.MkdirAll(filepath.Dir(exporter.options.File), 0755); err != nil {
+		return errors.Wrap(err, "failed to create JSON directory")
 	}
 
 	// Attempt to write the JSON to file specified in options.JSONExport

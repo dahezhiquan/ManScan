@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	configpkg "ManScan/pkg/catalog/config"
 	"ManScan/pkg/utils/json"
 )
 
@@ -30,7 +31,14 @@ type ScanStatsWorker struct {
 // Init initializes the scan stats worker
 func InitWithConfig(config *ScanConfig, statsDirectory string) {
 	currentTime := time.Now().Format("20060102150405")
-	dirName := fmt.Sprintf("nuclei-stats-%s", currentTime)
+	baseDir := statsDirectory
+	if baseDir == "" {
+		baseDir = configpkg.DefaultStatsDir()
+	}
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		panic(err)
+	}
+	dirName := filepath.Join(baseDir, fmt.Sprintf("nuclei-stats-%s", currentTime))
 	err := os.Mkdir(dirName, 0755)
 	if err != nil {
 		panic(err)

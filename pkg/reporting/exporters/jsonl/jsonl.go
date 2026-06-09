@@ -2,8 +2,10 @@ package jsonl
 
 import (
 	"os"
+	"path/filepath"
 	"sync"
 
+	"ManScan/pkg/catalog/config"
 	"ManScan/pkg/output"
 	"ManScan/pkg/utils/json"
 	"github.com/pkg/errors"
@@ -29,9 +31,16 @@ type Options struct {
 
 // New creates a new JSONL exporter integration client based on options.
 func New(options *Options) (*Exporter, error) {
+	opts := &Options{}
+	if options != nil {
+		*opts = *options
+	}
+	if opts.File == "" {
+		opts.File = config.DefaultJSONLReportPath()
+	}
 	exporter := &Exporter{
 		mutex:   &sync.Mutex{},
-		options: options,
+		options: opts,
 		rows:    []output.ResultEvent{},
 	}
 	return exporter, nil
@@ -69,6 +78,9 @@ func (exporter *Exporter) WriteRows() error {
 	// execution are appended to the same file.
 	var err error
 	if exporter.outputFile == nil {
+		if err := os.MkdirAll(filepath.Dir(exporter.options.File), 0755); err != nil {
+			return errors.Wrap(err, "failed to create JSONL directory")
+		}
 		// Open the JSONL file for writing and create it if it doesn't exist
 		exporter.outputFile, err = os.OpenFile(exporter.options.File, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
@@ -115,6 +127,9 @@ func (exporter *Exporter) Close() error {
 	}
 
 	// Close the file
+	if exporter.outputFile == nil {
+		return nil
+	}
 	if err := exporter.outputFile.Close(); err != nil {
 		return errors.Wrap(err, "failed to close JSONL file")
 	}

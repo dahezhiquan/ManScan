@@ -248,7 +248,10 @@ func New(options *types.Options) (*Runner, error) {
 		os.Exit(0)
 	}
 
-	tmpDir, err := os.MkdirTemp("", "nuclei-tmp-*")
+	if err := os.MkdirAll(config.DefaultRuntimeTmpDir(), 0700); err != nil {
+		return nil, errors.Wrap(err, "could not create runtime temporary parent directory")
+	}
+	tmpDir, err := os.MkdirTemp(config.DefaultRuntimeTmpDir(), "nuclei-tmp-*")
 	if err != nil {
 		return nil, errors.Wrap(err, "could not create temporary directory")
 	}

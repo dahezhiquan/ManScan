@@ -16,7 +16,6 @@ import (
 	"github.com/projectdiscovery/utils/env"
 	"github.com/projectdiscovery/utils/errkit"
 	fileutil "github.com/projectdiscovery/utils/file"
-	folderutil "github.com/projectdiscovery/utils/folder"
 )
 
 // DefaultConfig is the default nuclei configuration
@@ -217,7 +216,7 @@ func (c *Config) GetNewAdditions() []string {
 // instead of saving resume files in nuclei config directory
 // they are saved in nuclei cache directory
 func (c *Config) GetCacheDir() string {
-	return folderutil.AppCacheDirOrDefault(".nuclei-cache", BinaryName)
+	return DefaultDataSubdir("cache")
 }
 
 // SetConfigDir sets the nuclei configuration directory
@@ -338,9 +337,16 @@ func (c *Config) copyIgnoreFile() {
 	}
 	ignoreFilePath := c.GetIgnoreFilePath()
 	if !fileutil.FileExists(ignoreFilePath) {
-		// copy ignore file from default config directory
-		if err := fileutil.CopyFile(filepath.Join(folderutil.AppConfigDirOrDefault(FallbackConfigFolderName, BinaryName), NucleiIgnoreFileName), ignoreFilePath); err != nil {
-			c.Logger.Error().Msgf("Could not copy nuclei ignore file at %s: %s", ignoreFilePath, err)
+		templateIgnorePath := filepath.Join(c.TemplatesDirectory, NucleiIgnoreFileName)
+		if c.TemplatesDirectory != "" && fileutil.FileExists(templateIgnorePath) {
+			if err := fileutil.CopyFile(templateIgnorePath, ignoreFilePath); err == nil {
+				return
+			}
+			c.Logger.Error().Msgf("Could not copy nuclei ignore file from template directory %s to %s", templateIgnorePath, ignoreFilePath)
+		}
+		ignoreData := []byte("tags: []\nfiles: []\n")
+		if err := os.WriteFile(ignoreFilePath, ignoreData, 0600); err != nil {
+			c.Logger.Error().Msgf("Could not create nuclei ignore file at %s: %s", ignoreFilePath, err)
 		}
 	}
 }
@@ -381,7 +387,7 @@ func (c *Config) parseDebugArgs(data string) {
 }
 
 func init() {
-	ConfigDir := folderutil.AppConfigDirOrDefault(FallbackConfigFolderName, BinaryName)
+	ConfigDir := DefaultDataSubdir("config")
 
 	if cfgDir := os.Getenv(NucleiConfigDirEnv); cfgDir != "" {
 		ConfigDir = cfgDir
@@ -394,7 +400,7 @@ func init() {
 		}
 	}
 	DefaultConfig = &Config{
-		homeDir:        folderutil.HomeDirOrDefault(""),
+		homeDir:        RepoRootDir(),
 		configDir:      ConfigDir,
 		Logger:         gologger.DefaultLogger,
 		disableUpdates: true,
@@ -425,12 +431,13 @@ func init() {
 	// and even if it is changed we don't follow it since it is not expected behavior
 	// If custom templates are in default locations only then they are loaded while running nuclei
 	DefaultConfig.SetTemplatesDir(DefaultConfig.TemplatesDirectory)
+	DefaultConfig.copyIgnoreFile()
 	DefaultConfig.parseDebugArgs(env.GetEnvOrDefault("NUCLEI_ARGS", ""))
 }
 
 // Add Default Config adds default when .templates-config.json file is not present
 func applyDefaultConfig() {
-	DefaultConfig.TemplatesDirectory = filepath.Join(DefaultConfig.homeDir, NucleiTemplatesDirName)
+	DefaultConfig.TemplatesDirectory = DefaultDataSubdir("templates")
 	// updates all necessary paths
 	DefaultConfig.SetTemplatesDir(DefaultConfig.TemplatesDirectory)
 }

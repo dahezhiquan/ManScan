@@ -7,7 +7,9 @@ package dedupe
 import (
 	"crypto/sha1"
 	"os"
+	"path/filepath"
 
+	"ManScan/pkg/catalog/config"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
 
@@ -28,10 +30,16 @@ func New(dbPath string) (*Storage, error) {
 
 	var err error
 	if dbPath == "" {
-		dbPath, err = os.MkdirTemp("", "nuclei-report-*")
+		if err = os.MkdirAll(config.DefaultReportingDBPath(), 0755); err != nil {
+			return nil, err
+		}
+		dbPath, err = os.MkdirTemp(config.DefaultReportingDBPath(), "session-*")
 		storage.temporary = dbPath
 	}
 	if err != nil {
+		return nil, err
+	}
+	if err = os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		return nil, err
 	}
 

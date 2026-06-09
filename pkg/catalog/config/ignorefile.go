@@ -15,6 +15,7 @@ type IgnoreFile struct {
 
 // ReadIgnoreFile reads the nuclei ignore file returning blocked tags and paths
 func ReadIgnoreFile() IgnoreFile {
+	DefaultConfig.copyIgnoreFile()
 	file, err := os.Open(DefaultConfig.GetIgnoreFilePath())
 	if err != nil {
 		gologger.Error().Msgf("Could not read nuclei-ignore file: %s\n", err)

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ManScan/pkg/catalog/config"
 	"github.com/google/uuid"
 	"github.com/projectdiscovery/gologger"
 
@@ -34,13 +35,13 @@ type Options struct {
 
 // New creates a new markdown exporter integration client based on options.
 func New(options *Options) (*Exporter, error) {
-	directory := options.Directory
-	if options.Directory == "" {
-		dir, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		directory = dir
+	opts := &Options{}
+	if options != nil {
+		*opts = *options
+	}
+	directory := opts.Directory
+	if directory == "" {
+		directory = config.DefaultMarkdownReportsDir()
 	}
 	_ = os.MkdirAll(directory, 0755)
 
@@ -52,7 +53,7 @@ func New(options *Options) (*Exporter, error) {
 		return nil, err
 	}
 
-	return &Exporter{options: options, directory: directory}, nil
+	return &Exporter{options: opts, directory: directory}, nil
 }
 
 // Export exports a passed result event to markdown

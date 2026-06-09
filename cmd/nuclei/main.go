@@ -187,7 +187,7 @@ func main() {
 		cancel := stackMonitor.Start(10 * time.Second)
 		defer cancel()
 		stackMonitor.RegisterCallback(func(dumpID string) error {
-			resumeFileName := fmt.Sprintf("crash-resume-file-%s.dump", dumpID)
+			resumeFileName := filepath.Join(config.DefaultCrashDir(), fmt.Sprintf("crash-resume-file-%s.dump", dumpID))
 			if options.EnableCloudUpload {
 				options.Logger.Info().Msgf("Uploading scan results to cloud...")
 			}
@@ -436,7 +436,7 @@ on extensive configurability, massive extensibility and ease of use.`)
 		flagSet.StringSliceVarP(&options.TrackError, "track-error", "te", nil, "adds given error to max-host-error watchlist (standard, file)", goflags.FileStringSliceOptions),
 		flagSet.BoolVarP(&options.NoHostErrors, "no-mhe", "nmhe", false, "disable skipping host from scan based on errors"),
 		flagSet.BoolVar(&options.Project, "project", false, "use a project folder to avoid sending same request multiple times"),
-		flagSet.StringVar(&options.ProjectPath, "project-path", os.TempDir(), "set a specific project path"),
+		flagSet.StringVar(&options.ProjectPath, "project-path", config.DefaultProjectDir(), "set a specific project path"),
 		flagSet.BoolVarP(&options.StopAtFirstMatch, "stop-at-first-match", "spm", false, "stop processing HTTP requests after the first match (may break template/workflow logic)"),
 		flagSet.BoolVar(&options.Stream, "stream", false, "stream mode - start elaborating without sorting the input"),
 		flagSet.EnumVarP(&options.ScanStrategy, "scan-strategy", "ss", goflags.EnumVariable(0), "strategy to use while scanning(auto/host-spray/template-spray)", goflags.AllowdTypes{
@@ -726,11 +726,12 @@ Additional documentation is available at: https://docs.nuclei.sh/getting-started
 
 // cleanupOldResumeFiles cleans up resume files older than 10 days.
 func cleanupOldResumeFiles() {
-	root := config.DefaultConfig.GetCacheDir()
+	root := config.DefaultResumeDir()
 	filter := fileutil.FileFilters{
 		OlderThan: 24 * time.Hour * 10, // cleanup on the 10th day
 		Prefix:    "resume-",
 	}
+	_ = os.MkdirAll(root, 0700)
 	_ = fileutil.DeleteFilesOlderThan(root, filter)
 }
 
@@ -891,7 +892,7 @@ func processInlineSecretsFromProfile(profilePath string, options *types.Options)
 		return "", fmt.Errorf("could not marshal inline secrets: %w", err)
 	}
 
-	tempDir := filepath.Join(os.TempDir(), "nuclei-secrets")
+	tempDir := config.DefaultSecretsTmpDir()
 	if err := os.MkdirAll(tempDir, 0700); err != nil {
 		return "", fmt.Errorf("could not create temp directory: %w", err)
 	}

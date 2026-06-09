@@ -2,6 +2,7 @@ package output
 
 import (
 	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -13,6 +14,11 @@ type fileWriter struct {
 
 // NewFileOutputWriter creates a new buffered writer for a file
 func newFileOutputWriter(file string, resume bool) (*fileWriter, error) {
+	if dir := filepath.Dir(file); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, err
+		}
+	}
 	var output *os.File
 	var err error
 	if resume {

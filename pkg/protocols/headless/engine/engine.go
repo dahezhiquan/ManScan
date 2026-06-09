@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"ManScan/pkg/catalog/config"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/launcher/flags"
@@ -39,7 +40,10 @@ func New(options *types.Options) (*Browser, error) {
 	chromeLauncher := launcher.New()
 
 	if options.CDPEndpoint == "" {
-		dataStore, err = os.MkdirTemp("", "nuclei-*")
+		if err = os.MkdirAll(config.DefaultHeadlessTmpDir(), 0700); err != nil {
+			return nil, errors.Wrap(err, "could not create headless temporary parent directory")
+		}
+		dataStore, err = os.MkdirTemp(config.DefaultHeadlessTmpDir(), "nuclei-*")
 		if err != nil {
 			return nil, errors.Wrap(err, "could not create temporary directory")
 		}

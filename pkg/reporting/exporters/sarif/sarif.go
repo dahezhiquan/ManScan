@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"path/filepath"
 	"sync"
 
 	"ManScan/pkg/catalog/config"
@@ -30,13 +31,20 @@ type Options struct {
 
 // New creates a new sarif exporter integration client based on options.
 func New(options *Options) (*Exporter, error) {
+	opts := &Options{}
+	if options != nil {
+		*opts = *options
+	}
+	if opts.File == "" {
+		opts.File = config.DefaultSARIFReportPath()
+	}
 	report := sarif.NewReport()
 	exporter := &Exporter{
 		sarif:   report,
 		mutex:   &sync.Mutex{},
 		rules:   []sarif.ReportingDescriptor{},
 		rulemap: map[string]*int{},
-		options: options,
+		options: opts,
 	}
 	return exporter, nil
 }
@@ -187,6 +195,9 @@ func (exporter *Exporter) Close() error {
 	bin, err := exporter.sarif.Export()
 	if err != nil {
 		return errors.Wrap(err, "failed to generate sarif report")
+	}
+	if err := os.MkdirAll(filepath.Dir(exporter.options.File), 0755); err != nil {
+		return errors.Wrap(err, "failed to create sarif directory")
 	}
 	if err := os.WriteFile(exporter.options.File, bin, 0644); err != nil {
 		return errors.Wrap(err, "failed to create sarif file")

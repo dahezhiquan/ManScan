@@ -36,9 +36,9 @@ import (
 	stringsutil "github.com/projectdiscovery/utils/strings"
 )
 
-const (
-	// Default directory used to save protocols traffic
-	DefaultDumpTrafficOutputFolder = "output"
+var (
+	// Default directory used to save protocols traffic.
+	DefaultDumpTrafficOutputFolder = config.DefaultResponsesDir()
 )
 
 var validateOptions = validator.New()
@@ -62,6 +62,7 @@ func ParseOptions(options *types.Options) {
 
 	// Read the inputs from env variables that not passed by flag.
 	readEnvInputVars(options)
+	applyDefaultDataPaths(options)
 
 	// Read the inputs and configure the logging
 	configureOutput(options)
@@ -138,6 +139,27 @@ func ParseOptions(options *types.Options) {
 	if options.OfflineHTTP {
 		options.DisableHTTPProbe = true
 	}
+}
+
+func applyDefaultDataPaths(options *types.Options) {
+	if options.StoreResponseDir == "" {
+		options.StoreResponseDir = DefaultDumpTrafficOutputFolder
+	}
+	if options.ProjectPath == "" {
+		options.ProjectPath = config.DefaultProjectDir()
+	}
+	if shouldUseReportingDB(options) && options.ReportingDB == "" {
+		options.ReportingDB = config.DefaultReportingDBPath()
+	}
+}
+
+func shouldUseReportingDB(options *types.Options) bool {
+	return options.ReportingConfig != "" ||
+		options.MarkdownExportDirectory != "" ||
+		options.SarifExport != "" ||
+		options.JSONExport != "" ||
+		options.JSONLExport != "" ||
+		options.PDFExport != ""
 }
 
 // validateOptions validates the configuration options passed

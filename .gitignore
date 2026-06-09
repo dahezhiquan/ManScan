@@ -1,3 +1,5 @@
 .idea
 .vscode
 /cmd/nuclei/nuclei
+/data/
+**/.DS_Store

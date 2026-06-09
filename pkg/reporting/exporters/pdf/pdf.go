@@ -14,9 +14,12 @@ import (
 	"github.com/pkg/errors"
 )
 
+var (
+	defaultFile = config.DefaultPDFReportPath()
+)
+
 const (
-	defaultFile = "nuclei-report.pdf"
-	maxRawLen   = 4096
+	maxRawLen = 4096
 )
 
 // Options contains the configuration options for PDF exporter client.
