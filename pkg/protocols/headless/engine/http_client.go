@@ -13,10 +13,10 @@ import (
 	"golang.org/x/net/http2"
 	"golang.org/x/net/proxy"
 
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/utils"
+	"ManScan/pkg/types"
 	"github.com/projectdiscovery/fastdialer/fastdialer/ja3/impersonate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 )
 
 // newHttpClient creates a new http client for headless communication with a timeout
@@ -113,4 +113,3 @@ func newHttpClient(options *types.Options) (*http.Client, error) {
 
 	return httpclient, nil
 }
-

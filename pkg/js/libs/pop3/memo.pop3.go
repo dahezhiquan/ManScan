@@ -7,7 +7,7 @@ import (
 
 	"fmt"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 func memoizedisPoP3(ctx context.Context, executionId string, host string, port int) (IsPOP3Response, error) {

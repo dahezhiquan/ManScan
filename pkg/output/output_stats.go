@@ -1,8 +1,8 @@
 package output
 
 import (
+	"ManScan/pkg/output/stats"
 	"github.com/logrusorgru/aurora/v4"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output/stats"
 )
 
 // StatsOutputWriter implements writer interface for stats observation

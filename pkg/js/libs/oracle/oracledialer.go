@@ -6,7 +6,7 @@ import (
 	"net"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 // oracleCustomDialer implements the dialer interface expected by go-ora

@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/interactsh"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
+	"ManScan/pkg/protocols/common/interactsh"
+	"ManScan/pkg/utils"
+	"ManScan/pkg/utils/json"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
 )

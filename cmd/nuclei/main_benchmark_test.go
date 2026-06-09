@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"ManScan/internal/runner"
+	"ManScan/pkg/types"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
-	"github.com/projectdiscovery/nuclei/v3/internal/runner"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 )
 
 var (

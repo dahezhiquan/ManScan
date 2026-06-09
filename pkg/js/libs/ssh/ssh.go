@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/utils/vardump"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/utils/vardump"
 	"github.com/projectdiscovery/utils/errkit"
 	"github.com/zmap/zgrab2/lib/ssh"
 )

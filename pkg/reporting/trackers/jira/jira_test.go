@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/reporting/trackers/filters"
+	"ManScan/pkg/model"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/model/types/stringslice"
+	"ManScan/pkg/output"
+	"ManScan/pkg/reporting/trackers/filters"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/stretchr/testify/require"
 )

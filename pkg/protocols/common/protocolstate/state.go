@@ -11,11 +11,11 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/net/proxy"
 
+	"ManScan/pkg/types"
+	"ManScan/pkg/utils/expand"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
 	"github.com/projectdiscovery/mapcidr/asn"
 	"github.com/projectdiscovery/networkpolicy"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/expand"
 	"github.com/projectdiscovery/retryablehttp-go"
 	mapsutil "github.com/projectdiscovery/utils/maps"
 )

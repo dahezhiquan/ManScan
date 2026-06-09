@@ -6,9 +6,9 @@ import (
 
 	"github.com/projectdiscovery/govaluate"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/common/dsl"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/marker"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/replacer"
+	"ManScan/pkg/operators/common/dsl"
+	"ManScan/pkg/protocols/common/marker"
+	"ManScan/pkg/protocols/common/replacer"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 )
 

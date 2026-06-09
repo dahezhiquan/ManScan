@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/extensions"
+	"ManScan/pkg/templates/extensions"
 	fileutil "github.com/projectdiscovery/utils/file"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 )

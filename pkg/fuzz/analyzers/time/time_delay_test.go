@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz/component"
+	"ManScan/pkg/fuzz/component"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/stretchr/testify/require"
 )

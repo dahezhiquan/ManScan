@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/authprovider/authx"
+	"ManScan/pkg/authprovider/authx"
 	"github.com/stretchr/testify/require"
 )
 

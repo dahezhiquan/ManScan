@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 
+	"ManScan/internal/tests/testutils"
 	"github.com/julienschmidt/httprouter"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
 )
 
 var dslTestcases = []integrationCase{

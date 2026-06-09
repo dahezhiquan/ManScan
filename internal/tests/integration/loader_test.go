@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"ManScan/internal/tests/testutils"
 	"github.com/julienschmidt/httprouter"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
 	"github.com/projectdiscovery/utils/errkit"
 	permissionutil "github.com/projectdiscovery/utils/permission"
 )

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
+	"ManScan/pkg/utils/json"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
 )

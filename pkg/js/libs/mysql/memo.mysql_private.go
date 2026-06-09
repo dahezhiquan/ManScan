@@ -7,7 +7,7 @@ import (
 
 	"fmt"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 func memoizedconnectWithDSN(ctx context.Context, executionId string, dsn string) (bool, error) {

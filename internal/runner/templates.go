@@ -6,14 +6,14 @@ import (
 	"sort"
 	"strings"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/catalog/loader"
 	"github.com/alecthomas/chroma/quick"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/logrusorgru/aurora/v4"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/loader"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"ManScan/pkg/templates"
+	"ManScan/pkg/types"
 )
 
 // log available templates for verbose (-vv)

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/extensions"
-	filepathutil "github.com/projectdiscovery/nuclei/v3/pkg/utils/filepath"
+	"ManScan/pkg/templates/extensions"
+	filepathutil "ManScan/pkg/utils/filepath"
 	fileutil "github.com/projectdiscovery/utils/file"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 )

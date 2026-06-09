@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
+	"ManScan/pkg/protocols/common/protocolstate"
 	vnclib "github.com/alexsnet/go-vnc"
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
 	vncplugin "github.com/praetorian-inc/fingerprintx/pkg/plugins/services/vnc"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 )
 

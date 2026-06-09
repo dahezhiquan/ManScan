@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
+	"ManScan/internal/tests/testutils"
+	"ManScan/pkg/catalog/config"
 )
 
 func getTemplatePath() string {

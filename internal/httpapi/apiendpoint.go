@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/compiler"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
+	"ManScan/pkg/js/compiler"
+	"ManScan/pkg/types"
+	"ManScan/pkg/utils/json"
 )
 
 type Concurrency struct {

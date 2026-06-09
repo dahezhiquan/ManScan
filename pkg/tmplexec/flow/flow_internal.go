@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
 	"github.com/projectdiscovery/utils/errkit"
 	mapsutil "github.com/projectdiscovery/utils/maps"
 )

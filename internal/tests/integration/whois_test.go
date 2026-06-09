@@ -4,7 +4,7 @@
 package integration_test
 
 import (
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
+	"ManScan/internal/tests/testutils"
 )
 
 var whoisTestCases = []integrationCase{

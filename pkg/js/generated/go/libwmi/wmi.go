@@ -1,10 +1,10 @@
 package wmi
 
 import (
-	lib_wmi "github.com/projectdiscovery/nuclei/v3/pkg/js/libs/wmi"
+	lib_wmi "ManScan/pkg/js/libs/wmi"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 )
 
 var (

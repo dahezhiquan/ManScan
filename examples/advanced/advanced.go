@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 
-	nuclei "github.com/projectdiscovery/nuclei/v3/lib"
-	"github.com/projectdiscovery/nuclei/v3/pkg/installer"
+	nuclei "ManScan/lib"
+	"ManScan/pkg/installer"
 	syncutil "github.com/projectdiscovery/utils/sync"
 )
 

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"ManScan/pkg/types"
 	"github.com/projectdiscovery/utils/errkit"
 	fileutil "github.com/projectdiscovery/utils/file"
 	proxyutils "github.com/projectdiscovery/utils/proxy"

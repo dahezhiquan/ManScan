@@ -14,13 +14,13 @@ import (
 
 	"github.com/Mzack9999/gcache"
 
+	"ManScan/pkg/operators"
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols/common/helpers/responsehighlighter"
+	"ManScan/pkg/protocols/common/helpers/writer"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/interactsh/pkg/client"
 	"github.com/projectdiscovery/interactsh/pkg/server"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/helpers/responsehighlighter"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/helpers/writer"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/projectdiscovery/utils/errkit"
 	stringsutil "github.com/projectdiscovery/utils/strings"

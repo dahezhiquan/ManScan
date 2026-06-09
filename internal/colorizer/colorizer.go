@@ -5,7 +5,7 @@ import (
 
 	"github.com/logrusorgru/aurora/v4"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
+	"ManScan/pkg/model/types/severity"
 )
 
 const (

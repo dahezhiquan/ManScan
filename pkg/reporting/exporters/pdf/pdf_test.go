@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
+	"ManScan/pkg/model"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/model/types/stringslice"
+	"ManScan/pkg/output"
 	"github.com/stretchr/testify/require"
 )
 

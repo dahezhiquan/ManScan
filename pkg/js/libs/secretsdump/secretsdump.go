@@ -20,8 +20,8 @@ import (
 	gpsmb "github.com/Mzack9999/goimpacket/pkg/smb"
 	"github.com/Mzack9999/goja"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/js/utils"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 // Secret is the result of a DCSync against a single principal.
@@ -85,7 +85,7 @@ func NewClient(call goja.ConstructorCall, runtime *goja.Runtime) *goja.Object {
 //
 // @example
 // ```javascript
-// const c = new sd.Client('dc01', 'acme.local', 'admin', '');
+// const c = new sd.Client('dc01', 'acme.local', 'admin', ”);
 // c.SetHash(':31d6cfe0d16ae931b73c59d7e0c089c0');
 // ```
 func (c *Client) SetHash(hash string) {

@@ -3,10 +3,10 @@ package writer
 import (
 	stderrors "errors"
 
+	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
+	"ManScan/pkg/reporting"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/progress"
-	"github.com/projectdiscovery/nuclei/v3/pkg/reporting"
 )
 
 // WriteResult is a helper for writing results to the output

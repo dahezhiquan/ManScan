@@ -5,11 +5,11 @@ import (
 	"net/http/cookiejar"
 	"sync/atomic"
 
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols/common/contextargs"
+	"ManScan/pkg/scan"
+	"ManScan/pkg/workflows"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/contextargs"
-	"github.com/projectdiscovery/nuclei/v3/pkg/scan"
-	"github.com/projectdiscovery/nuclei/v3/pkg/workflows"
 	syncutil "github.com/projectdiscovery/utils/sync"
 )
 

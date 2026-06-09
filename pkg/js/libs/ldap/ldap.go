@@ -7,10 +7,10 @@ import (
 	"net/url"
 	"strings"
 
+	"ManScan/pkg/js/utils"
+	"ManScan/pkg/protocols/common/protocolstate"
 	"github.com/Mzack9999/goja"
 	"github.com/go-ldap/ldap/v3"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
 )
 
 type (

@@ -7,11 +7,11 @@ import (
 	"sync"
 	"testing"
 
+	"ManScan/pkg/operators"
+	"ManScan/pkg/operators/extractors"
+	"ManScan/pkg/operators/matchers"
+	"ManScan/pkg/output"
 	serverint "github.com/projectdiscovery/interactsh/pkg/server"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/extractors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/matchers"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 	"github.com/stretchr/testify/require"
 )
 

@@ -9,10 +9,10 @@ import (
 	"net/http"
 	"time"
 
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/utils/json"
 	"github.com/pkg/errors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/projectdiscovery/useragent"
 )

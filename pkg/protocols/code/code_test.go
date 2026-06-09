@@ -8,11 +8,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/contextargs"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
+	"ManScan/internal/tests/testutils"
+	"ManScan/pkg/model"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols/common/contextargs"
 )
 
 func newTestRequest(t *testing.T, engine []string, source string) (*Request, *testutils.TemplateInfo) {

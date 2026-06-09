@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/types"
 	"github.com/alecthomas/chroma/quick"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 	"github.com/projectdiscovery/retryablehttp-go"
 	pdcpauth "github.com/projectdiscovery/utils/auth/pdcp"
 	"github.com/projectdiscovery/utils/errkit"

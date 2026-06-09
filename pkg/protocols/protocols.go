@@ -13,31 +13,31 @@ import (
 
 	"github.com/logrusorgru/aurora/v4"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/authprovider"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog"
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz/frequency"
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz/stats"
-	"github.com/projectdiscovery/nuclei/v3/pkg/input"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/compiler"
-	"github.com/projectdiscovery/nuclei/v3/pkg/loader/parser"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/extractors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/matchers"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/progress"
-	"github.com/projectdiscovery/nuclei/v3/pkg/projectfile"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/contextargs"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/globalmatchers"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/hosterrorscache"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/interactsh"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/utils/excludematchers"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/variables"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/headless/engine"
-	"github.com/projectdiscovery/nuclei/v3/pkg/reporting"
-	"github.com/projectdiscovery/nuclei/v3/pkg/scan"
-	templateTypes "github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"ManScan/pkg/authprovider"
+	"ManScan/pkg/catalog"
+	"ManScan/pkg/fuzz/frequency"
+	"ManScan/pkg/fuzz/stats"
+	"ManScan/pkg/input"
+	"ManScan/pkg/js/compiler"
+	"ManScan/pkg/loader/parser"
+	"ManScan/pkg/model"
+	"ManScan/pkg/operators"
+	"ManScan/pkg/operators/extractors"
+	"ManScan/pkg/operators/matchers"
+	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
+	"ManScan/pkg/projectfile"
+	"ManScan/pkg/protocols/common/contextargs"
+	"ManScan/pkg/protocols/common/globalmatchers"
+	"ManScan/pkg/protocols/common/hosterrorscache"
+	"ManScan/pkg/protocols/common/interactsh"
+	"ManScan/pkg/protocols/common/utils/excludematchers"
+	"ManScan/pkg/protocols/common/variables"
+	"ManScan/pkg/protocols/headless/engine"
+	"ManScan/pkg/reporting"
+	"ManScan/pkg/scan"
+	templateTypes "ManScan/pkg/templates/types"
+	"ManScan/pkg/types"
 	unitutils "github.com/projectdiscovery/utils/unit"
 )
 
@@ -273,44 +273,44 @@ func (e *ExecutorOptions) AddTemplateVar(input *contextargs.MetaInput, templateT
 // Copy returns a copy of the executeroptions structure
 func (e *ExecutorOptions) Copy() *ExecutorOptions {
 	copy := &ExecutorOptions{
-		TemplateID:          e.TemplateID,
-		TemplatePath:        e.TemplatePath,
-		TemplateInfo:        e.TemplateInfo,
-		TemplateVerifier:    e.TemplateVerifier,
+		TemplateID:                   e.TemplateID,
+		TemplatePath:                 e.TemplatePath,
+		TemplateInfo:                 e.TemplateInfo,
+		TemplateVerifier:             e.TemplateVerifier,
 		TemplateVerificationCallback: e.TemplateVerificationCallback,
-		RawTemplate:         e.RawTemplate,
-		Output:              e.Output,
-		Options:             e.Options,
-		IssuesClient:        e.IssuesClient,
-		Progress:            e.Progress,
-		RateLimiter:         e.RateLimiter,
-		Catalog:             e.Catalog,
-		ProjectFile:         e.ProjectFile,
-		Browser:             e.Browser,
-		Interactsh:          e.Interactsh,
-		HostErrorsCache:     e.HostErrorsCache,
-		StopAtFirstMatch:    e.StopAtFirstMatch,
-		Variables:           e.Variables,
-		Constants:           e.Constants,
-		ExcludeMatchers:     e.ExcludeMatchers,
-		InputHelper:         e.InputHelper,
-		FuzzParamsFrequency: e.FuzzParamsFrequency,
-		FuzzStatsDB:         e.FuzzStatsDB,
-		Operators:           e.Operators,
-		DoNotCache:          e.DoNotCache,
-		Colorizer:           e.Colorizer,
-		WorkflowLoader:      e.WorkflowLoader,
-		ResumeCfg:           e.ResumeCfg,
-		ProtocolType:        e.ProtocolType,
-		Flow:                e.Flow,
-		IsMultiProtocol:     e.IsMultiProtocol,
-		JsCompiler:          e.JsCompiler,
-		AuthProvider:        e.AuthProvider,
-		TemporaryDirectory:  e.TemporaryDirectory,
-		Parser:              e.Parser,
-		ExportReqURLPattern: e.ExportReqURLPattern,
-		GlobalMatchers:      e.GlobalMatchers,
-		Logger:              e.Logger,
+		RawTemplate:                  e.RawTemplate,
+		Output:                       e.Output,
+		Options:                      e.Options,
+		IssuesClient:                 e.IssuesClient,
+		Progress:                     e.Progress,
+		RateLimiter:                  e.RateLimiter,
+		Catalog:                      e.Catalog,
+		ProjectFile:                  e.ProjectFile,
+		Browser:                      e.Browser,
+		Interactsh:                   e.Interactsh,
+		HostErrorsCache:              e.HostErrorsCache,
+		StopAtFirstMatch:             e.StopAtFirstMatch,
+		Variables:                    e.Variables,
+		Constants:                    e.Constants,
+		ExcludeMatchers:              e.ExcludeMatchers,
+		InputHelper:                  e.InputHelper,
+		FuzzParamsFrequency:          e.FuzzParamsFrequency,
+		FuzzStatsDB:                  e.FuzzStatsDB,
+		Operators:                    e.Operators,
+		DoNotCache:                   e.DoNotCache,
+		Colorizer:                    e.Colorizer,
+		WorkflowLoader:               e.WorkflowLoader,
+		ResumeCfg:                    e.ResumeCfg,
+		ProtocolType:                 e.ProtocolType,
+		Flow:                         e.Flow,
+		IsMultiProtocol:              e.IsMultiProtocol,
+		JsCompiler:                   e.JsCompiler,
+		AuthProvider:                 e.AuthProvider,
+		TemporaryDirectory:           e.TemporaryDirectory,
+		Parser:                       e.Parser,
+		ExportReqURLPattern:          e.ExportReqURLPattern,
+		GlobalMatchers:               e.GlobalMatchers,
+		Logger:                       e.Logger,
 	}
 	copy.ClusterMappings = e.ClusterMappings.Copy()
 	copy.CreateTemplateCtxStore()

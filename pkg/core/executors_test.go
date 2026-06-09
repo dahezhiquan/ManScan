@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
-	inputtypes "github.com/projectdiscovery/nuclei/v3/pkg/input/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/contextargs"
-	"github.com/projectdiscovery/nuclei/v3/pkg/scan"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
-	tmpltypes "github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	inputtypes "ManScan/pkg/input/types"
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/contextargs"
+	"ManScan/pkg/scan"
+	"ManScan/pkg/templates"
+	tmpltypes "ManScan/pkg/templates/types"
+	"ManScan/pkg/types"
 )
 
 // fakeExecuter is a simple stub for protocols.Executer used to test executeTemplateOnInput

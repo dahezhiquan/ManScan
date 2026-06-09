@@ -4,8 +4,8 @@ import (
 	"errors"
 	"strings"
 
+	"ManScan/pkg/utils/json"
 	"github.com/invopop/jsonschema"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 )
 
 // MatcherType is the type of the matcher specified

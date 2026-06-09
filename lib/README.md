@@ -7,13 +7,13 @@ Nuclei 最初主要被构建为一个 CLI 工具，但随着越来越多用户�
 要将 nuclei 作为库添加到你的 Go 项目中，可以使用以下命令：
 
 ```bash
-go get -u github.com/projectdiscovery/nuclei/v3/lib
+go get -u ManScan/lib
 ```
 
 或者在你的 Go 文件中添加下面的 import，让 IDE 帮你处理其余部分：
 
 ```go
-import nuclei "github.com/projectdiscovery/nuclei/v3/lib"
+import nuclei "ManScan/lib"
 ```
 
 ## 使用 Nuclei Library/SDK 的基础示例
@@ -75,7 +75,7 @@ import nuclei "github.com/projectdiscovery/nuclei/v3/lib"
 
 ## 更多文档
 
-有关 nuclei 库的完整文档，请参阅 [godoc](https://pkg.go.dev/github.com/projectdiscovery/nuclei/v3/lib)，其中包含所有可用的选项和方法。
+有关 nuclei 库的完整文档，请参阅 [godoc](https://pkg.go.dev/ManScan/lib)，其中包含所有可用的选项和方法。
 
 
 

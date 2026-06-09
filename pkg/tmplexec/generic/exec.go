@@ -3,11 +3,11 @@ package generic
 import (
 	"sync/atomic"
 
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/scan"
+	"ManScan/pkg/tmplexec/utils"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/scan"
-	"github.com/projectdiscovery/nuclei/v3/pkg/tmplexec/utils"
 	mapsutil "github.com/projectdiscovery/utils/maps"
 )
 

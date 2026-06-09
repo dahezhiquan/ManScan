@@ -10,29 +10,29 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ManScan/pkg/js/compiler"
+	"ManScan/pkg/js/gojs"
+	"ManScan/pkg/model"
+	"ManScan/pkg/operators"
+	"ManScan/pkg/operators/extractors"
+	"ManScan/pkg/operators/matchers"
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/contextargs"
+	"ManScan/pkg/protocols/common/expressions"
+	"ManScan/pkg/protocols/common/generators"
+	"ManScan/pkg/protocols/common/helpers/eventcreator"
+	"ManScan/pkg/protocols/common/interactsh"
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/utils/vardump"
+	protocolutils "ManScan/pkg/protocols/utils"
+	templateTypes "ManScan/pkg/templates/types"
+	"ManScan/pkg/types"
 	"github.com/Mzack9999/goja"
 	"github.com/alecthomas/chroma/quick"
 	"github.com/ditashi/jsbeautifier-go/jsbeautifier"
 	"github.com/pkg/errors"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/compiler"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/extractors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/matchers"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/contextargs"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/expressions"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/generators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/helpers/eventcreator"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/interactsh"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/utils/vardump"
-	protocolutils "github.com/projectdiscovery/nuclei/v3/pkg/protocols/utils"
-	templateTypes "github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 	"github.com/projectdiscovery/utils/errkit"
 	iputil "github.com/projectdiscovery/utils/ip"
 	mapsutil "github.com/projectdiscovery/utils/maps"
@@ -380,7 +380,7 @@ func (request *Request) executeWithResults(port string, target *contextargs.Cont
 			&compiler.ExecuteOptions{
 				ExecutionId:     requestOptions.Options.ExecutionId,
 				TimeoutVariants: requestOptions.Options.GetTimeouts(),
-				Source: &request.PreCondition,
+				Source:          &request.PreCondition,
 			},
 		)
 		// if precondition was successful

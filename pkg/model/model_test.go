@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/model/types/stringslice"
+	"ManScan/pkg/utils/json"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v2"
 )

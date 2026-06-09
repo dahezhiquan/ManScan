@@ -3,8 +3,8 @@ package code
 import (
 	goruntime "runtime"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 	osutils "github.com/projectdiscovery/utils/os"
 )
 

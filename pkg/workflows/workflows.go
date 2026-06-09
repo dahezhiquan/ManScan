@@ -3,10 +3,10 @@ package workflows
 import (
 	"fmt"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	templateTypes "github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
+	"ManScan/pkg/model/types/stringslice"
+	"ManScan/pkg/operators"
+	"ManScan/pkg/protocols"
+	templateTypes "ManScan/pkg/templates/types"
 )
 
 // Workflow is a workflow to execute with chained requests, etc.

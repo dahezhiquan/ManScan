@@ -3,16 +3,16 @@
 package templates
 
 import (
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/extractors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/matchers"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/dns"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/file"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/http"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/network"
+	"ManScan/pkg/model"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/model/types/stringslice"
+	"ManScan/pkg/operators"
+	"ManScan/pkg/operators/extractors"
+	"ManScan/pkg/operators/matchers"
+	"ManScan/pkg/protocols/dns"
+	"ManScan/pkg/protocols/file"
+	"ManScan/pkg/protocols/http"
+	"ManScan/pkg/protocols/network"
 )
 
 var (

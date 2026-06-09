@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"ManScan/pkg/types"
 )
 
 func TestProcessInlineSecretsFromProfile(t *testing.T) {

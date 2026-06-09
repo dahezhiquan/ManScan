@@ -1,9 +1,9 @@
 package model
 
 import (
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/model/types/stringslice"
 	"github.com/invopop/jsonschema"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
 )
 
 type schemaMetadata struct {

@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/scan/charts"
+	"ManScan/pkg/scan/charts"
 )
 
 var (

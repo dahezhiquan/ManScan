@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/input/types"
+	"ManScan/pkg/input/types"
 	mapsutil "github.com/projectdiscovery/utils/maps"
 )
 

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"sync"
 
+	filepathutil "ManScan/pkg/utils/filepath"
+	"ManScan/pkg/utils/json"
 	"github.com/projectdiscovery/gologger"
-	filepathutil "github.com/projectdiscovery/nuclei/v3/pkg/utils/filepath"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 	"github.com/projectdiscovery/utils/env"
 	"github.com/projectdiscovery/utils/errkit"
 	fileutil "github.com/projectdiscovery/utils/file"

@@ -4,15 +4,15 @@ import (
 	"context"
 	"time"
 
+	"ManScan/pkg/catalog/loader"
+	"ManScan/pkg/core"
+	"ManScan/pkg/input/provider"
+	"ManScan/pkg/loader/workflow"
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/types"
+	"ManScan/pkg/utils"
 	"github.com/logrusorgru/aurora/v4"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/loader"
-	"github.com/projectdiscovery/nuclei/v3/pkg/core"
-	"github.com/projectdiscovery/nuclei/v3/pkg/input/provider"
-	"github.com/projectdiscovery/nuclei/v3/pkg/loader/workflow"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
 	"github.com/projectdiscovery/utils/errkit"
 )
 

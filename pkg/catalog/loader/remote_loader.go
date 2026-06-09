@@ -9,8 +9,8 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/extensions"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
+	"ManScan/pkg/templates/extensions"
+	"ManScan/pkg/utils"
 	"github.com/projectdiscovery/retryablehttp-go"
 	sliceutil "github.com/projectdiscovery/utils/slice"
 	stringsutil "github.com/projectdiscovery/utils/strings"

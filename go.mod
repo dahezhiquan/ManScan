@@ -1,4 +1,4 @@
-module github.com/projectdiscovery/nuclei/v3
+module ManScan
 
 go 1.25.7
 
@@ -435,6 +435,3 @@ require (
 	github.com/go-echarts/go-echarts/v2 v2.6.0
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 )
-
-// https://go.dev/ref/mod#go-mod-file-retract
-retract v3.2.0 // retract due to broken js protocol issue

@@ -9,8 +9,8 @@ import (
 	"github.com/projectdiscovery/utils/errkit"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/generators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"ManScan/pkg/protocols/common/generators"
+	"ManScan/pkg/types"
 )
 
 var (

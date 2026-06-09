@@ -5,13 +5,13 @@ import (
 
 	"github.com/pkg/errors"
 
+	"ManScan/pkg/operators"
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/expressions"
+	"ManScan/pkg/protocols/common/generators"
+	"ManScan/pkg/protocols/common/portutil"
+	"ManScan/pkg/protocols/network/networkclientpool"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/expressions"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/generators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/portutil"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/network/networkclientpool"
 	"github.com/projectdiscovery/utils/errkit"
 	fileutil "github.com/projectdiscovery/utils/file"
 )
@@ -282,4 +282,3 @@ func (request *Request) SetDialer(dialer *fastdialer.Dialer) {
 func (r *Request) UpdateOptions(opts *protocols.ExecutorOptions) {
 	r.options.ApplyNewEngineOptions(opts)
 }
-

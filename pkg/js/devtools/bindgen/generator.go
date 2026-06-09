@@ -15,8 +15,8 @@ import (
 
 	_ "embed"
 
+	"ManScan/pkg/js/compiler"
 	"github.com/pkg/errors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/compiler"
 )
 
 const jsGenIgnoreFile = ".nuclei-jsgen-ignore"

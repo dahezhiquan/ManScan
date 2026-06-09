@@ -3,7 +3,7 @@
 
 package extractors
 
-import "github.com/projectdiscovery/nuclei/v3/pkg/operators/cache"
+import "ManScan/pkg/operators/cache"
 
 func init() {
 	cache.SetCapacities(128, 128)

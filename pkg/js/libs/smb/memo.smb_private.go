@@ -11,7 +11,7 @@ import (
 
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 func memoizedcollectSMBv2Metadata(ctx context.Context, executionId string, host string, port int, timeout time.Duration) (*plugins.ServiceSMB, error) {

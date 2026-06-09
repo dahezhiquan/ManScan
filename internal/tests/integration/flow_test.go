@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"ManScan/internal/tests/testutils"
 	"github.com/julienschmidt/httprouter"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
 )
 
 func TestFlow(t *testing.T) {

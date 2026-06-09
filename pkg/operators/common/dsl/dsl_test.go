@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
+	"ManScan/pkg/protocols/dns/dnsclientpool"
+	"ManScan/pkg/types"
 	"github.com/projectdiscovery/govaluate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/dns/dnsclientpool"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 

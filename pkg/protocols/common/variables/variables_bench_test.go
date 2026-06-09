@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
+	"ManScan/pkg/utils"
 )
 
 func BenchmarkVariableEvaluate(b *testing.B) {

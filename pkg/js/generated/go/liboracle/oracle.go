@@ -1,10 +1,10 @@
 package oracle
 
 import (
-	lib_oracle "github.com/projectdiscovery/nuclei/v3/pkg/js/libs/oracle"
+	lib_oracle "ManScan/pkg/js/libs/oracle"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 )
 
 var (

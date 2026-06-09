@@ -9,7 +9,7 @@ import (
 
 	_ "github.com/microsoft/go-mssqldb"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 func memoizedconnect(ctx context.Context, executionId string, host string, port int, username string, password string, dbName string) (bool, error) {

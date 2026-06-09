@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz/dataformat"
+	"ManScan/pkg/fuzz/dataformat"
 	"github.com/projectdiscovery/retryablehttp-go"
 	urlutil "github.com/projectdiscovery/utils/url"
 )

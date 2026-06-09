@@ -9,10 +9,10 @@ import (
 	"net/http/httptest"
 	"net/url"
 
+	"ManScan/internal/tests/testutils"
+	"ManScan/pkg/output"
+	"ManScan/pkg/utils/json"
 	"github.com/julienschmidt/httprouter"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 )
 
 const (

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"ManScan/pkg/protocols/common/protocolstate"
 	upstream "github.com/FalconOpsLLC/goexec/pkg/goexec"
 	godce "github.com/FalconOpsLLC/goexec/pkg/goexec/dce"
 	godcom "github.com/FalconOpsLLC/goexec/pkg/goexec/dcom"
@@ -21,7 +22,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/oiweiwei/go-msrpc/dcerpc"
 	"github.com/oiweiwei/go-msrpc/ssp/gssapi"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
 	"github.com/rs/zerolog"
 )
 

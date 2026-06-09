@@ -10,15 +10,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ManScan/internal/server/scope"
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/fuzz/stats"
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
 	"github.com/alitto/pond"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/internal/server/scope"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz/stats"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
 	"github.com/projectdiscovery/utils/env"
 )
 

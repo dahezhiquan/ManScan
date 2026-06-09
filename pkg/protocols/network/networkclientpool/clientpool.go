@@ -3,9 +3,9 @@ package networkclientpool
 import (
 	"fmt"
 
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/types"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 )
 
 // Init initializes the clientpool implementation

@@ -6,9 +6,9 @@ import (
 	"os"
 	"sync"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/utils/json"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 	"github.com/projectdiscovery/retryablehttp-go"
 	updateutils "github.com/projectdiscovery/utils/update"
 )

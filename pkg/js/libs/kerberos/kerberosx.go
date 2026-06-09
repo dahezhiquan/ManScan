@@ -3,13 +3,13 @@ package kerberos
 import (
 	"strings"
 
+	"ManScan/pkg/js/utils"
+	"ManScan/pkg/protocols/common/protocolstate"
 	"github.com/Mzack9999/goja"
 	kclient "github.com/jcmturner/gokrb5/v8/client"
 	kconfig "github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/iana/errorcode"
 	"github.com/jcmturner/gokrb5/v8/messages"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
 	ConversionUtil "github.com/projectdiscovery/utils/conversion"
 )
 

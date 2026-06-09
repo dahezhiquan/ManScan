@@ -1,10 +1,10 @@
 package vnc
 
 import (
-	lib_vnc "github.com/projectdiscovery/nuclei/v3/pkg/js/libs/vnc"
+	lib_vnc "ManScan/pkg/js/libs/vnc"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 )
 
 var (

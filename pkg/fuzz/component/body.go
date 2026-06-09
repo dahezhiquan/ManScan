@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"ManScan/pkg/fuzz/dataformat"
 	"github.com/pkg/errors"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz/dataformat"
 	"github.com/projectdiscovery/retryablehttp-go"
 )
 

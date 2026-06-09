@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"sync/atomic"
 
+	"ManScan/pkg/output/stats/waf"
 	"github.com/logrusorgru/aurora/v4"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output/stats/waf"
 	mapsutil "github.com/projectdiscovery/utils/maps"
 )
 

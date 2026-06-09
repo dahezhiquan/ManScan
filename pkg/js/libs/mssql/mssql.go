@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"ManScan/pkg/js/utils"
+	"ManScan/pkg/protocols/common/protocolstate"
 	_ "github.com/microsoft/go-mssqldb"
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins/services/mssql"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
 )
 
 type (

@@ -6,12 +6,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/stats"
-	yamlutil "github.com/projectdiscovery/nuclei/v3/pkg/utils/yaml"
+	"ManScan/pkg/catalog"
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/utils"
+	"ManScan/pkg/utils/json"
+	"ManScan/pkg/utils/stats"
+	yamlutil "ManScan/pkg/utils/yaml"
 	"github.com/projectdiscovery/utils/errkit"
 	fileutil "github.com/projectdiscovery/utils/file"
 

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/internal/fuzzplayground"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
+	"ManScan/internal/fuzzplayground"
+	"ManScan/internal/tests/testutils"
 )
 
 type integrationHarness struct {

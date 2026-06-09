@@ -3,7 +3,7 @@ package flow
 import (
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
+	"ManScan/pkg/operators"
 	"github.com/stretchr/testify/require"
 )
 

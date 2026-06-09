@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz/frequency"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
+	"ManScan/pkg/fuzz/frequency"
+	"ManScan/pkg/protocols"
 	retryablehttp "github.com/projectdiscovery/retryablehttp-go"
 	"github.com/stretchr/testify/require"
 )

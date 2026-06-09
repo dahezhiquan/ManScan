@@ -3,8 +3,8 @@ package global
 import (
 	"encoding/base64"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 )
 
 func registerAdditionalHelpers(runtime *goja.Runtime) {

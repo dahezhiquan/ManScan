@@ -15,8 +15,8 @@ import (
 	"sync"
 	"testing"
 
+	"ManScan/internal/tests/testutils"
 	"github.com/google/shlex"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
 )
 
 type functionalHarness struct {

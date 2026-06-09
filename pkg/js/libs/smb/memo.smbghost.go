@@ -8,7 +8,7 @@ import (
 
 	"fmt"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 func memoizeddetectSMBGhost(ctx context.Context, executionId string, host string, port int) (bool, error) {

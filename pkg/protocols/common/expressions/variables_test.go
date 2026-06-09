@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
+	"ManScan/pkg/operators/common/dsl"
 	"github.com/projectdiscovery/govaluate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/common/dsl"
 	"github.com/stretchr/testify/require"
 )
 

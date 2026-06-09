@@ -3,7 +3,7 @@ package generators
 import (
 	"sync"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"ManScan/pkg/types"
 )
 
 // optionsPayloadMap caches the result of BuildPayloadFromOptions per options

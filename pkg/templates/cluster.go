@@ -7,15 +7,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ManScan/pkg/model"
+	"ManScan/pkg/operators"
+	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/helpers/writer"
+	protocolUtils "ManScan/pkg/protocols/utils"
+	"ManScan/pkg/scan"
+	"ManScan/pkg/templates/types"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/helpers/writer"
-	protocolUtils "github.com/projectdiscovery/nuclei/v3/pkg/protocols/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/scan"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
 	cryptoutil "github.com/projectdiscovery/utils/crypto"
 )
 

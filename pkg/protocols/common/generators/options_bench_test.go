@@ -3,8 +3,8 @@ package generators
 import (
 	"testing"
 
+	"ManScan/pkg/types"
 	"github.com/projectdiscovery/goflags"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 )
 
 func BenchmarkBuildPayloadFromOptions(b *testing.B) {

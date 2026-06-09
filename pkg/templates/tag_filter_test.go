@@ -3,12 +3,12 @@ package templates
 import (
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/dns"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/http"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
+	"ManScan/pkg/model"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/model/types/stringslice"
+	"ManScan/pkg/protocols/dns"
+	"ManScan/pkg/protocols/http"
+	"ManScan/pkg/templates/types"
 	"github.com/stretchr/testify/require"
 )
 

@@ -3,9 +3,9 @@ package http
 import (
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/matchers"
+	"ManScan/pkg/fuzz"
+	"ManScan/pkg/operators"
+	"ManScan/pkg/operators/matchers"
 	"github.com/stretchr/testify/require"
 )
 

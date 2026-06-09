@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"ManScan/internal/tests/testutils"
 	"github.com/gobwas/ws/wsutil"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
 )
 
 func TestWebSocket(t *testing.T) {

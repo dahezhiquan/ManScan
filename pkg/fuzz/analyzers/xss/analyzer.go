@@ -4,7 +4,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/fuzz/analyzers"
+	"ManScan/pkg/fuzz/analyzers"
 	"golang.org/x/net/html"
 )
 
@@ -191,28 +191,28 @@ var eventHandlers = map[string]struct{}{
 	"ontouchmove":          {},
 	"ontouchcancel":        {},
 	// added after review, these are newer DOM events that were missing
-	"onauxclick":           {},
-	"onbeforeinput":        {},
-	"onformdata":           {},
-	"onslotchange":         {},
+	"onauxclick":                {},
+	"onbeforeinput":             {},
+	"onformdata":                {},
+	"onslotchange":              {},
 	"onsecuritypolicyviolation": {},
 }
 
 // executableScriptTypes lists MIME types that browsers actually execute.
 // Empty string covers <script> with no type attribute.
 var executableScriptTypes = map[string]struct{}{
-	"":                          {},
-	"text/javascript":           {},
-	"application/javascript":    {},
-	"text/ecmascript":           {},
-	"application/ecmascript":    {},
-	"module":                    {},
-	"text/jscript":              {},
-	"text/livescript":           {},
+	"":                         {},
+	"text/javascript":          {},
+	"application/javascript":   {},
+	"text/ecmascript":          {},
+	"application/ecmascript":   {},
+	"module":                   {},
+	"text/jscript":             {},
+	"text/livescript":          {},
 	"text/x-ecmascript":        {},
 	"text/x-javascript":        {},
-	"application/x-javascript":  {},
-	"application/x-ecmascript":  {},
+	"application/x-javascript": {},
+	"application/x-ecmascript": {},
 }
 
 // executableURLSinks maps URL attribute names to the set of tags where

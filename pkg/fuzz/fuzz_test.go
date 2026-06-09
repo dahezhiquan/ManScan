@@ -3,11 +3,11 @@ package fuzz
 import (
 	"testing"
 
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/variables"
+	"ManScan/pkg/types"
+	"ManScan/pkg/utils"
 	"github.com/projectdiscovery/goflags"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/variables"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
 	"github.com/stretchr/testify/require"
 )
 

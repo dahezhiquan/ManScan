@@ -12,8 +12,8 @@ import (
 
 	"github.com/julienschmidt/httprouter"
 
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/signer"
+	"ManScan/internal/tests/testutils"
+	"ManScan/pkg/templates/signer"
 	sliceutil "github.com/projectdiscovery/utils/slice"
 )
 

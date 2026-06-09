@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/types"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 	"github.com/projectdiscovery/utils/errkit"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )

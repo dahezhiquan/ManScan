@@ -12,7 +12,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
+	"ManScan/internal/tests/testutils"
 )
 
 func newTemplateDirTarget(t *testing.T) string {

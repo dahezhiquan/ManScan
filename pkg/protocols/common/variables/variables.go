@@ -3,17 +3,17 @@ package variables
 import (
 	"strings"
 
+	"ManScan/pkg/operators/common/dsl"
+	"ManScan/pkg/protocols/common/expressions"
+	"ManScan/pkg/protocols/common/generators"
+	"ManScan/pkg/protocols/common/interactsh"
+	"ManScan/pkg/protocols/common/marker"
+	protocolutils "ManScan/pkg/protocols/utils"
+	"ManScan/pkg/types"
+	"ManScan/pkg/utils"
+	"ManScan/pkg/utils/json"
 	"github.com/invopop/jsonschema"
 	"github.com/projectdiscovery/govaluate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/common/dsl"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/expressions"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/generators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/interactsh"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/marker"
-	protocolutils "github.com/projectdiscovery/nuclei/v3/pkg/protocols/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 )
 

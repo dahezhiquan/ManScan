@@ -6,8 +6,8 @@ import (
 	"os"
 	"testing"
 
+	nuclei "ManScan/lib"
 	"github.com/kitabisa/go-ci"
-	nuclei "github.com/projectdiscovery/nuclei/v3/lib"
 	"github.com/remeh/sizedwaitgroup"
 )
 

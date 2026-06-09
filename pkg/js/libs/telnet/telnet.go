@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/utils/telnetmini"
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins/services/telnet"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/telnetmini"
 )
 
 // Telnet protocol constants

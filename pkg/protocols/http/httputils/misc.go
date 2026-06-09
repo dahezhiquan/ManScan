@@ -3,7 +3,7 @@ package httputils
 import (
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"ManScan/pkg/types"
 	mapsutil "github.com/projectdiscovery/utils/maps"
 )
 

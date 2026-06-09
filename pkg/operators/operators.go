@@ -8,10 +8,10 @@ import (
 
 	"github.com/pkg/errors"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/extractors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/matchers"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/generators"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/utils/excludematchers"
+	"ManScan/pkg/operators/extractors"
+	"ManScan/pkg/operators/matchers"
+	"ManScan/pkg/protocols/common/generators"
+	"ManScan/pkg/protocols/common/utils/excludematchers"
 	sliceutil "github.com/projectdiscovery/utils/slice"
 )
 

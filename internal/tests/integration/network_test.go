@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
+	"ManScan/internal/tests/testutils"
 	"github.com/projectdiscovery/utils/reader"
 )
 

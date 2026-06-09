@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
+	"ManScan/pkg/protocols/common/protocolstate"
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins/services/rdp"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
 )
 
 type (

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"ManScan/pkg/js/libs/goexec"
+	"ManScan/pkg/js/utils"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/libs/goexec"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/utils"
 )
 
 func TestCommandMapsAdapterRequest(t *testing.T) {

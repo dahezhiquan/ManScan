@@ -8,9 +8,9 @@ import (
 	"github.com/antchfx/xmlquery"
 	"github.com/projectdiscovery/govaluate"
 
+	"ManScan/pkg/operators/common/dsl"
+	"ManScan/pkg/protocols/common/expressions"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/common/dsl"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/expressions"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 )
 

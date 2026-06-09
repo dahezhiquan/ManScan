@@ -1,10 +1,10 @@
 package krbroast
 
 import (
-	lib_krbroast "github.com/projectdiscovery/nuclei/v3/pkg/js/libs/krbroast"
+	lib_krbroast "ManScan/pkg/js/libs/krbroast"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 )
 
 var (
@@ -15,8 +15,8 @@ func init() {
 	module.Set(
 		gojs.Objects{
 			// Functions
-			"ASRepRoast":  lib_krbroast.ASRepRoast,
-			"Kerberoast":  lib_krbroast.Kerberoast,
+			"ASRepRoast": lib_krbroast.ASRepRoast,
+			"Kerberoast": lib_krbroast.Kerberoast,
 
 			// Var and consts
 

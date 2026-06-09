@@ -4,9 +4,9 @@ import (
 	"os"
 	"sync"
 
+	"ManScan/pkg/output"
+	"ManScan/pkg/utils/json"
 	"github.com/pkg/errors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 )
 
 type Exporter struct {

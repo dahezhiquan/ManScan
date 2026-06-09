@@ -7,7 +7,7 @@ import (
 
 	gptransport "github.com/Mzack9999/goimpacket/pkg/transport"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 // init wires the goimpacket package-level dial hook as a strict tripwire.

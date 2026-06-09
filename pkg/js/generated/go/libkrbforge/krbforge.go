@@ -1,10 +1,10 @@
 package krbforge
 
 import (
-	lib_krbforge "github.com/projectdiscovery/nuclei/v3/pkg/js/libs/krbforge"
+	lib_krbforge "ManScan/pkg/js/libs/krbforge"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 )
 
 var (

@@ -3,9 +3,9 @@ package severity
 import (
 	"strings"
 
+	"ManScan/pkg/utils/json"
 	"github.com/invopop/jsonschema"
 	"github.com/pkg/errors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 )
 
 type Severity int

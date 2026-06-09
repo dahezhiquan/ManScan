@@ -7,8 +7,8 @@ import (
 	"github.com/antchfx/htmlquery"
 	"github.com/antchfx/xmlquery"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
+	"ManScan/pkg/types"
+	"ManScan/pkg/utils/json"
 )
 
 // ExtractRegex extracts text from a corpus and returns it

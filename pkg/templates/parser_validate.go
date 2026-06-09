@@ -3,8 +3,8 @@ package templates
 import (
 	"errors"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
+	"ManScan/pkg/templates/types"
+	"ManScan/pkg/utils"
 	"github.com/projectdiscovery/utils/errkit"
 )
 

@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"ManScan/pkg/input/types"
 	"github.com/projectdiscovery/httpx/common/httpx"
-	"github.com/projectdiscovery/nuclei/v3/pkg/input/types"
 	"github.com/projectdiscovery/useragent"
 	sliceutil "github.com/projectdiscovery/utils/slice"
 )

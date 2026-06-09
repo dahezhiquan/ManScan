@@ -5,9 +5,9 @@ import (
 	"slices"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/templates"
+	"ManScan/pkg/templates/types"
 )
 
 // Metadata contains lightweight metadata extracted from a template.

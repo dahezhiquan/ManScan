@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/input/types"
+	"ManScan/pkg/input/types"
 	"github.com/stretchr/testify/require"
 )
 

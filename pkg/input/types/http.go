@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
+	"ManScan/pkg/utils/json"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/projectdiscovery/useragent"
 	"github.com/projectdiscovery/utils/conversion"

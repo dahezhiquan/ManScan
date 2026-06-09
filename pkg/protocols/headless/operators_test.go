@@ -3,8 +3,8 @@ package headless
 import (
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/extractors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/matchers"
+	"ManScan/pkg/operators/extractors"
+	"ManScan/pkg/operators/matchers"
 	"github.com/stretchr/testify/require"
 )
 

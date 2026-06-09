@@ -3,7 +3,7 @@ package customtemplates
 import (
 	"context"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
+	"ManScan/pkg/types"
 	"github.com/projectdiscovery/utils/errkit"
 )
 

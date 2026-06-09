@@ -6,13 +6,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ManScan/pkg/input/provider"
+	"ManScan/pkg/protocols/common/contextargs"
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/utils"
 	"github.com/pkg/errors"
 	"github.com/projectdiscovery/hmap/store/hybrid"
 	"github.com/projectdiscovery/httpx/common/httpx"
-	"github.com/projectdiscovery/nuclei/v3/pkg/input/provider"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/contextargs"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 	syncutil "github.com/projectdiscovery/utils/sync"
 )

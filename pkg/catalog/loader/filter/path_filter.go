@@ -1,7 +1,7 @@
 package filter
 
 import (
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog"
+	"ManScan/pkg/catalog"
 )
 
 // PathFilter is a path based template filter

@@ -6,12 +6,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/reporting/exporters/markdown/util"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils"
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/model"
+	"ManScan/pkg/output"
+	"ManScan/pkg/reporting/exporters/markdown/util"
+	"ManScan/pkg/types"
+	"ManScan/pkg/utils"
 	unitutils "github.com/projectdiscovery/utils/unit"
 )
 

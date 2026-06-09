@@ -5,10 +5,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/portutil"
+	"ManScan/internal/tests/testutils"
+	"ManScan/pkg/model"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/protocols/common/portutil"
 )
 
 func TestResolvePort(t *testing.T) {

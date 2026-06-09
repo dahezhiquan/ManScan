@@ -1,9 +1,9 @@
 package signer
 
 import (
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/keys"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/keys"
 	"github.com/projectdiscovery/utils/errkit"
 )
 

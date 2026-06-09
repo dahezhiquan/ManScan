@@ -1,7 +1,7 @@
 package reporting
 
 import (
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
+	"ManScan/pkg/output"
 )
 
 // Client is a client for nuclei issue tracking module

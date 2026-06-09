@@ -6,15 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	nucleiConfig "ManScan/pkg/catalog/config"
+	"ManScan/pkg/types"
+	filepathutil "ManScan/pkg/utils/filepath"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/projectdiscovery/gologger"
-	nucleiConfig "github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
-	filepathutil "github.com/projectdiscovery/nuclei/v3/pkg/utils/filepath"
 	"github.com/projectdiscovery/utils/errkit"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 )

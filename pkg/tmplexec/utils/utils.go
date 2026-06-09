@@ -3,7 +3,7 @@ package utils
 import (
 	"strings"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
+	"ManScan/pkg/output"
 	mapsutil "github.com/projectdiscovery/utils/maps"
 )
 

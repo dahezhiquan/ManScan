@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ManScan/pkg/catalog/config"
+	filepathutil "ManScan/pkg/utils/filepath"
 	"github.com/logrusorgru/aurora/v4"
 	"github.com/pkg/errors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	filepathutil "github.com/projectdiscovery/nuclei/v3/pkg/utils/filepath"
 	stringsutil "github.com/projectdiscovery/utils/strings"
 	updateutils "github.com/projectdiscovery/utils/update"
 	urlutil "github.com/projectdiscovery/utils/url"

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	nuclei "github.com/projectdiscovery/nuclei/v3/lib"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
+	nuclei "ManScan/lib"
+	"ManScan/pkg/templates/types"
 )
 
 func main() {

@@ -6,9 +6,9 @@ import (
 	"reflect"
 	"sync"
 
+	"ManScan/pkg/js/utils"
 	"github.com/Mzack9999/goja"
 	"github.com/Mzack9999/goja_nodejs/require"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/utils"
 )
 
 type Objects map[string]interface{}

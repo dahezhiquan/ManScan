@@ -1,10 +1,10 @@
 package fs
 
 import (
-	lib_fs "github.com/projectdiscovery/nuclei/v3/pkg/js/libs/fs"
+	lib_fs "ManScan/pkg/js/libs/fs"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 )
 
 var (

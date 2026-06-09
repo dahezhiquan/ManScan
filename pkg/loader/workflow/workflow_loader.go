@@ -1,12 +1,12 @@
 package workflow
 
 import (
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/catalog/loader/filter"
+	"ManScan/pkg/model"
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/templates"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/loader/filter"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
 )
 
 type workflowLoader struct {

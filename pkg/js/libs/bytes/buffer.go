@@ -3,9 +3,9 @@ package bytes
 import (
 	"encoding/hex"
 
+	"ManScan/pkg/js/libs/structs"
+	"ManScan/pkg/js/utils"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/libs/structs"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/utils"
 )
 
 type (

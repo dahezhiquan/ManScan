@@ -1,10 +1,10 @@
 package smb
 
 import (
-	lib_smb "github.com/projectdiscovery/nuclei/v3/pkg/js/libs/smb"
+	lib_smb "ManScan/pkg/js/libs/smb"
 
+	"ManScan/pkg/js/gojs"
 	"github.com/Mzack9999/goja"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
 )
 
 var (

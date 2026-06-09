@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/types"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 	"github.com/projectdiscovery/utils/errkit"
 )
 

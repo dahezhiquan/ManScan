@@ -3,11 +3,11 @@ package json
 import (
 	"io"
 
+	"ManScan/pkg/input/formats"
+	"ManScan/pkg/input/types"
+	"ManScan/pkg/utils/json"
 	"github.com/pkg/errors"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/input/formats"
-	"github.com/projectdiscovery/nuclei/v3/pkg/input/types"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 )
 
 // JSONFormat is a JSON format parser for nuclei

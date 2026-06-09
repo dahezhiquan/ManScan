@@ -3,15 +3,15 @@ package loader_test
 import (
 	"testing"
 
+	"ManScan/internal/tests/testutils"
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/catalog/disk"
+	"ManScan/pkg/catalog/loader"
+	"ManScan/pkg/loader/workflow"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/templates"
+	templateTypes "ManScan/pkg/templates/types"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/disk"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/loader"
-	"github.com/projectdiscovery/nuclei/v3/pkg/loader/workflow"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
-	templateTypes "github.com/projectdiscovery/nuclei/v3/pkg/templates/types"
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
 )
 
 func BenchmarkStoreValidateTemplates(b *testing.B) {

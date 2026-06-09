@@ -8,7 +8,7 @@ import (
 	gpwmiexec "github.com/Mzack9999/goimpacket/pkg/wmiexec"
 	"github.com/oiweiwei/go-msrpc/dcerpc"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 // WmiExecResult is returned by WmiExec.

@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"regexp"
 
+	"ManScan/pkg/templates"
+	"ManScan/pkg/utils/json"
 	"github.com/invopop/jsonschema"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
 )
 
 var pathRegex = regexp.MustCompile(`github\.com/projectdiscovery/nuclei/v3/(?:internal|pkg)/(?:.*/)?([A-Za-z.]+)`)

@@ -9,8 +9,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
-	"github.com/projectdiscovery/nuclei/v3/pkg/reporting/exporters/mongo"
+	"ManScan/pkg/output"
+	"ManScan/pkg/reporting/exporters/mongo"
 	"github.com/testcontainers/testcontainers-go"
 	mongocontainer "github.com/testcontainers/testcontainers-go/modules/mongodb"
 

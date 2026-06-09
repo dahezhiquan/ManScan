@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
+	"ManScan/internal/tests/testutils"
 )
 
 type integrationCase struct {

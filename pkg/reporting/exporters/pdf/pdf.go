@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/output"
 	fpdf "github.com/go-pdf/fpdf"
 	"github.com/pkg/errors"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/output"
 )
 
 const (

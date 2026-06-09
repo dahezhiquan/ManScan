@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/interactsh"
+	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/interactsh"
 )
 
 func TestEvaluateVarsWithInteractsh_RaceCondition(t *testing.T) {

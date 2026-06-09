@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"sync"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/templates"
 	"github.com/maypok86/otter/v2"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/templates"
 	folderutil "github.com/projectdiscovery/utils/folder"
 )
 

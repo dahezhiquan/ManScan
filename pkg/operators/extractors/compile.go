@@ -5,10 +5,10 @@ import (
 	"regexp"
 	"strings"
 
+	"ManScan/pkg/operators/cache"
+	"ManScan/pkg/operators/common/dsl"
 	"github.com/itchyny/gojq"
 	"github.com/projectdiscovery/govaluate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/cache"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators/common/dsl"
 )
 
 // CompileExtractors performs the initial setup operation on an extractor

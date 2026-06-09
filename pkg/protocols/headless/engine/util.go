@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/expressions"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/marker"
+	"ManScan/pkg/protocols/common/expressions"
+	"ManScan/pkg/protocols/common/marker"
 	"github.com/valyala/fasttemplate"
 )
 

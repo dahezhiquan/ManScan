@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/disk"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/severity"
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
+	"ManScan/pkg/catalog/disk"
+	"ManScan/pkg/model"
+	"ManScan/pkg/model/types/severity"
+	"ManScan/pkg/model/types/stringslice"
 	"github.com/stretchr/testify/require"
 )
 

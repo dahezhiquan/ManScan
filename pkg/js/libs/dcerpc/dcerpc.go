@@ -28,8 +28,8 @@ import (
 	gpsmbexec "github.com/Mzack9999/goimpacket/pkg/smbexec"
 	"github.com/Mzack9999/goja"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/utils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/js/utils"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 // Endpoint is a flat representation of an entry returned by the EPMAPPER.
@@ -103,7 +103,7 @@ func NewClient(call goja.ConstructorCall, runtime *goja.Runtime) *goja.Object {
 //
 // @example
 // ```javascript
-// const c = new dcerpc.Client('dc01', 'acme.local', 'admin', '');
+// const c = new dcerpc.Client('dc01', 'acme.local', 'admin', ”);
 // c.SetHash('aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0');
 // ```
 func (c *Client) SetHash(hash string) {
@@ -329,7 +329,6 @@ func (c *Client) SmbExec(command, share string) (*SmbExecResult, error) {
 	return &SmbExecResult{ServiceName: res.ServiceName, Output: res.Output}, nil
 }
 
-
 // AtExecResult is returned by AtExec.
 type AtExecResult struct {
 	TaskName string `json:"task_name"`
@@ -428,8 +427,8 @@ func (c *Client) SmbCat(share, file string) (string, error) {
 // @example
 // ```javascript
 // const c = new dcerpc.Client('dc01', 'acme.local', 'admin', 'P@ss');
-// const entries = c.SmbLs('backup', '');
-// for (const e of entries) { log(e.Name + (e.IsDir ? '/' : '')); }
+// const entries = c.SmbLs('backup', ”);
+// for (const e of entries) { log(e.Name + (e.IsDir ? '/' : ”)); }
 // ```
 type FileEntry struct {
 	Name  string `json:"name"`

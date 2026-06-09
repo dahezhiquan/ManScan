@@ -5,14 +5,14 @@ import (
 	"reflect"
 	"sync"
 
+	"ManScan/pkg/js/gojs"
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/utils/vardump"
+	"ManScan/pkg/tmplexec/flow/builtin"
+	"ManScan/pkg/types"
 	"github.com/Mzack9999/goja"
 	"github.com/logrusorgru/aurora/v4"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/js/gojs"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/utils/vardump"
-	"github.com/projectdiscovery/nuclei/v3/pkg/tmplexec/flow/builtin"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 	"github.com/projectdiscovery/utils/sync/sizedpool"
 )
 

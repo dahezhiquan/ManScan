@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/protocolstate"
 )
 
 // Runner executes a normalized Windows helper request.

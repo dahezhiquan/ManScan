@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
+	"ManScan/pkg/authprovider/authx"
 	"github.com/projectdiscovery/gologger"
-	"github.com/projectdiscovery/nuclei/v3/pkg/authprovider/authx"
 	"github.com/projectdiscovery/rawhttp/client"
 	"github.com/projectdiscovery/utils/errkit"
 	stringsutil "github.com/projectdiscovery/utils/strings"

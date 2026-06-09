@@ -3,8 +3,8 @@ package workflows
 import (
 	"testing"
 
-	"github.com/projectdiscovery/nuclei/v3/pkg/model/types/stringslice"
-	"github.com/projectdiscovery/nuclei/v3/pkg/operators"
+	"ManScan/pkg/model/types/stringslice"
+	"ManScan/pkg/operators"
 	"github.com/stretchr/testify/require"
 )
 

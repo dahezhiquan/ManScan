@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/types"
 	"github.com/Mzack9999/goja"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/gologger/levels"
-	"github.com/projectdiscovery/nuclei/v3/pkg/catalog/config"
-	"github.com/projectdiscovery/nuclei/v3/pkg/protocols/common/protocolstate"
-	"github.com/projectdiscovery/nuclei/v3/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 

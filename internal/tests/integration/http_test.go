@@ -21,8 +21,8 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"gopkg.in/yaml.v2"
 
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
-	"github.com/projectdiscovery/nuclei/v3/pkg/utils/json"
+	"ManScan/internal/tests/testutils"
+	"ManScan/pkg/utils/json"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/projectdiscovery/utils/errkit"
 	logutil "github.com/projectdiscovery/utils/log"

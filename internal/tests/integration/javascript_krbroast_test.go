@@ -20,7 +20,7 @@ import (
 	"github.com/jcmturner/gokrb5/v8/messages"
 	"github.com/jcmturner/gokrb5/v8/types"
 
-	"github.com/projectdiscovery/nuclei/v3/internal/tests/testutils"
+	"ManScan/internal/tests/testutils"
 )
 
 // javascriptASRepRoast exercises templates/ad/asrep-roast.yaml end-to-end
