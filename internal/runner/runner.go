@@ -27,7 +27,6 @@ import (
 	fileutil "github.com/projectdiscovery/utils/file"
 	permissionutil "github.com/projectdiscovery/utils/permission"
 	pprofutil "github.com/projectdiscovery/utils/pprof"
-	updateutils "github.com/projectdiscovery/utils/update"
 
 	"github.com/logrusorgru/aurora/v4"
 	"github.com/pkg/errors"
@@ -896,18 +895,6 @@ func (r *Runner) displayExecutionInfo(store *loader.Store) {
 	stats.ForceDisplayWarning(templates.SkippedUnsignedStats)
 	stats.ForceDisplayWarning(templates.SkippedRequestSignatureStats)
 
-	cfg := config.DefaultConfig
-
-	updateutils.Aurora = r.colorizer
-	versionInfo := func(version, latestVersion, versionType string) string {
-		if !cfg.CanCheckForUpdates() {
-			return fmt.Sprintf("Current %s version: %v (%s) - remove '-duc' flag to enable update checks", versionType, version, r.colorizer.BrightYellow("unknown"))
-		}
-		return fmt.Sprintf("Current %s version: %v %v", versionType, version, updateutils.GetVersionDescription(version, latestVersion))
-	}
-
-	gologger.Info().Msg(versionInfo(config.Version, cfg.LatestNucleiVersion, "nuclei"))
-	gologger.Info().Msg(versionInfo(cfg.TemplateVersion, cfg.LatestNucleiTemplatesVersion, "nuclei-templates"))
 	if !HideAutoSaveMsg {
 		if r.pdcpUploadErrMsg != "" {
 			r.Logger.Warning().Msgf("%s", r.pdcpUploadErrMsg)

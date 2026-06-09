@@ -394,9 +394,10 @@ func init() {
 		}
 	}
 	DefaultConfig = &Config{
-		homeDir:   folderutil.HomeDirOrDefault(""),
-		configDir: ConfigDir,
-		Logger:    gologger.DefaultLogger,
+		homeDir:        folderutil.HomeDirOrDefault(""),
+		configDir:      ConfigDir,
+		Logger:         gologger.DefaultLogger,
+		disableUpdates: true,
 	}
 
 	// when enabled will log events in more verbosity than -v or -debug

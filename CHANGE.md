@@ -19,3 +19,14 @@
 - 修改目的或影响：
   - 让仓库作为本地模块 `ManScan` 编译时，内部包引用能够直接解析到当前工作区，避免继续引用旧的 `github.com/projectdiscovery/nuclei/v3` 路径导致构建或测试报错。
   - 这次变更主要是模块路径层面的统一替换，不涉及业务逻辑调整，但会影响所有依赖仓库内部包路径的源码、测试、示例与文档引用方式。
+
+## 2026-06-09 16:42 默认关闭更新检查并移除更新提示
+
+- 变动目录：`pkg/catalog/config/`、`internal/runner/`
+- 变动文件：`pkg/catalog/config/nucleiconfig.go`、`internal/runner/runner.go`
+- 具体修改内容：
+  - 在 `pkg/catalog/config/nucleiconfig.go` 中调整 `DefaultConfig` 初始化逻辑，将 `disableUpdates` 默认设为 `true`，使 `ManScan` 启动时默认不执行引擎更新检查和模板更新检查。
+  - 在 `internal/runner/runner.go` 中移除启动阶段输出的 `nuclei` 与 `nuclei-templates` 版本更新提示，避免默认关闭更新检查后仍向终端输出更新相关提醒文案。
+- 修改目的或影响：
+  - 让 `ManScan` 在默认配置下不再自动检查程序更新与模板更新，减少启动时的外部更新行为。
+  - 避免默认禁用更新检查后仍出现更新相关提示，保持终端输出更干净，同时不影响用户显式执行更新相关参数时的原有能力。
