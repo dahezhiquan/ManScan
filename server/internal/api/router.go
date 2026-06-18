@@ -1,0 +1,34 @@
+package api
+
+import (
+	"ManScan/server/internal/handler"
+	"ManScan/server/internal/middleware"
+	"ManScan/server/internal/pkg/logx"
+
+	"github.com/gin-gonic/gin"
+)
+
+func NewRouter(
+	logger *logx.Logger,
+	templateHandler handler.TemplateHandler,
+	scanTaskHandler handler.ScanTaskHandler,
+) *gin.Engine {
+	router := gin.New()
+	router.Use(gin.Recovery())
+	router.Use(middleware.Logger(logger))
+
+	v1 := router.Group("/api/v1")
+
+	v1.GET("/templates", templateHandler.List)
+	v1.GET("/templates/:id", templateHandler.Detail)
+	v1.GET("/templates/options/tags", templateHandler.Tags)
+	v1.GET("/templates/options/protocols", templateHandler.Protocols)
+	v1.GET("/templates/stats", templateHandler.Stats)
+
+	v1.POST("/scans", scanTaskHandler.Create)
+	v1.GET("/scans/:id", scanTaskHandler.Get)
+	v1.GET("/scans/:id/logs", scanTaskHandler.Logs)
+	v1.GET("/scans/:id/stream", scanTaskHandler.Stream)
+
+	return router
+}
