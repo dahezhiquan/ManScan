@@ -30,7 +30,7 @@ type ScanTaskService interface {
 	Create(ctx context.Context, request dto.CreateScanTaskRequest) (*dto.ScanTaskSummary, error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int) (*dto.ScanTaskLogsResponse, error)
-	Subscribe(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func(), error)
+	Subscribe(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() scanruntime.TaskProgressSnapshot, func(), error)
 }
 
 type scanTaskService struct {
@@ -229,19 +229,22 @@ func (s *scanTaskService) GetLogs(ctx context.Context, taskID, offset int64, lim
 func (s *scanTaskService) Subscribe(
 	ctx context.Context,
 	taskID int64,
-) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func(), error) {
+) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() scanruntime.TaskProgressSnapshot, func(), error) {
 	logs, err := s.GetLogs(ctx, taskID, 0, scanruntime.MaxLogPageSize)
 	if err != nil {
-		return nil, scanruntime.TaskProgressSnapshot{}, nil, 0, nil, nil, err
+		return nil, scanruntime.TaskProgressSnapshot{}, nil, 0, nil, nil, nil, err
 	}
 
 	state := s.getState(taskID)
 	if state == nil {
-		return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, nil, nil, nil
+		return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, nil, nil, nil, nil
 	}
 
 	ch, cancel := state.Subscribe()
-	return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, ch, cancel, nil
+	currentProgress := func() scanruntime.TaskProgressSnapshot {
+		return state.SnapshotProgress()
+	}
+	return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, ch, currentProgress, cancel, nil
 }
 
 func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, state *scanruntime.State) {
@@ -262,7 +265,7 @@ func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, sta
 	if err := s.executeTaskPlan(plan, state); err != nil {
 		finishedAt := time.Now()
 		state.Append("error", "task_failed", "扫描任务执行失败")
-		_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, finishedAt, state.SnapshotResultSummary()))
+		_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, startedAt, finishedAt, state.SnapshotResultSummary()))
 		state.MarkFinished("failed", finishedAt, "扫描任务执行失败")
 		_ = s.repository.UpdateStatus(context.Background(), taskID, "failed", nil, &finishedAt)
 		s.releaseState(taskID)
@@ -271,7 +274,7 @@ func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, sta
 
 	finishedAt := time.Now()
 	state.Append("info", "task_finished", "扫描任务执行完成")
-	_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, finishedAt, state.SnapshotResultSummary()))
+	_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, startedAt, finishedAt, state.SnapshotResultSummary()))
 	state.MarkFinished("success", finishedAt, "扫描任务执行完成")
 	_ = s.repository.UpdateStatus(context.Background(), taskID, "success", nil, &finishedAt)
 	s.releaseState(taskID)
@@ -440,7 +443,7 @@ func resolveManScanCommand(rootDir string) (string, []string) {
 	if info, err := os.Stat(binaryPath); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
 		return binaryPath, nil
 	}
-	return "go", []string{"run", "./cmd/manscan"}
+	return "go", []string{"run", "./cmd/nuclei"}
 }
 
 func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile string) []string {
@@ -577,7 +580,7 @@ func toScanTaskSummary(task *entity.ScanTask) dto.ScanTaskSummary {
 	}
 }
 
-func toScanTaskResult(taskID int64, taskName string, finishedAt time.Time, summary scanruntime.ResultSummary) *entity.ScanTaskResult {
+func toScanTaskResult(taskID int64, taskName string, startedAt, finishedAt time.Time, summary scanruntime.ResultSummary) *entity.ScanTaskResult {
 	return &entity.ScanTaskResult{
 		TaskID:        taskID,
 		TaskName:      taskName,
@@ -588,6 +591,7 @@ func toScanTaskResult(taskID int64, taskName string, finishedAt time.Time, summa
 		InfoCount:     summary.InfoCount,
 		PluginCount:   summary.PluginCount,
 		TargetCount:   summary.TargetCount,
+		CreatedAt:     &startedAt,
 		FinishedAt:    &finishedAt,
 	}
 }

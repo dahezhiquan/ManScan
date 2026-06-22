@@ -411,7 +411,7 @@ data: {"task":{"id":1,"status":"running"},"progress":{"percent":10},"events":[],
 
 ```text
 event: event
-data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","nextOffset":3}
+data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","progress":{"hosts":1,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":3}
 ```
 
 - 错误码说明：

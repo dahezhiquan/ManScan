@@ -3,3 +3,4 @@
 /cmd/nuclei/nuclei
 /data/
 **/.DS_Store
+/todo.tmp

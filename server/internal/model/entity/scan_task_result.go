@@ -13,6 +13,7 @@ type ScanTaskResult struct {
 	InfoCount     int        `gorm:"column:info_count"`
 	PluginCount   int        `gorm:"column:plugin_count"`
 	TargetCount   int        `gorm:"column:target_count"`
+	CreatedAt     *time.Time `gorm:"column:created_at"`
 	FinishedAt    *time.Time `gorm:"column:finished_at"`
 }
 
