@@ -56,7 +56,7 @@ func NewScanTaskService(
 	logger *logx.Logger,
 	rootDir string,
 ) ScanTaskService {
-	runtimeDir := filepath.Join(rootDir, "server", "runtime", "scans")
+	runtimeDir := filepath.Join(rootDir, "data", "runtime")
 	_ = os.MkdirAll(runtimeDir, 0o755)
 
 	return &scanTaskService{

@@ -13,6 +13,7 @@ data/
 ├── project/
 ├── reports/
 ├── responses/
+├── runtime/
 ├── stats/
 ├── templates/
 └── tmp/
@@ -124,6 +125,43 @@ data/
 - 该目录下具体文件名由底层 `hybrid.HybridMap` 存储实现决定。
 - 本项目只保证其默认父目录迁移到 `data/project/`。
 
+## 扫描任务运行时目录
+
+### `data/runtime/<task-id>/targets.txt`
+
+- 触发条件：通过 `server` 创建扫描任务并进入执行阶段时。
+- 作用：
+  - 保存当前任务整理后的目标列表。
+  - 供扫描子进程通过 `-l` 参数读取。
+
+### `data/runtime/<task-id>/progress.json`
+
+- 触发条件：扫描任务初始化运行时状态后。
+- 作用：
+  - 保存当前任务的进度快照。
+  - 包括主机数、模板数、预估总请求数、已完成请求数、错误数和完成状态等字段。
+
+### `data/runtime/<task-id>/events.jsonl`
+
+- 触发条件：扫描任务运行期间产生事件日志时。
+- 作用：
+  - 按 JSONL 持续记录任务事件。
+  - 供扫描详情页日志列表与 SSE 实时日志流读取。
+
+### `data/runtime/<task-id>/trace.log`
+
+- 触发条件：扫描子进程输出 trace 请求日志时。
+- 作用：
+  - 记录实际发送的请求轨迹。
+  - 用于回填运行中的实际请求数统计。
+
+### `data/runtime/<task-id>/error.log`
+
+- 触发条件：扫描子进程输出结构化错误日志时。
+- 作用：
+  - 保存模板执行、请求发送等过程中的错误明细。
+  - 供任务错误计数与前端错误日志展示复用。
+
 ## 响应落盘目录
 
 ### `data/responses/`
@@ -218,6 +256,7 @@ data/
 - 临时文件放到 `data/tmp/`
 - 项目去重缓存放到 `data/project/`
 - 响应落盘放到 `data/responses/`
+- 扫描任务运行时文件放到 `data/runtime/`
 - 报告放到 `data/reports/`
 - 统计文件放到 `data/stats/`
 

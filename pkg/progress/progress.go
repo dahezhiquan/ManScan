@@ -98,6 +98,10 @@ func (p *StatsTicker) Init(hostCount int64, rulesCount int, requestCount int64) 
 			gologger.Warning().Msgf("Couldn't start statistics: %s", err)
 		}
 
+		// Emit one snapshot immediately so callers can observe the estimated
+		// total request count before the first periodic stats tick arrives.
+		p.emitCurrentSummary()
+
 		// Note: this is needed and is responsible for the tick event
 		p.stats.GetStatResponse(p.tickDuration, func(s string, err error) error {
 			if err != nil {
@@ -172,7 +176,7 @@ func (p *StatsTicker) makePrintCallback() func(stats clistats.StatisticsClient) 
 
 		if okRequests && okTotal && duration > 0 && !p.cloud {
 			builder.WriteString(" | RPS: ")
-			builder.WriteString(clistats.String(uint64(float64(requests) / duration.Seconds())))
+			builder.WriteString(clistats.String(calculateRPS(requests, duration)))
 		}
 
 		if matched, ok := stats.GetCounter("matched"); ok {
@@ -196,8 +200,7 @@ func (p *StatsTicker) makePrintCallback() func(stats clistats.StatisticsClient) 
 			builder.WriteString(clistats.String(total))
 			builder.WriteRune(' ')
 			builder.WriteRune('(')
-			//nolint:gomnd // this is not a magic number
-			builder.WriteString(clistats.String(uint64(float64(requests) / float64(total) * 100.0)))
+			builder.WriteString(clistats.String(calculateProgressPercent(requests, total)))
 			builder.WriteRune('%')
 			builder.WriteRune(')')
 			builder.WriteRune('\n')
@@ -240,16 +243,35 @@ func metricsMap(stats clistats.StatisticsClient) map[string]interface{} {
 	requests, _ := stats.GetCounter("requests")
 	results["requests"] = clistats.String(requests)
 	total, _ := stats.GetCounter("total")
+	if total == 0 {
+		total = requests
+	}
 	results["total"] = clistats.String(total)
-	results["rps"] = clistats.String(uint64(float64(requests) / duration.Seconds()))
+	results["rps"] = clistats.String(calculateRPS(requests, duration))
 	errors, _ := stats.GetCounter("errors")
 	results["errors"] = clistats.String(errors)
-
-	// nolint:gomnd // this is not a magic number
-	percentData := (float64(requests) * float64(100)) / float64(total)
-	percent := clistats.String(uint64(percentData))
-	results["percent"] = percent
+	results["percent"] = clistats.String(calculateProgressPercent(requests, total))
 	return results
+}
+
+func calculateRPS(requests uint64, duration time.Duration) uint64 {
+	if duration <= 0 {
+		return 0
+	}
+
+	return uint64(float64(requests) / duration.Seconds())
+}
+
+func calculateProgressPercent(requests, total uint64) uint64 {
+	if total == 0 {
+		if requests > 0 {
+			return 100
+		}
+		return 0
+	}
+
+	//nolint:gomnd // convert ratio to 0-100 percentage
+	return uint64(float64(requests) / float64(total) * 100.0)
 }
 
 // fmtDuration formats the duration for the time elapsed
@@ -267,13 +289,18 @@ func fmtDuration(d time.Duration) string {
 func (p *StatsTicker) Stop() {
 	if p.active {
 		// Print one final summary
-		if p.outputJSON {
-			printCallbackJSON(p.stats)
-		} else {
-			p.makePrintCallback()(p.stats)
-		}
+		p.emitCurrentSummary()
 		if err := p.stats.Stop(); err != nil {
 			gologger.Warning().Msgf("Couldn't stop statistics: %s", err)
 		}
 	}
+}
+
+func (p *StatsTicker) emitCurrentSummary() {
+	if p.outputJSON {
+		printCallbackJSON(p.stats)
+		return
+	}
+
+	p.makePrintCallback()(p.stats)
 }
