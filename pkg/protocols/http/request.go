@@ -767,8 +767,10 @@ func (request *Request) executeRequest(input *contextargs.Context, generatedRequ
 			if parsed, parseErr := urlutil.ParseURL(formedURL, true); parseErr == nil {
 				hostname = parsed.Host
 			}
+			request.options.Progress.IncrementActualRequests()
 			resp, err = generatedRequest.pipelinedClient.DoRaw(generatedRequest.rawRequest.Method, input.MetaInput.Input, generatedRequest.rawRequest.Path, generators.ExpandMapValues(generatedRequest.rawRequest.Headers), io.NopCloser(strings.NewReader(generatedRequest.rawRequest.Data)))
 		} else if generatedRequest.request != nil {
+			request.options.Progress.IncrementActualRequests()
 			resp, err = generatedRequest.pipelinedClient.Dor(generatedRequest.request)
 		}
 	} else if generatedRequest.original.Unsafe && generatedRequest.rawRequest != nil {
@@ -805,6 +807,7 @@ func (request *Request) executeRequest(input *contextargs.Context, generatedRequ
 		formedURL = fmt.Sprintf("%s%s", inputUrl, generatedRequest.rawRequest.Path)
 
 		// send rawhttp request and get response
+		request.options.Progress.IncrementActualRequests()
 		resp, err = httpclientpool.SendRawRequest(generatedRequest.original.rawhttpClient, &httpclientpool.RawHttpRequestOpts{
 			Method:  generatedRequest.rawRequest.Method,
 			URL:     inputUrl,
@@ -860,6 +863,7 @@ func (request *Request) executeRequest(input *contextargs.Context, generatedRequ
 				httpclient = client
 			}
 
+			request.options.Progress.IncrementActualRequests()
 			resp, err = httpclient.Do(generatedRequest.request)
 		}
 	}

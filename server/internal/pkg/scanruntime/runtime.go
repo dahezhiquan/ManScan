@@ -70,13 +70,14 @@ type progressLogState struct {
 }
 
 type cliStatsPayload struct {
-	Templates string `json:"templates"`
-	Hosts     string `json:"hosts"`
-	Matched   string `json:"matched"`
-	Requests  string `json:"requests"`
-	Total     string `json:"total"`
-	Errors    string `json:"errors"`
-	Percent   string `json:"percent"`
+	Templates      string `json:"templates"`
+	Hosts          string `json:"hosts"`
+	Matched        string `json:"matched"`
+	Requests       string `json:"requests"`
+	ActualRequests string `json:"actual_requests"`
+	Total          string `json:"total"`
+	Errors         string `json:"errors"`
+	Percent        string `json:"percent"`
 }
 
 type scannerErrorLogEntry struct {
@@ -88,11 +89,6 @@ type scannerErrorLogEntry struct {
 	Error     string     `json:"error"`
 }
 
-type scannerTraceLogEntry struct {
-	Type      string `json:"type"`
-	FromCache *bool  `json:"from_cache,omitempty"`
-}
-
 // State 保存单个扫描任务的运行时状态。
 type State struct {
 	ID               int64
@@ -100,7 +96,6 @@ type State struct {
 	TaskName         string
 	TargetCount      int
 	LogFilePath      string
-	TraceLogFilePath string
 	ErrorLogFilePath string
 	ProgressFilePath string
 	LogFile          *os.File
@@ -134,7 +129,6 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 		TaskName:         taskName,
 		TargetCount:      targetCount,
 		LogFilePath:      logFilePath,
-		TraceLogFilePath: filepath.Join(taskDir, "trace.log"),
 		ErrorLogFilePath: filepath.Join(taskDir, "error.log"),
 		ProgressFilePath: filepath.Join(taskDir, "progress.json"),
 		LogFile:          logFile,
@@ -245,7 +239,6 @@ func (s *State) SnapshotResultSummary() ResultSummary {
 
 func (s *State) MarkFinished(status string, finishedAt time.Time, message string) {
 	logErrors := s.SyncScannerErrors()
-	logRequests, hasTrace := s.SyncScannerRequests()
 
 	s.mu.Lock()
 	s.progress.Finished = true
@@ -253,9 +246,6 @@ func (s *State) MarkFinished(status string, finishedAt time.Time, message string
 	s.progress.LastUpdatedAt = finishedAt
 	s.progress.LastMessage = message
 	s.progress.Errors = logErrors
-	if hasTrace {
-		s.progress.Requests = logRequests
-	}
 	if status == "success" {
 		s.progress.Percent = 100
 	}
@@ -293,14 +283,6 @@ func (s *State) SyncScannerErrors() int64 {
 	}
 
 	return nextCount
-}
-
-func (s *State) SyncScannerRequests() (int64, bool) {
-	if strings.TrimSpace(s.TraceLogFilePath) == "" {
-		return 0, false
-	}
-
-	return CountActualTraceRequests(s.TraceLogFilePath), true
 }
 
 func (s *State) ShouldLogProgress(percent float64, matched, errorsCount int64) bool {
@@ -517,23 +499,24 @@ func HandleStatsJSONLine(line string, state *State) bool {
 	if err := json.Unmarshal([]byte(line), &payload); err != nil {
 		return false
 	}
-	if payload.Requests == "" && payload.Total == "" && payload.Matched == "" && payload.Errors == "" {
+	if payload.Requests == "" && payload.ActualRequests == "" && payload.Total == "" && payload.Matched == "" && payload.Errors == "" {
 		return false
 	}
 
 	requests := ParseInt64(payload.Requests)
-	if actualRequests, ok := state.SyncScannerRequests(); ok {
-		requests = actualRequests
+	actualRequests := ParseInt64(payload.ActualRequests)
+	if actualRequests == 0 && payload.ActualRequests == "" {
+		actualRequests = requests
 	}
 	total := ParseInt64(payload.Total)
 	matched := ParseInt64(payload.Matched)
 	errorsCount := state.SyncScannerErrors()
 	hosts := ParseInt64(payload.Hosts)
 	templates := ParseInt64(payload.Templates)
-	percent := NormalizeProgressPercent(ParseFloat64(payload.Percent), requests, total)
+	percent := NormalizeProgressPercent(ParseFloat64(payload.Percent), actualRequests, total)
 
 	state.UpdateProgress(func(snapshot *TaskProgressSnapshot) {
-		snapshot.Requests = requests
+		snapshot.Requests = actualRequests
 		snapshot.TotalRequests = total
 		snapshot.Matched = matched
 		snapshot.Errors = errorsCount
@@ -583,40 +566,6 @@ func ClassifyScannerLogLine(line string) (string, string, bool) {
 	default:
 		return "", "", false
 	}
-}
-
-func CountActualTraceRequests(path string) int64 {
-	if strings.TrimSpace(path) == "" {
-		return 0
-	}
-
-	file, err := os.Open(path)
-	if err != nil {
-		return 0
-	}
-	defer file.Close()
-
-	var count int64
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		var entry scannerTraceLogEntry
-		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			count++
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(entry.Type), "http") && entry.FromCache != nil && *entry.FromCache {
-			continue
-		}
-		count++
-	}
-
-	return count
 }
 
 func ReadScannerErrorEvents(path string, skip int64) ([]TaskLogEvent, int64) {

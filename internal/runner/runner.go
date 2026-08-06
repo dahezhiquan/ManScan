@@ -349,17 +349,21 @@ func New(options *types.Options) (*Runner, error) {
 		}
 	}
 
-	if runner.fuzzStats != nil {
-		outputWriter.JSONLogRequestHook = func(request *output.JSONLogRequest) {
-			if request.Error == "none" || request.Error == "" {
-				return
-			}
-			runner.fuzzStats.RecordErrorEvent(fuzzStats.ErrorEvent{
-				TemplateID: request.Template,
-				URL:        request.Input,
-				Error:      request.Error,
-			})
+	outputWriter.JSONLogRequestHook = func(request *output.JSONLogRequest) {
+		if runner.progress != nil && request.Type != "http" {
+			runner.progress.IncrementActualRequests()
 		}
+		if runner.fuzzStats == nil {
+			return
+		}
+		if request.Error == "none" || request.Error == "" {
+			return
+		}
+		runner.fuzzStats.RecordErrorEvent(fuzzStats.ErrorEvent{
+			TemplateID: request.Template,
+			URL:        request.Input,
+			Error:      request.Error,
+		})
 	}
 
 	opts := interactsh.DefaultOptions(runner.output, runner.issuesClient, runner.progress)

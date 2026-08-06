@@ -23,6 +23,8 @@ type Progress interface {
 	AddToTotal(delta int64)
 	// IncrementRequests increments the requests counter by 1.
 	IncrementRequests()
+	// IncrementActualRequests increments the real sent-requests counter by 1.
+	IncrementActualRequests()
 	// SetRequests sets the counter by incrementing it with a delta
 	SetRequests(count uint64)
 	// IncrementMatched increments the matched counter by 1.
@@ -82,6 +84,7 @@ func (p *StatsTicker) Init(hostCount int64, rulesCount int, requestCount int64) 
 	p.stats.AddStatic("hosts", hostCount)
 	p.stats.AddStatic("startedAt", time.Now())
 	p.stats.AddCounter("requests", uint64(0))
+	p.stats.AddCounter("actual_requests", uint64(0))
 	p.stats.AddCounter("errors", uint64(0))
 	p.stats.AddCounter("matched", uint64(0))
 	p.stats.AddCounter("total", uint64(requestCount))
@@ -120,6 +123,11 @@ func (p *StatsTicker) AddToTotal(delta int64) {
 // IncrementRequests increments the requests counter by 1.
 func (p *StatsTicker) IncrementRequests() {
 	p.stats.IncrementCounter("requests", 1)
+}
+
+// IncrementActualRequests increments the real sent-requests counter by 1.
+func (p *StatsTicker) IncrementActualRequests() {
+	p.stats.IncrementCounter("actual_requests", 1)
 }
 
 // SetRequests sets the counter by incrementing it with a delta
@@ -242,6 +250,8 @@ func metricsMap(stats clistats.StatisticsClient) map[string]interface{} {
 	results["matched"] = clistats.String(matched)
 	requests, _ := stats.GetCounter("requests")
 	results["requests"] = clistats.String(requests)
+	actualRequests, _ := stats.GetCounter("actual_requests")
+	results["actual_requests"] = clistats.String(actualRequests)
 	total, _ := stats.GetCounter("total")
 	if total == 0 {
 		total = requests

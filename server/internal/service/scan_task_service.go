@@ -561,7 +561,6 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile st
 	}
 
 	args = append(args,
-		"-tlog", filepath.Join(taskDir, "trace.log"),
 		"-elog", filepath.Join(taskDir, "error.log"),
 	)
 	return args

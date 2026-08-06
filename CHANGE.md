@@ -82,3 +82,16 @@
 - 修改目的或影响：
   - 让扫描详情页依赖的 `progress.total_requests` 能在扫描刚开始时就通过后端进度流被感知，而不是等到扫描结束或首个统计周期后才出现。
   - 对于执行很快的短任务，也能更稳定地保留初始化阶段的预估总请求数，减少详情页“预估总请求数为空/结束后才显示”的情况。
+
+## 2026-06-22 20:20 改用内存计数统计实际请求数并移除 trace 日志依赖
+
+- 变动目录：`internal/runner/`、`internal/tests/testutils/`、`pkg/progress/`、`pkg/protocols/http/`
+- 变动文件：`internal/runner/runner.go`、`internal/tests/testutils/testutils.go`、`pkg/progress/progress.go`、`pkg/protocols/http/request.go`
+- 具体修改内容：
+  - 在 `pkg/progress/progress.go` 中为扫描进度新增内部 `actual_requests` 计数器，并扩展 `Progress` 接口与 `stats-json` 输出，使扫描进程可以直接维护真实发出的请求数。
+  - 在 `pkg/protocols/http/request.go` 中将 HTTP 实际请求计数前移到真正调用 `Do`、`Dor`、`DoRaw`、`SendRawRequest` 的发送位置，只对真实出网的 HTTP 请求累加，自动排除项目缓存命中的情况。
+  - 在 `internal/runner/runner.go` 中复用统一请求日志 hook，为非 HTTP 协议补充内部真实请求计数，同时继续保留 DAST 错误事件采集逻辑。
+  - 在 `internal/tests/testutils/testutils.go` 中同步补齐新的进度接口桩实现，避免测试代码因接口扩展而失配。
+- 修改目的或影响：
+  - 扫描详情页和后端运行时不再依赖 `data/runtime/<task-id>/trace.log` 回扫统计真实请求数，显著减少大任务下的磁盘占用。
+  - 对外接口继续只暴露 `requests` 作为真实请求数，HTTP 场景下统计口径与原先“`from_cache=false` 才计数”的需求保持一致。
