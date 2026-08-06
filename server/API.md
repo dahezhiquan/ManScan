@@ -229,7 +229,7 @@ curl "http://127.0.0.1:8686/api/v1/templates/stats"
 | `headless`            | `bool`     | 否  | 是否启用 headless      |
 | `proxy`               | `string[]` | 否  | 代理列表               |
 
-至少需要提供 `targets` 或 `inline_targets_list` 之一。
+至少需要提供 `targets` 或 `inline_targets_list` 之一，当前不再限制单次任务的目标数量上限。
 
 - 响应格式：
 
@@ -254,7 +254,7 @@ curl "http://127.0.0.1:8686/api/v1/templates/stats"
 ```
 
 - 错误码说明：
-  - `40001`：目标为空、目标数量超限或请求体非法
+  - `40001`：目标为空或请求体非法
   - `50001`：任务入库失败或运行时目录创建失败
 
 - 使用示例：

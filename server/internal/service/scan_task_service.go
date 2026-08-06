@@ -24,8 +24,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const maxTargetsPerTask = 2000
-
 type ScanTaskService interface {
 	Create(ctx context.Context, request dto.CreateScanTaskRequest) (*dto.ScanTaskSummary, error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
@@ -388,9 +386,6 @@ func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedT
 	collectedTargets := collectTargets(request.Targets, request.InlineTargetsList)
 	if len(collectedTargets) == 0 {
 		return nil, fmt.Errorf("targets 或 inline_targets_list 至少提供一个目标")
-	}
-	if len(collectedTargets) > maxTargetsPerTask {
-		return nil, fmt.Errorf("单次任务目标数不能超过 %d 个", maxTargetsPerTask)
 	}
 
 	name := strings.TrimSpace(request.Name)
