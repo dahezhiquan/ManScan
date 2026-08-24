@@ -10,6 +10,7 @@ import (
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/errcode"
 	"ManScan/server/internal/pkg/response"
+	"ManScan/server/internal/pkg/scanruntime"
 	"ManScan/server/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -182,7 +183,7 @@ func (h *scanTaskHandler) Stream(c *gin.Context) {
 				continue
 			}
 			currentOffset = event.Seq + 1
-			if strings.EqualFold(strings.TrimSpace(event.Level), "warn") {
+			if scanruntime.ShouldHideFrontendLogEvent(event) {
 				continue
 			}
 			payload := gin.H{

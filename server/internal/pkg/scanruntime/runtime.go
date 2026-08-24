@@ -23,6 +23,11 @@ const (
 
 var ansiLogPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
+var frontendHiddenScannerErrorPatterns = []string{
+	"tls: first record does not look like a tls handshake",
+	`redis: can't parse map reply: \"http/1.1 400 bad request\"`,
+}
+
 type TaskProgressSnapshot struct {
 	Hosts          int64     `json:"hosts"`
 	Templates      int64     `json:"templates"`
@@ -541,12 +546,35 @@ func FilterFrontendLogEvents(events []TaskLogEvent) []TaskLogEvent {
 
 	filtered := make([]TaskLogEvent, 0, len(events))
 	for _, event := range events {
-		if strings.EqualFold(strings.TrimSpace(event.Level), "warn") {
+		if ShouldHideFrontendLogEvent(event) {
 			continue
 		}
 		filtered = append(filtered, event)
 	}
 	return filtered
+}
+
+func ShouldHideFrontendLogEvent(event TaskLogEvent) bool {
+	if strings.EqualFold(strings.TrimSpace(event.Level), "warn") {
+		return true
+	}
+
+	if !strings.EqualFold(strings.TrimSpace(event.Type), "scanner_error") {
+		return false
+	}
+
+	message := strings.ToLower(strings.TrimSpace(event.Message))
+	if message == "" {
+		return false
+	}
+
+	for _, pattern := range frontendHiddenScannerErrorPatterns {
+		if strings.Contains(message, pattern) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func ClassifyScannerLogLine(line string) (string, string, bool) {
