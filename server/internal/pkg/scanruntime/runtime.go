@@ -23,11 +23,6 @@ const (
 
 var ansiLogPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-var frontendHiddenScannerErrorPatterns = []string{
-	"tls: first record does not look like a tls handshake",
-	`redis: can't parse map reply: \"http/1.1 400 bad request\"`,
-}
-
 type TaskProgressSnapshot struct {
 	Hosts          int64     `json:"hosts"`
 	Templates      int64     `json:"templates"`
@@ -381,6 +376,13 @@ func (s *State) EventsBefore(offset int64, limit int) TaskLogsPage {
 	}
 }
 
+func (s *State) FrontendEventsBefore(offset int64, limit int) TaskLogsPage {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return buildFrontendEventsBefore(s.events, offset, limit)
+}
+
 func (s *State) Subscribe() (chan TaskLogEvent, func()) {
 	ch := make(chan TaskLogEvent, 64)
 
@@ -554,26 +556,48 @@ func FilterFrontendLogEvents(events []TaskLogEvent) []TaskLogEvent {
 	return filtered
 }
 
+func buildFrontendEventsBefore(events []TaskLogEvent, offset int64, limit int) TaskLogsPage {
+	if len(events) == 0 || limit <= 0 {
+		return TaskLogsPage{}
+	}
+
+	filtered := make([]TaskLogEvent, 0, limit)
+	matched := 0
+	for _, event := range events {
+		if offset > 0 && event.Seq >= offset {
+			break
+		}
+		if ShouldHideFrontendLogEvent(event) {
+			continue
+		}
+
+		matched++
+		if len(filtered) < limit {
+			filtered = append(filtered, event)
+			continue
+		}
+
+		copy(filtered, filtered[1:])
+		filtered[len(filtered)-1] = event
+	}
+
+	nextOffset := int64(0)
+	if len(filtered) > 0 {
+		nextOffset = filtered[0].Seq
+	}
+
+	return TaskLogsPage{
+		Events:     filtered,
+		NextOffset: nextOffset,
+		HasMore:    matched > len(filtered),
+	}
+}
+
 func ShouldHideFrontendLogEvent(event TaskLogEvent) bool {
-	if strings.EqualFold(strings.TrimSpace(event.Level), "warn") {
+	level := strings.TrimSpace(event.Level)
+	if strings.EqualFold(level, "warn") || strings.EqualFold(level, "error") {
 		return true
 	}
-
-	if !strings.EqualFold(strings.TrimSpace(event.Type), "scanner_error") {
-		return false
-	}
-
-	message := strings.ToLower(strings.TrimSpace(event.Message))
-	if message == "" {
-		return false
-	}
-
-	for _, pattern := range frontendHiddenScannerErrorPatterns {
-		if strings.Contains(message, pattern) {
-			return true
-		}
-	}
-
 	return false
 }
 
@@ -755,6 +779,52 @@ func ReadLogEventsBeforeFromFile(path string, offset int64, limit int) ([]TaskLo
 		}
 		if offset > 0 && event.Seq >= offset {
 			break
+		}
+
+		matched++
+		if len(events) < limit {
+			events = append(events, event)
+			continue
+		}
+
+		copy(events, events[1:])
+		events[len(events)-1] = event
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, false, 0, err
+	}
+
+	nextOffset := int64(0)
+	if len(events) > 0 {
+		nextOffset = events[0].Seq
+	}
+
+	return events, matched > len(events), nextOffset, nil
+}
+
+func ReadFrontendLogEventsBeforeFromFile(path string, offset int64, limit int) ([]TaskLogEvent, bool, int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, false, 0, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+
+	events := make([]TaskLogEvent, 0, limit)
+	matched := 0
+
+	for scanner.Scan() {
+		var event TaskLogEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if offset > 0 && event.Seq >= offset {
+			break
+		}
+		if ShouldHideFrontendLogEvent(event) {
+			continue
 		}
 
 		matched++

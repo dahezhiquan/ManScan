@@ -197,9 +197,9 @@ func (s *scanTaskService) GetLogs(ctx context.Context, taskID, offset int64, lim
 	var page scanruntime.TaskLogsPage
 	if finished {
 		if state != nil {
-			page = state.EventsBefore(offset, limit)
+			page = state.FrontendEventsBefore(offset, limit)
 		} else {
-			events, hasMore, nextOffset, readErr := scanruntime.ReadLogEventsBeforeFromFile(s.logFilePath(taskID), offset, limit)
+			events, hasMore, nextOffset, readErr := scanruntime.ReadFrontendLogEventsBeforeFromFile(s.logFilePath(taskID), offset, limit)
 			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 				return nil, readErr
 			}
