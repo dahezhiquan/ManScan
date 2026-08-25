@@ -7,6 +7,34 @@ import (
 	"ManScan/server/internal/model/entity"
 )
 
+func TestCollectTargetsNormalizesTrailingSlash(t *testing.T) {
+	t.Parallel()
+
+	targets := collectTargets(
+		[]string{
+			" http://10.107.71.65:8889/ ",
+			"http://10.107.71.65:8889",
+			"https://example.com/api/",
+			"demo.example.com/",
+		},
+		"http://10.107.71.65:8889/\nhttps://example.com/api/\n\n",
+	)
+
+	expected := []string{
+		"http://10.107.71.65:8889",
+		"https://example.com/api",
+		"demo.example.com",
+	}
+	if len(targets) != len(expected) {
+		t.Fatalf("target count = %d, want %d (%v)", len(targets), len(expected), targets)
+	}
+	for index, want := range expected {
+		if targets[index] != want {
+			t.Fatalf("targets[%d] = %q, want %q (all=%v)", index, targets[index], want, targets)
+		}
+	}
+}
+
 func TestToScanTaskSummaryIncludesResultStats(t *testing.T) {
 	t.Parallel()
 

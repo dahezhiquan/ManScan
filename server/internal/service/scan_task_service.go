@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -425,7 +426,7 @@ func collectTargets(targets []string, inline string) []string {
 	seen := make(map[string]struct{})
 
 	appendTarget := func(value string) {
-		value = strings.TrimSpace(value)
+		value = normalizeTarget(value)
 		if value == "" {
 			return
 		}
@@ -444,6 +445,26 @@ func collectTargets(targets []string, inline string) []string {
 	}
 
 	return result
+}
+
+func normalizeTarget(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+		if parsed.Path == "" && parsed.RawPath == "/" {
+			parsed.RawPath = ""
+		} else if parsed.RawPath != "" {
+			parsed.RawPath = strings.TrimRight(parsed.RawPath, "/")
+		}
+		return parsed.String()
+	}
+
+	return strings.TrimRight(value, "/")
 }
 
 func resolveManScanCommand(rootDir string) (string, []string) {
