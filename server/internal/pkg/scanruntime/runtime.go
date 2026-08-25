@@ -97,9 +97,11 @@ type State struct {
 	TaskName         string
 	TargetCount      int
 	LogFilePath      string
+	MatchLogFilePath string
 	ErrorLogFilePath string
 	ProgressFilePath string
 	LogFile          *os.File
+	MatchLogFile     *os.File
 
 	mu              sync.RWMutex
 	events          []TaskLogEvent
@@ -123,6 +125,12 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 	if err != nil {
 		return nil, err
 	}
+	matchLogFilePath := filepath.Join(taskDir, "match.log")
+	matchLogFile, err := os.OpenFile(matchLogFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		_ = logFile.Close()
+		return nil, err
+	}
 
 	return &State{
 		ID:               taskID,
@@ -130,9 +138,11 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 		TaskName:         taskName,
 		TargetCount:      targetCount,
 		LogFilePath:      logFilePath,
+		MatchLogFilePath: matchLogFilePath,
 		ErrorLogFilePath: filepath.Join(taskDir, "error.log"),
 		ProgressFilePath: filepath.Join(taskDir, "progress.json"),
 		LogFile:          logFile,
+		MatchLogFile:     matchLogFile,
 		matchedTemplate:  make(map[string]struct{}),
 		subscribers:      make(map[chan TaskLogEvent]struct{}),
 		resultSummary: ResultSummary{
@@ -173,7 +183,10 @@ func (s *State) AppendEvent(event TaskLogEvent) {
 	s.progress.LastMessage = event.Message
 	if s.LogFile != nil {
 		if encoded, err := json.Marshal(event); err == nil {
-			_, _ = s.LogFile.Write(append(encoded, '\n'))
+			writeLogLine(s.LogFile, encoded)
+			if strings.EqualFold(event.Level, "match") && s.MatchLogFile != nil {
+				writeLogLine(s.MatchLogFile, encoded)
+			}
 		}
 	}
 	s.writeProgressSnapshotLocked()
@@ -432,6 +445,17 @@ func (s *State) Close() {
 		_ = s.LogFile.Close()
 		s.LogFile = nil
 	}
+	if s.MatchLogFile != nil {
+		_ = s.MatchLogFile.Close()
+		s.MatchLogFile = nil
+	}
+}
+
+func writeLogLine(file *os.File, encoded []byte) {
+	if file == nil {
+		return
+	}
+	_, _ = file.Write(append(encoded, '\n'))
 }
 
 func (s *State) writeProgressSnapshotLocked() {

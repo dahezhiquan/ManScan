@@ -1,6 +1,7 @@
 package scanruntime
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -208,6 +209,42 @@ func TestFormatJSONResultMessageFallback(t *testing.T) {
 	want := "[http-missing-security-headers][medium] 命中 http://10.107.71.65:8889/"
 	if got != want {
 		t.Fatalf("FormatJSONResultMessageFallback() = %q, want %q", got, want)
+	}
+}
+
+func TestAppendEventWritesMatchLog(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	state, err := NewState(33, "task-33", "demo", 1, dir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	state.Append("match", "result", "[demo][info] 命中 http://example.com")
+	state.Append("info", "progress", "扫描进度更新")
+	state.Close()
+
+	data, err := os.ReadFile(filepath.Join(dir, "33", "match.log"))
+	if err != nil {
+		t.Fatalf("ReadFile(match.log) error = %v", err)
+	}
+
+	lines := 0
+	for _, b := range data {
+		if b == '\n' {
+			lines++
+		}
+	}
+	if lines != 1 {
+		t.Fatalf("match.log lines = %d, want 1", lines)
+	}
+	if !bytes.Contains(data, []byte(`"level":"match"`)) {
+		t.Fatalf("match.log does not contain match event: %s", string(data))
+	}
+	if bytes.Contains(data, []byte(`"level":"info"`)) {
+		t.Fatalf("match.log should not contain info event: %s", string(data))
 	}
 }
 
