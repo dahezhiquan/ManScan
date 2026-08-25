@@ -14,6 +14,7 @@ import (
 type ScanTaskRepository interface {
 	Create(ctx context.Context, task *entity.ScanTask) error
 	FindByID(ctx context.Context, taskID int64) (*entity.ScanTask, error)
+	FindResultByTaskID(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error)
 	UpdateStatus(ctx context.Context, taskID int64, status string, startedAt, finishedAt *time.Time) error
 	UpsertResult(ctx context.Context, result *entity.ScanTaskResult) error
 }
@@ -39,6 +40,14 @@ func (r *scanTaskRepository) FindByID(ctx context.Context, taskID int64) (*entit
 		return nil, err
 	}
 	return &task, nil
+}
+
+func (r *scanTaskRepository) FindResultByTaskID(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error) {
+	var result entity.ScanTaskResult
+	if err := r.db.WithContext(ctx).Where("task_id = ?", taskID).First(&result).Error; err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 func (r *scanTaskRepository) UpdateStatus(ctx context.Context, taskID int64, status string, startedAt, finishedAt *time.Time) error {
@@ -67,6 +76,7 @@ func (r *scanTaskRepository) UpsertResult(ctx context.Context, result *entity.Sc
 			"medium_count",
 			"low_count",
 			"info_count",
+			"tech_count",
 			"plugin_count",
 			"target_count",
 			"finished_at",

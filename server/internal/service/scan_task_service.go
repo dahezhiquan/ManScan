@@ -28,7 +28,7 @@ type ScanTaskService interface {
 	Create(ctx context.Context, request dto.CreateScanTaskRequest) (*dto.ScanTaskSummary, error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int) (*dto.ScanTaskLogsResponse, error)
-	Subscribe(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() scanruntime.TaskProgressSnapshot, func(), error)
+	Subscribe(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() dto.ScanTaskSummary, func() scanruntime.TaskProgressSnapshot, func(), error)
 }
 
 type scanTaskService struct {
@@ -174,14 +174,22 @@ func (s *scanTaskService) Get(ctx context.Context, taskID int64) (*dto.GetScanTa
 	if err != nil {
 		return nil, err
 	}
+	summary, err := s.buildTaskSummary(ctx, task)
+	if err != nil {
+		return nil, err
+	}
 	return &dto.GetScanTaskResponse{
-		Task:     toScanTaskSummary(task),
+		Task:     summary,
 		Progress: s.getProgress(ctx, taskID, task.Status),
 	}, nil
 }
 
 func (s *scanTaskService) GetLogs(ctx context.Context, taskID, offset int64, limit int) (*dto.ScanTaskLogsResponse, error) {
 	task, err := s.repository.FindByID(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	summary, err := s.buildTaskSummary(ctx, task)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +224,7 @@ func (s *scanTaskService) GetLogs(ctx context.Context, taskID, offset int64, lim
 	}
 
 	return &dto.ScanTaskLogsResponse{
-		Task:       toScanTaskSummary(task),
+		Task:       summary,
 		Progress:   progress,
 		Events:     scanruntime.FilterFrontendLogEvents(page.Events),
 		NextOffset: page.NextOffset,
@@ -227,22 +235,27 @@ func (s *scanTaskService) GetLogs(ctx context.Context, taskID, offset int64, lim
 func (s *scanTaskService) Subscribe(
 	ctx context.Context,
 	taskID int64,
-) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() scanruntime.TaskProgressSnapshot, func(), error) {
+) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() dto.ScanTaskSummary, func() scanruntime.TaskProgressSnapshot, func(), error) {
 	logs, err := s.GetLogs(ctx, taskID, 0, scanruntime.MaxLogPageSize)
 	if err != nil {
-		return nil, scanruntime.TaskProgressSnapshot{}, nil, 0, nil, nil, nil, err
+		return nil, scanruntime.TaskProgressSnapshot{}, nil, 0, nil, nil, nil, nil, err
 	}
 
 	state := s.getState(taskID)
 	if state == nil {
-		return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, nil, nil, nil, nil
+		return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, nil, nil, nil, nil, nil
 	}
 
 	ch, cancel := state.Subscribe()
+	currentTask := func() dto.ScanTaskSummary {
+		summary := logs.Task
+		applyRuntimeResultSummary(&summary, state.SnapshotResultSummary())
+		return summary
+	}
 	currentProgress := func() scanruntime.TaskProgressSnapshot {
 		return state.SnapshotProgress()
 	}
-	return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, ch, currentProgress, cancel, nil
+	return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, ch, currentTask, currentProgress, cancel, nil
 }
 
 func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, state *scanruntime.State) {
@@ -561,8 +574,8 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile st
 	return args
 }
 
-func toScanTaskSummary(task *entity.ScanTask) dto.ScanTaskSummary {
-	return dto.ScanTaskSummary{
+func toScanTaskSummary(task *entity.ScanTask, result *entity.ScanTaskResult) dto.ScanTaskSummary {
+	summary := dto.ScanTaskSummary{
 		ID:          task.ID,
 		TaskNo:      task.TaskNo,
 		Name:        task.Name,
@@ -572,6 +585,56 @@ func toScanTaskSummary(task *entity.ScanTask) dto.ScanTaskSummary {
 		StartedAt:   task.StartedAt,
 		FinishedAt:  task.FinishedAt,
 	}
+	if result != nil {
+		summary.CriticalCount = result.CriticalCount
+		summary.HighCount = result.HighCount
+		summary.MediumCount = result.MediumCount
+		summary.LowCount = result.LowCount
+		summary.InfoCount = result.InfoCount
+		summary.TechCount = result.TechCount
+		summary.PluginCount = result.PluginCount
+		summary.TargetCount = result.TargetCount
+	}
+	return summary
+}
+
+func applyRuntimeResultSummary(summary *dto.ScanTaskSummary, result scanruntime.ResultSummary) {
+	summary.CriticalCount = result.CriticalCount
+	summary.HighCount = result.HighCount
+	summary.MediumCount = result.MediumCount
+	summary.LowCount = result.LowCount
+	summary.InfoCount = result.InfoCount
+	summary.TechCount = result.TechCount
+	summary.PluginCount = result.PluginCount
+	summary.TargetCount = result.TargetCount
+}
+
+func (s *scanTaskService) buildTaskSummary(ctx context.Context, task *entity.ScanTask) (dto.ScanTaskSummary, error) {
+	summary := toScanTaskSummary(task, nil)
+	if state := s.getState(task.ID); state != nil {
+		applyRuntimeResultSummary(&summary, state.SnapshotResultSummary())
+		return summary, nil
+	}
+
+	result, err := s.findTaskResult(ctx, task.ID)
+	if err != nil {
+		return dto.ScanTaskSummary{}, err
+	}
+	if result != nil {
+		summary = toScanTaskSummary(task, result)
+	}
+	return summary, nil
+}
+
+func (s *scanTaskService) findTaskResult(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error) {
+	result, err := s.repository.FindResultByTaskID(ctx, taskID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return result, nil
 }
 
 func toScanTaskResult(taskID int64, taskName string, startedAt, finishedAt time.Time, summary scanruntime.ResultSummary) *entity.ScanTaskResult {
@@ -583,6 +646,7 @@ func toScanTaskResult(taskID int64, taskName string, startedAt, finishedAt time.
 		MediumCount:   summary.MediumCount,
 		LowCount:      summary.LowCount,
 		InfoCount:     summary.InfoCount,
+		TechCount:     summary.TechCount,
 		PluginCount:   summary.PluginCount,
 		TargetCount:   summary.TargetCount,
 		CreatedAt:     &startedAt,

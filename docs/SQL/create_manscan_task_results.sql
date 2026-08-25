@@ -2,6 +2,7 @@ CREATE TABLE `manscan_task_results` (
                                         `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主键ID',
                                         `task_id` BIGINT UNSIGNED NOT NULL COMMENT '任务ID',
                                         `task_name` VARCHAR(128) NOT NULL COMMENT '任务名称',
+                                        `tech_count` INT NOT NULL DEFAULT 0 COMMENT '本次扫描识别到的指纹数量',
                                         `critical_count` INT NOT NULL DEFAULT 0 COMMENT '严重漏洞数量',
                                         `high_count` INT NOT NULL DEFAULT 0 COMMENT '高危漏洞数量',
                                         `medium_count` INT NOT NULL DEFAULT 0 COMMENT '中危漏洞数量',

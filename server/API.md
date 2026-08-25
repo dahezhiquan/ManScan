@@ -294,7 +294,15 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
       "description": "",
       "status": "running",
       "created_by": "anonymous",
-      "started_at": "2026-06-09T21:00:00+08:00"
+      "started_at": "2026-06-09T21:00:00+08:00",
+      "critical_count": 0,
+      "high_count": 1,
+      "medium_count": 2,
+      "low_count": 0,
+      "info_count": 3,
+      "tech_count": 4,
+      "plugin_count": 50,
+      "target_count": 1
     },
     "progress": {
       "hosts": 1,
@@ -350,7 +358,15 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
       "name": "demo-scan",
       "description": "",
       "status": "running",
-      "created_by": "anonymous"
+      "created_by": "anonymous",
+      "critical_count": 0,
+      "high_count": 1,
+      "medium_count": 2,
+      "low_count": 0,
+      "info_count": 3,
+      "tech_count": 4,
+      "plugin_count": 50,
+      "target_count": 1
     },
     "progress": {
       "requests": 10,
@@ -398,20 +414,28 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
   - 使用 `SSE`（`text/event-stream`）返回
   - 首个事件为 `snapshot`
   - 后续事件为 `event`
+  - `progress` 与 `result` 类型事件会额外携带最新的 `task` 统计快照，便于前端实时刷新漏洞数、指纹数、目标数和插件数
   - 任务结束后发送 `complete`
 
 - `snapshot` 示例：
 
 ```text
 event: snapshot
-data: {"task":{"id":1,"status":"running"},"progress":{"percent":10},"events":[],"nextOffset":1}
+data: {"task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"percent":10},"events":[],"nextOffset":1}
 ```
 
 - `event` 示例：
 
 ```text
 event: event
-data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","progress":{"hosts":1,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":3}
+data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"hosts":1,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":3}
+```
+
+- `result` 事件示例：
+
+```text
+event: event
+data: {"task_id":1,"seq":3,"level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":4,"tech_count":4,"plugin_count":50,"target_count":1},"event":{"seq":3,"time":"2026-06-09T21:01:02+08:00","level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]"},"nextOffset":4}
 ```
 
 - 错误码说明：

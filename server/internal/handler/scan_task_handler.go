@@ -119,7 +119,7 @@ func (h *scanTaskHandler) Stream(c *gin.Context) {
 		return
 	}
 
-	task, progress, events, nextOffset, ch, progressSnapshot, cancel, serviceErr := h.service.Subscribe(c.Request.Context(), taskID)
+	task, progress, events, nextOffset, ch, taskSnapshot, progressSnapshot, cancel, serviceErr := h.service.Subscribe(c.Request.Context(), taskID)
 	if serviceErr != nil {
 		if serviceErr == gorm.ErrRecordNotFound {
 			response.Fail(c, errcode.NotFound, "任务不存在")
@@ -199,6 +199,9 @@ func (h *scanTaskHandler) Stream(c *gin.Context) {
 			if event.Type == "progress" && progressSnapshot != nil {
 				progress = progressSnapshot()
 				payload["progress"] = progress
+			}
+			if (event.Type == "progress" || event.Type == "result") && taskSnapshot != nil {
+				payload["task"] = taskSnapshot()
 			}
 			if err := sendSSE("event", payload); err != nil {
 				return

@@ -11,6 +11,7 @@ type ScanTaskResult struct {
 	MediumCount   int        `gorm:"column:medium_count"`
 	LowCount      int        `gorm:"column:low_count"`
 	InfoCount     int        `gorm:"column:info_count"`
+	TechCount     int        `gorm:"column:tech_count"`
 	PluginCount   int        `gorm:"column:plugin_count"`
 	TargetCount   int        `gorm:"column:target_count"`
 	CreatedAt     *time.Time `gorm:"column:created_at"`

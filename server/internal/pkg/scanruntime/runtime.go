@@ -58,6 +58,7 @@ type ResultSummary struct {
 	MediumCount   int
 	LowCount      int
 	InfoCount     int
+	TechCount     int
 	PluginCount   int
 	TargetCount   int
 }
@@ -204,13 +205,20 @@ func (s *State) SnapshotProgress() TaskProgressSnapshot {
 	return s.progress
 }
 
-func (s *State) RecordResult(templateID, severity string) {
+func (s *State) RecordResult(templateID, templateName, severity string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	templateID = strings.TrimSpace(templateID)
+	if s.matchedTemplate == nil {
+		s.matchedTemplate = make(map[string]struct{})
+	}
 	if templateID != "" {
 		s.matchedTemplate[templateID] = struct{}{}
+	}
+	if isFingerprintTemplateName(templateName) {
+		s.resultSummary.TechCount++
+		return
 	}
 
 	switch strings.ToLower(strings.TrimSpace(severity)) {
@@ -225,6 +233,14 @@ func (s *State) RecordResult(templateID, severity string) {
 	case "info", "informational":
 		s.resultSummary.InfoCount++
 	}
+}
+
+func isFingerprintTemplateName(templateName string) bool {
+	templateName = strings.TrimSpace(templateName)
+	if templateName == "" {
+		return false
+	}
+	return strings.Contains(templateName, "指纹识别")
 }
 
 func (s *State) SnapshotResultSummary() ResultSummary {
@@ -479,22 +495,51 @@ func HandleJSONResultLine(line string, state *State) bool {
 	}
 
 	templateID := AsString(payload["template-id"])
+	templateName := ""
+	severityText := ""
+	if infoValue, ok := payload["info"].(map[string]interface{}); ok {
+		templateName = AsString(infoValue["name"])
+		severityText = AsString(infoValue["severity"])
+	}
+	state.RecordResult(FirstNonEmpty(templateID, "unknown-template"), templateName, severityText)
+	state.Append("match", "result", FormatJSONResultMessage(payload))
+	return true
+}
+
+func FormatJSONResultMessage(payload map[string]interface{}) string {
+	templateID := strings.TrimSpace(AsString(payload["template-id"]))
+	templateName := templateID
+	severityText := strings.TrimSpace(AsString(payload["severity"]))
+	if infoValue, ok := payload["info"].(map[string]interface{}); ok {
+		if name := strings.TrimSpace(AsString(infoValue["name"])); name != "" {
+			templateName = name
+		}
+		if severity := strings.TrimSpace(AsString(infoValue["severity"])); severity != "" {
+			severityText = severity
+		}
+	}
+	if templateName == "" {
+		templateName = "unknown-template"
+	}
+	if severityText == "" {
+		severityText = "unknown"
+	}
+
+	labels := []string{templateName, severityText}
+	if matcherName := strings.TrimSpace(AsString(payload["matcher-name"])); matcherName != "" {
+		labels = append(labels, matcherName)
+	}
+
 	host := FirstNonEmpty(
 		AsString(payload["matched-at"]),
 		AsString(payload["host"]),
 		AsString(payload["url"]),
 	)
-	severityText := ""
-	if infoValue, ok := payload["info"].(map[string]interface{}); ok {
-		severityText = AsString(infoValue["severity"])
+	if host == "" {
+		host = "unknown-target"
 	}
-	state.RecordResult(FirstNonEmpty(templateID, "unknown-template"), severityText)
-	state.Append("match", "result", fmt.Sprintf("[%s][%s] 命中 %s",
-		FirstNonEmpty(templateID, "unknown-template"),
-		FirstNonEmpty(severityText, "unknown"),
-		host,
-	))
-	return true
+
+	return fmt.Sprintf("[%s] 命中 %s", strings.Join(labels, "]["), host)
 }
 
 func HandleStatsJSONLine(line string, state *State) bool {

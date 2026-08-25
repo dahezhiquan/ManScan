@@ -172,3 +172,75 @@ func TestReadFrontendLogEventsBeforeFromFile(t *testing.T) {
 		t.Fatalf("ReadFrontendLogEventsBeforeFromFile() NextOffset = %d, want 3", nextOffset)
 	}
 }
+
+func TestFormatJSONResultMessage(t *testing.T) {
+	t.Parallel()
+
+	payload := map[string]interface{}{
+		"template-id":  "http-missing-security-headers",
+		"matcher-name": "strict-transport-security",
+		"matched-at":   "http://10.107.71.65:8889/",
+		"info": map[string]interface{}{
+			"name":     "HTTP 安全响应头缺失",
+			"severity": "info",
+		},
+	}
+
+	got := FormatJSONResultMessage(payload)
+	want := "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://10.107.71.65:8889/"
+	if got != want {
+		t.Fatalf("FormatJSONResultMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatJSONResultMessageFallback(t *testing.T) {
+	t.Parallel()
+
+	payload := map[string]interface{}{
+		"template-id": "http-missing-security-headers",
+		"host":        "http://10.107.71.65:8889/",
+		"info": map[string]interface{}{
+			"severity": "medium",
+		},
+	}
+
+	got := FormatJSONResultMessage(payload)
+	want := "[http-missing-security-headers][medium] 命中 http://10.107.71.65:8889/"
+	if got != want {
+		t.Fatalf("FormatJSONResultMessageFallback() = %q, want %q", got, want)
+	}
+}
+
+func TestRecordResultCountsFingerprintAsTech(t *testing.T) {
+	t.Parallel()
+
+	state := &State{}
+	state.RecordResult("fingerprint-template", "Nginx 指纹识别", "info")
+
+	summary := state.SnapshotResultSummary()
+	if summary.TechCount != 1 {
+		t.Fatalf("TechCount = %d, want 1", summary.TechCount)
+	}
+	if summary.InfoCount != 0 {
+		t.Fatalf("InfoCount = %d, want 0", summary.InfoCount)
+	}
+}
+
+func TestRecordResultCountsVulnerabilityBySeverity(t *testing.T) {
+	t.Parallel()
+
+	state := &State{}
+	state.RecordResult("vuln-template", "HTTP 安全响应头缺失", "info")
+	state.RecordResult("high-template", "任意文件读取", "high")
+
+	summary := state.SnapshotResultSummary()
+	if summary.InfoCount != 1 {
+		t.Fatalf("InfoCount = %d, want 1", summary.InfoCount)
+	}
+	if summary.HighCount != 1 {
+		t.Fatalf("HighCount = %d, want 1", summary.HighCount)
+	}
+	if summary.TechCount != 0 {
+		t.Fatalf("TechCount = %d, want 0", summary.TechCount)
+	}
+}
