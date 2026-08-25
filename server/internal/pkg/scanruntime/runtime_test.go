@@ -194,6 +194,26 @@ func TestFormatJSONResultMessage(t *testing.T) {
 	}
 }
 
+func TestFormatJSONResultMessageWithExtractorName(t *testing.T) {
+	t.Parallel()
+
+	payload := map[string]interface{}{
+		"template-id":    "deprecated-tls",
+		"extractor-name": "tls_1.1",
+		"host":           "ct-xray.dxmkj01-int.com:443",
+		"info": map[string]interface{}{
+			"name":     "弃用 TLS/SSL 协议检测（证书安全）",
+			"severity": "info",
+		},
+	}
+
+	got := FormatJSONResultMessage(payload)
+	want := "[弃用 TLS/SSL 协议检测（证书安全）][info][tls_1.1] 命中 ct-xray.dxmkj01-int.com:443"
+	if got != want {
+		t.Fatalf("FormatJSONResultMessageWithExtractorName() = %q, want %q", got, want)
+	}
+}
+
 func TestFormatJSONResultMessageFallback(t *testing.T) {
 	t.Parallel()
 

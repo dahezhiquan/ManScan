@@ -552,6 +552,8 @@ func FormatJSONResultMessage(payload map[string]interface{}) string {
 	labels := []string{templateName, severityText}
 	if matcherName := strings.TrimSpace(AsString(payload["matcher-name"])); matcherName != "" {
 		labels = append(labels, matcherName)
+	} else if extractorName := strings.TrimSpace(AsString(payload["extractor-name"])); extractorName != "" {
+		labels = append(labels, extractorName)
 	}
 
 	host := FirstNonEmpty(
