@@ -19,6 +19,7 @@ import (
 
 type ScanTaskHandler interface {
 	Create(c *gin.Context)
+	Cancel(c *gin.Context)
 	List(c *gin.Context)
 	Stats(c *gin.Context)
 	Get(c *gin.Context)
@@ -53,6 +54,30 @@ func (h *scanTaskHandler) Create(c *gin.Context) {
 		"stream":   fmt.Sprintf("/api/v1/scans/%d/stream", task.ID),
 		"task_api": fmt.Sprintf("/api/v1/scans/%d", task.ID),
 	})
+}
+
+func (h *scanTaskHandler) Cancel(c *gin.Context) {
+	taskID, err := parseTaskID(c.Param("id"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+
+	data, serviceErr := h.service.Cancel(c.Request.Context(), taskID)
+	if serviceErr != nil {
+		if serviceErr == gorm.ErrRecordNotFound {
+			response.Fail(c, errcode.NotFound, "任务不存在")
+			return
+		}
+		if serviceErr == service.ErrScanTaskNotCancelable {
+			response.Fail(c, errcode.InvalidParams, serviceErr.Error())
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "取消任务失败")
+		return
+	}
+
+	response.SuccessWithStatus(c, http.StatusAccepted, data)
 }
 
 func (h *scanTaskHandler) List(c *gin.Context) {

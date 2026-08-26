@@ -378,7 +378,47 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
   }'
 ```
 
-## 9. 获取扫描任务详情
+## 9. 取消扫描任务
+
+- 请求方法和路径：`POST /api/v1/scans/:id/cancel`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 任务 ID，路径参数 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task_id": 1,
+    "status": "running",
+    "cancel_requested": true
+  }
+}
+```
+
+- 说明：
+  - 当任务仍在执行时，接口会立即返回受理结果，并向扫描子进程发出取消信号；响应中的 `status` 保留任务取消前的当前状态，最终状态会在子进程退出后更新为 `cancelled`。
+  - 当任务已经是 `cancelled` 状态时，接口会直接返回当前状态。
+  - 当数据库中任务仍是 `pending` 或 `running`，但运行态已经丢失时，接口会直接将任务收口为 `cancelled`。
+
+- 错误码说明：
+  - `40001`：任务 ID 非法，或任务已结束且不支持再次取消
+  - `40401`：任务不存在
+  - `50001`：取消请求落库失败
+
+- 使用示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
+```
+
+## 10. 获取扫描任务详情
 
 - 请求方法和路径：`GET /api/v1/scans/:id`
 
@@ -441,7 +481,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 curl "http://127.0.0.1:8686/api/v1/scans/1"
 ```
 
-## 10. 获取扫描任务日志
+## 11. 获取扫描任务日志
 
 - 请求方法和路径：`GET /api/v1/scans/:id/logs`
 
@@ -508,7 +548,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
 curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
 ```
 
-## 11. 订阅扫描任务日志流
+## 12. 订阅扫描任务日志流
 
 - 请求方法和路径：`GET /api/v1/scans/:id/stream`
 

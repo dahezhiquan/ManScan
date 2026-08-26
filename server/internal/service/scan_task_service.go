@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -27,12 +26,15 @@ import (
 
 type ScanTaskService interface {
 	Create(ctx context.Context, request dto.CreateScanTaskRequest) (*dto.ScanTaskSummary, error)
+	Cancel(ctx context.Context, taskID int64) (*dto.CancelScanTaskResponse, error)
 	List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error)
 	Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int) (*dto.ScanTaskLogsResponse, error)
 	Subscribe(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() dto.ScanTaskSummary, func() scanruntime.TaskProgressSnapshot, func(), error)
 }
+
+var ErrScanTaskNotCancelable = errors.New("当前任务状态不支持取消")
 
 type scanTaskService struct {
 	repository repository.ScanTaskRepository
@@ -41,7 +43,7 @@ type scanTaskService struct {
 	runtimeDir string
 
 	mu     sync.RWMutex
-	states map[int64]*scanruntime.State
+	states map[int64]*scanTaskRuntime
 }
 
 type normalizedTaskRequest struct {
@@ -50,6 +52,16 @@ type normalizedTaskRequest struct {
 	Description      string
 	CreatedBy        string
 	CollectedTargets []string
+}
+
+type scanTaskRuntime struct {
+	state *scanruntime.State
+
+	mu              sync.Mutex
+	cancel          context.CancelFunc
+	terminate       func()
+	cancelRequested bool
+	finalized       bool
 }
 
 func NewScanTaskService(
@@ -65,7 +77,7 @@ func NewScanTaskService(
 		logger:     logger,
 		rootDir:    rootDir,
 		runtimeDir: runtimeDir,
-		states:     make(map[int64]*scanruntime.State),
+		states:     make(map[int64]*scanTaskRuntime),
 	}
 }
 
@@ -154,13 +166,14 @@ func (s *scanTaskService) Create(ctx context.Context, request dto.CreateScanTask
 		return nil, err
 	}
 
+	runtime := newScanTaskRuntime(state)
 	s.mu.Lock()
-	s.states[task.ID] = state
+	s.states[task.ID] = runtime
 	s.mu.Unlock()
 
 	state.Append("info", "task_created", "扫描任务已创建，等待执行")
 
-	go s.runTask(task.ID, plan, state)
+	go s.runTask(task.ID, plan, runtime)
 
 	return &dto.ScanTaskSummary{
 		ID:          task.ID,
@@ -169,6 +182,52 @@ func (s *scanTaskService) Create(ctx context.Context, request dto.CreateScanTask
 		Description: derefString(task.Description),
 		Status:      task.Status,
 		CreatedBy:   task.CreatedBy,
+	}, nil
+}
+
+func (s *scanTaskService) Cancel(ctx context.Context, taskID int64) (*dto.CancelScanTaskResponse, error) {
+	task, err := s.repository.FindByID(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	status := normalizeTaskStatus(task.Status)
+	switch status {
+	case "success", "failed":
+		return nil, ErrScanTaskNotCancelable
+	case "cancelled":
+		return &dto.CancelScanTaskResponse{
+			TaskID:          taskID,
+			Status:          "cancelled",
+			CancelRequested: true,
+		}, nil
+	}
+
+	runtime := s.getRuntime(taskID)
+	if runtime == nil {
+		finishedAt := time.Now()
+		if err := s.repository.UpdateStatus(ctx, taskID, "cancelled", nil, &finishedAt); err != nil {
+			return nil, err
+		}
+		if s.logger != nil {
+			s.logger.Info("scan task cancelled without runtime state", "task_id", taskID, "previous_status", status)
+		}
+		return &dto.CancelScanTaskResponse{
+			TaskID:          taskID,
+			Status:          "cancelled",
+			CancelRequested: true,
+		}, nil
+	}
+
+	alreadyRequested := runtime.RequestCancel()
+	if !alreadyRequested {
+		runtime.state.Append("info", "task_cancel_requested", "已提交取消请求，等待扫描子进程退出")
+	}
+
+	return &dto.CancelScanTaskResponse{
+		TaskID:          taskID,
+		Status:          status,
+		CancelRequested: true,
 	}, nil
 }
 
@@ -363,10 +422,21 @@ func (s *scanTaskService) Subscribe(
 	return &logs.Task, logs.Progress, logs.Events, logs.NextOffset, ch, currentTask, currentProgress, cancel, nil
 }
 
-func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, state *scanruntime.State) {
+func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, runtime *scanTaskRuntime) {
+	if runtime == nil || runtime.state == nil {
+		return
+	}
+	state := runtime.state
+	if runtime.IsCancelRequested() {
+		s.finishCancelledTask(taskID, runtime, nil)
+		return
+	}
+
 	startedAt := time.Now()
 	if err := s.repository.UpdateStatus(context.Background(), taskID, "running", &startedAt, nil); err != nil {
-		s.logger.Error("update task status failed", "task_id", taskID, "status", "running", "error", err)
+		if s.logger != nil {
+			s.logger.Error("update task status failed", "task_id", taskID, "status", "running", "error", err)
+		}
 		state.Append("error", "task_db_update_failed", "更新任务状态为 running 失败")
 	}
 
@@ -378,25 +448,28 @@ func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, sta
 	})
 	state.Append("info", "task_started", "扫描任务开始执行")
 
-	if err := s.executeTaskPlan(plan, state); err != nil {
-		finishedAt := time.Now()
-		state.Append("error", "task_failed", "扫描任务执行失败")
-		_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, startedAt, finishedAt, state.SnapshotResultSummary()))
-		state.MarkFinished("failed", finishedAt, "扫描任务执行失败")
-		_ = s.repository.UpdateStatus(context.Background(), taskID, "failed", nil, &finishedAt)
-		s.releaseState(taskID)
+	if runtime.IsCancelRequested() {
+		s.finishCancelledTask(taskID, runtime, &startedAt)
 		return
 	}
 
-	finishedAt := time.Now()
-	state.Append("info", "task_finished", "扫描任务执行完成")
-	_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, startedAt, finishedAt, state.SnapshotResultSummary()))
-	state.MarkFinished("success", finishedAt, "扫描任务执行完成")
-	_ = s.repository.UpdateStatus(context.Background(), taskID, "success", nil, &finishedAt)
-	s.releaseState(taskID)
+	if err := s.executeTaskPlan(plan, runtime); err != nil {
+		if errors.Is(err, context.Canceled) {
+			s.finishCancelledTask(taskID, runtime, &startedAt)
+			return
+		}
+		s.finishFailedTask(taskID, runtime, startedAt)
+		return
+	}
+
+	s.finishSuccessTask(taskID, runtime, startedAt)
 }
 
-func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, state *scanruntime.State) error {
+func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *scanTaskRuntime) error {
+	if runtime == nil || runtime.state == nil {
+		return errors.New("scan runtime is nil")
+	}
+	state := runtime.state
 	taskDir := filepath.Dir(state.LogFilePath)
 	targetsFile := filepath.Join(taskDir, "targets.txt")
 	if err := os.WriteFile(targetsFile, []byte(strings.Join(plan.CollectedTargets, "\n")+"\n"), 0o644); err != nil {
@@ -406,8 +479,17 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, state *sc
 	executable, baseArgs := resolveManScanCommand(s.rootDir)
 	args := append(baseArgs, buildScanCLIArgs(plan.Raw, taskDir, targetsFile)...)
 
-	cmd := exec.CommandContext(context.Background(), executable, args...)
+	cmdCtx, cancel := context.WithCancel(context.Background())
+	if !runtime.AttachCancel(cancel) {
+		cancel()
+		return context.Canceled
+	}
+	defer cancel()
+	defer runtime.ClearCancel()
+
+	cmd := exec.CommandContext(cmdCtx, executable, args...)
 	cmd.Dir = s.rootDir
+	prepareTaskCommand(cmd)
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -419,8 +501,18 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, state *sc
 	}
 
 	if err := cmd.Start(); err != nil {
+		if errors.Is(cmdCtx.Err(), context.Canceled) {
+			return context.Canceled
+		}
 		return err
 	}
+	if !runtime.AttachTerminator(func() {
+		_ = terminateTaskCommand(cmd)
+	}) {
+		_ = terminateTaskCommand(cmd)
+		return context.Canceled
+	}
+	defer runtime.ClearTerminator()
 
 	state.Append("info", "process_started", "扫描子进程已启动")
 
@@ -438,23 +530,78 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, state *sc
 	waitErr := cmd.Wait()
 	wg.Wait()
 	state.SyncScannerErrors()
+	if errors.Is(cmdCtx.Err(), context.Canceled) {
+		return context.Canceled
+	}
 	return waitErr
 }
 
-func (s *scanTaskService) getState(taskID int64) *scanruntime.State {
+func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntime, startedAt time.Time) {
+	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
+		return
+	}
+
+	state := runtime.state
+	finishedAt := time.Now()
+	state.Append("error", "task_failed", "扫描任务执行失败")
+	_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, &startedAt, finishedAt, state.SnapshotResultSummary()))
+	state.MarkFinished("failed", finishedAt, "扫描任务执行失败")
+	_ = s.repository.UpdateStatus(context.Background(), taskID, "failed", nil, &finishedAt)
+	s.releaseState(taskID)
+}
+
+func (s *scanTaskService) finishSuccessTask(taskID int64, runtime *scanTaskRuntime, startedAt time.Time) {
+	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
+		return
+	}
+
+	state := runtime.state
+	finishedAt := time.Now()
+	state.Append("info", "task_finished", "扫描任务执行完成")
+	_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, &startedAt, finishedAt, state.SnapshotResultSummary()))
+	state.MarkFinished("success", finishedAt, "扫描任务执行完成")
+	_ = s.repository.UpdateStatus(context.Background(), taskID, "success", nil, &finishedAt)
+	s.releaseState(taskID)
+}
+
+func (s *scanTaskService) finishCancelledTask(taskID int64, runtime *scanTaskRuntime, startedAt *time.Time) {
+	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
+		return
+	}
+
+	state := runtime.state
+	finishedAt := time.Now()
+	state.Append("info", "task_cancelled", "扫描任务已取消")
+	if startedAt != nil {
+		_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, startedAt, finishedAt, state.SnapshotResultSummary()))
+	}
+	state.MarkFinished("cancelled", finishedAt, "扫描任务已取消")
+	_ = s.repository.UpdateStatus(context.Background(), taskID, "cancelled", nil, &finishedAt)
+	s.releaseState(taskID)
+}
+
+func (s *scanTaskService) getRuntime(taskID int64) *scanTaskRuntime {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.states[taskID]
 }
 
+func (s *scanTaskService) getState(taskID int64) *scanruntime.State {
+	runtime := s.getRuntime(taskID)
+	if runtime == nil {
+		return nil
+	}
+	return runtime.state
+}
+
 func (s *scanTaskService) releaseState(taskID int64) {
 	time.AfterFunc(10*time.Minute, func() {
 		s.mu.Lock()
-		state := s.states[taskID]
+		runtime := s.states[taskID]
 		delete(s.states, taskID)
 		s.mu.Unlock()
-		if state != nil {
-			state.Close()
+		if runtime != nil && runtime.state != nil {
+			runtime.state.Close()
 		}
 	})
 }
@@ -464,10 +611,11 @@ func (s *scanTaskService) snapshotRunningStates() []*scanruntime.State {
 	defer s.mu.RUnlock()
 
 	states := make([]*scanruntime.State, 0, len(s.states))
-	for _, state := range s.states {
-		if state == nil {
+	for _, runtime := range s.states {
+		if runtime == nil || runtime.state == nil {
 			continue
 		}
+		state := runtime.state
 		progress := state.SnapshotProgress()
 		if progress.Finished {
 			continue
@@ -830,7 +978,7 @@ func (s *scanTaskService) findTaskResult(ctx context.Context, taskID int64) (*en
 	return result, nil
 }
 
-func toScanTaskResult(taskID int64, taskName string, startedAt, finishedAt time.Time, summary scanruntime.ResultSummary) *entity.ScanTaskResult {
+func toScanTaskResult(taskID int64, taskName string, startedAt *time.Time, finishedAt time.Time, summary scanruntime.ResultSummary) *entity.ScanTaskResult {
 	return &entity.ScanTaskResult{
 		TaskID:        taskID,
 		TaskName:      taskName,
@@ -844,18 +992,22 @@ func toScanTaskResult(taskID int64, taskName string, startedAt, finishedAt time.
 		TargetCount:   summary.TargetCount,
 		TotalRequests: summary.TotalRequests,
 		RealRequests:  summary.RealRequests,
-		CreatedAt:     &startedAt,
+		CreatedAt:     startedAt,
 		FinishedAt:    &finishedAt,
 	}
 }
 
 func isFinishedTaskStatus(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
+	switch normalizeTaskStatus(status) {
 	case "success", "failed", "cancelled":
 		return true
 	default:
 		return false
 	}
+}
+
+func normalizeTaskStatus(status string) string {
+	return strings.ToLower(strings.TrimSpace(status))
 }
 
 func nullableString(value string) *string {
@@ -916,7 +1068,113 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func _() {
-	_ = gorm.ErrRecordNotFound
-	_ = http.StatusAccepted
+func newScanTaskRuntime(state *scanruntime.State) *scanTaskRuntime {
+	return &scanTaskRuntime{state: state}
+}
+
+func (r *scanTaskRuntime) RequestCancel() bool {
+	if r == nil {
+		return false
+	}
+
+	r.mu.Lock()
+	alreadyRequested := r.cancelRequested
+	r.cancelRequested = true
+	cancel := r.cancel
+	terminate := r.terminate
+	r.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if terminate != nil {
+		terminate()
+	}
+	return alreadyRequested
+}
+
+func (r *scanTaskRuntime) IsCancelRequested() bool {
+	if r == nil {
+		return false
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cancelRequested
+}
+
+func (r *scanTaskRuntime) AttachCancel(cancel context.CancelFunc) bool {
+	if r == nil {
+		return false
+	}
+
+	r.mu.Lock()
+	if r.finalized {
+		r.mu.Unlock()
+		return false
+	}
+	r.cancel = cancel
+	cancelRequested := r.cancelRequested
+	r.mu.Unlock()
+
+	if cancelRequested && cancel != nil {
+		cancel()
+	}
+	return true
+}
+
+func (r *scanTaskRuntime) ClearCancel() {
+	if r == nil {
+		return
+	}
+
+	r.mu.Lock()
+	r.cancel = nil
+	r.mu.Unlock()
+}
+
+func (r *scanTaskRuntime) AttachTerminator(terminate func()) bool {
+	if r == nil {
+		return false
+	}
+
+	r.mu.Lock()
+	if r.finalized {
+		r.mu.Unlock()
+		return false
+	}
+	r.terminate = terminate
+	cancelRequested := r.cancelRequested
+	r.mu.Unlock()
+
+	if cancelRequested && terminate != nil {
+		terminate()
+	}
+	return true
+}
+
+func (r *scanTaskRuntime) ClearTerminator() {
+	if r == nil {
+		return
+	}
+
+	r.mu.Lock()
+	r.terminate = nil
+	r.mu.Unlock()
+}
+
+func (r *scanTaskRuntime) TryFinalize() bool {
+	if r == nil {
+		return false
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.finalized {
+		return false
+	}
+	r.finalized = true
+	r.cancel = nil
+	r.terminate = nil
+	return true
 }

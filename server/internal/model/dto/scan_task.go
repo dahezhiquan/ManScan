@@ -133,6 +133,12 @@ type ScanTaskSummary struct {
 	TargetCount   int        `json:"target_count"`
 }
 
+type CancelScanTaskResponse struct {
+	TaskID          int64  `json:"task_id"`
+	Status          string `json:"status"`
+	CancelRequested bool   `json:"cancel_requested"`
+}
+
 type GetScanTaskResponse struct {
 	Task     ScanTaskSummary                  `json:"task"`
 	Progress scanruntime.TaskProgressSnapshot `json:"progress"`

@@ -7,7 +7,10 @@ import (
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
+	"ManScan/server/internal/pkg/logx"
 	"ManScan/server/internal/pkg/scanruntime"
+
+	"gorm.io/gorm"
 )
 
 func TestCollectTargetsNormalizesTrailingSlash(t *testing.T) {
@@ -110,7 +113,7 @@ func TestToScanTaskResultIncludesRequestStats(t *testing.T) {
 		RealRequests:  10,
 	}
 
-	result := toScanTaskResult(11, "demo-task", startedAt, finishedAt, summary)
+	result := toScanTaskResult(11, "demo-task", &startedAt, finishedAt, summary)
 	if result.TotalRequests != 9 || result.RealRequests != 10 {
 		t.Fatalf("unexpected request stats: %+v", result)
 	}
@@ -222,8 +225,8 @@ func TestListHighRiskTasksIncludesRuntimeSummary(t *testing.T) {
 				{ID: 1, TaskNo: "task-1", Name: "safe-task", Status: "success", MediumCount: 1},
 			},
 		},
-		states: map[int64]*scanruntime.State{
-			3: runningState,
+		states: map[int64]*scanTaskRuntime{
+			3: newScanTaskRuntime(runningState),
 		},
 	}
 
@@ -267,7 +270,7 @@ func TestListHighRiskTasksPaginatesFilteredItems(t *testing.T) {
 				{ID: 3, TaskNo: "task-3", Status: "success", MediumCount: 2},
 			},
 		},
-		states: map[int64]*scanruntime.State{},
+		states: map[int64]*scanTaskRuntime{},
 	}
 
 	page, err := svc.List(context.Background(), dto.ListScanTasksQuery{
@@ -310,8 +313,8 @@ func TestStatsIncludesRunningStateSavedRequests(t *testing.T) {
 				SavedRequests: 12345,
 			},
 		},
-		states: map[int64]*scanruntime.State{
-			9: runningState,
+		states: map[int64]*scanTaskRuntime{
+			9: newScanTaskRuntime(runningState),
 		},
 	}
 
@@ -328,18 +331,208 @@ func TestStatsIncludesRunningStateSavedRequests(t *testing.T) {
 	}
 }
 
+func TestCancelRequestsRunningTaskCancellation(t *testing.T) {
+	t.Parallel()
+
+	runtimeDir := t.TempDir()
+	runningState, err := scanruntime.NewState(12, "task-12", "running-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer runningState.Close()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				12: {
+					ID:        12,
+					TaskNo:    "task-12",
+					Name:      "running-task",
+					Status:    "running",
+					CreatedBy: "tester",
+				},
+			},
+		},
+		states: map[int64]*scanTaskRuntime{
+			12: newScanTaskRuntime(runningState),
+		},
+	}
+
+	resp, err := svc.Cancel(context.Background(), 12)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if !resp.CancelRequested {
+		t.Fatalf("CancelRequested = false, want true")
+	}
+	if resp.Status != "running" {
+		t.Fatalf("Status = %q, want running", resp.Status)
+	}
+
+	runtime := svc.getRuntime(12)
+	if runtime == nil || !runtime.IsCancelRequested() {
+		t.Fatalf("expected runtime cancellation flag to be set")
+	}
+
+	events := runningState.EventsSince(0, 10).Events
+	found := false
+	for _, event := range events {
+		if event.Type == "task_cancel_requested" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected task_cancel_requested event, got %+v", events)
+	}
+}
+
+func TestCancelMarksStrandedRunningTaskCancelled(t *testing.T) {
+	t.Parallel()
+
+	startedAt := time.Date(2026, 8, 26, 10, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{
+			13: {
+				ID:        13,
+				TaskNo:    "task-13",
+				Name:      "stranded-task",
+				Status:    "running",
+				CreatedBy: "tester",
+				StartedAt: &startedAt,
+			},
+		},
+	}
+	svc := &scanTaskService{
+		repository: repo,
+		logger:     logx.New(),
+		states:     map[int64]*scanTaskRuntime{},
+	}
+
+	resp, err := svc.Cancel(context.Background(), 13)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if resp.Status != "cancelled" {
+		t.Fatalf("Status = %q, want cancelled", resp.Status)
+	}
+	if len(repo.updateStatusCalls) != 1 {
+		t.Fatalf("updateStatusCalls = %d, want 1", len(repo.updateStatusCalls))
+	}
+	if repo.updateStatusCalls[0].status != "cancelled" {
+		t.Fatalf("updated status = %q, want cancelled", repo.updateStatusCalls[0].status)
+	}
+}
+
+func TestCancelRejectsFinishedTask(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				14: {
+					ID:        14,
+					TaskNo:    "task-14",
+					Name:      "finished-task",
+					Status:    "success",
+					CreatedBy: "tester",
+				},
+			},
+		},
+		states: map[int64]*scanTaskRuntime{},
+	}
+
+	_, err := svc.Cancel(context.Background(), 14)
+	if err != ErrScanTaskNotCancelable {
+		t.Fatalf("Cancel() error = %v, want %v", err, ErrScanTaskNotCancelable)
+	}
+}
+
+func TestScanTaskRuntimeRequestCancelTriggersTerminate(t *testing.T) {
+	t.Parallel()
+
+	runtime := newScanTaskRuntime(nil)
+
+	cancelCalled := false
+	terminateCalled := false
+	if !runtime.AttachCancel(func() {
+		cancelCalled = true
+	}) {
+		t.Fatalf("AttachCancel() = false, want true")
+	}
+	if !runtime.AttachTerminator(func() {
+		terminateCalled = true
+	}) {
+		t.Fatalf("AttachTerminator() = false, want true")
+	}
+
+	alreadyRequested := runtime.RequestCancel()
+	if alreadyRequested {
+		t.Fatalf("RequestCancel() = true, want false on first request")
+	}
+	if !cancelCalled {
+		t.Fatalf("expected cancel func to be called")
+	}
+	if !terminateCalled {
+		t.Fatalf("expected terminate func to be called")
+	}
+}
+
+func TestScanTaskRuntimeAttachTerminatorAfterCancelRunsImmediately(t *testing.T) {
+	t.Parallel()
+
+	runtime := newScanTaskRuntime(nil)
+	if alreadyRequested := runtime.RequestCancel(); alreadyRequested {
+		t.Fatalf("RequestCancel() = true, want false on first request")
+	}
+
+	terminateCalled := false
+	if !runtime.AttachTerminator(func() {
+		terminateCalled = true
+	}) {
+		t.Fatalf("AttachTerminator() = false, want true")
+	}
+	if !terminateCalled {
+		t.Fatalf("expected terminate func to run immediately after prior cancel request")
+	}
+}
+
+type statusUpdateCall struct {
+	taskID     int64
+	status     string
+	startedAt  *time.Time
+	finishedAt *time.Time
+}
+
 type scanTaskRepositoryStub struct {
-	listResult   *dto.PageResult[dto.ScanTaskListItem]
-	listAllItems []dto.ScanTaskListItem
-	statsResult  *dto.ScanTaskStats
+	listResult        *dto.PageResult[dto.ScanTaskListItem]
+	listAllItems      []dto.ScanTaskListItem
+	statsResult       *dto.ScanTaskStats
+	tasks             map[int64]*entity.ScanTask
+	findByIDErr       error
+	updateStatusErr   error
+	updateStatusCalls []statusUpdateCall
 }
 
 func (s *scanTaskRepositoryStub) Create(_ context.Context, _ *entity.ScanTask) error {
 	return nil
 }
 
-func (s *scanTaskRepositoryStub) FindByID(_ context.Context, _ int64) (*entity.ScanTask, error) {
-	return nil, nil
+func (s *scanTaskRepositoryStub) FindByID(_ context.Context, taskID int64) (*entity.ScanTask, error) {
+	if s.findByIDErr != nil {
+		return nil, s.findByIDErr
+	}
+	if s.tasks == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	task, ok := s.tasks[taskID]
+	if !ok {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	copyTask := *task
+	return &copyTask, nil
 }
 
 func (s *scanTaskRepositoryStub) List(_ context.Context, _ dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error) {
@@ -367,7 +560,29 @@ func (s *scanTaskRepositoryStub) FindResultByTaskID(_ context.Context, _ int64) 
 	return nil, nil
 }
 
-func (s *scanTaskRepositoryStub) UpdateStatus(_ context.Context, _ int64, _ string, _, _ *time.Time) error {
+func (s *scanTaskRepositoryStub) UpdateStatus(_ context.Context, taskID int64, status string, startedAt, finishedAt *time.Time) error {
+	if s.updateStatusErr != nil {
+		return s.updateStatusErr
+	}
+
+	s.updateStatusCalls = append(s.updateStatusCalls, statusUpdateCall{
+		taskID:     taskID,
+		status:     status,
+		startedAt:  startedAt,
+		finishedAt: finishedAt,
+	})
+
+	if task, ok := s.tasks[taskID]; ok {
+		task.Status = status
+		if startedAt != nil {
+			copied := *startedAt
+			task.StartedAt = &copied
+		}
+		if finishedAt != nil {
+			copied := *finishedAt
+			task.FinishedAt = &copied
+		}
+	}
 	return nil
 }
 
