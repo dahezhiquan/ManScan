@@ -203,7 +203,44 @@ curl "http://127.0.0.1:8686/api/v1/templates/options/protocols"
 curl "http://127.0.0.1:8686/api/v1/templates/stats"
 ```
 
-## 6. 获取扫描任务列表
+## 6. 获取扫描任务统计
+
+- 请求方法和路径：`GET /api/v1/scans/stats`
+
+- 请求参数：
+
+无
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "total": 18,
+    "running": 0,
+    "saved_requests": 12345
+  }
+}
+```
+
+- 说明：
+  - `total` 表示扫描任务总数。
+  - `running` 表示当前状态为 `running` 的任务数。
+  - `saved_requests` 表示所有扫描任务综合节省的请求数，统计口径为 `SUM(total_requests - real_requests)`。
+  - 对于仍在运行中的任务，接口会叠加运行时快照中的当前请求节省量，不必等 `manscan_task_results` 落库后才可见。
+
+- 错误码说明：
+  - `50001`：获取扫描任务统计失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/scans/stats"
+```
+
+## 7. 获取扫描任务列表
 
 - 请求方法和路径：`GET /api/v1/scans`
 
@@ -217,6 +254,7 @@ curl "http://127.0.0.1:8686/api/v1/templates/stats"
 | `status` | `string` / `string[]` | 否 | 按任务状态过滤，支持逗号分隔和多参数 |
 | `scan_strategy` | `string` / `string[]` | 否 | 按扫描策略过滤，支持逗号分隔和多参数 |
 | `created_by` | `string` | 否 | 按创建人精确过滤 |
+| `has_high_risk` | `bool` | 否 | 传 `true` 时只返回 `critical_count > 0 OR high_count > 0` 的任务；运行中任务会结合运行时快照判断 |
 
 - 响应格式：
 
@@ -270,10 +308,10 @@ curl "http://127.0.0.1:8686/api/v1/templates/stats"
 - 使用示例：
 
 ```bash
-curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status=running"
+curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status=running&has_high_risk=true"
 ```
 
-## 7. 创建扫描任务
+## 8. 创建扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans`
 
@@ -340,7 +378,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
   }'
 ```
 
-## 8. 获取扫描任务详情
+## 9. 获取扫描任务详情
 
 - 请求方法和路径：`GET /api/v1/scans/:id`
 
@@ -403,7 +441,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 curl "http://127.0.0.1:8686/api/v1/scans/1"
 ```
 
-## 9. 获取扫描任务日志
+## 10. 获取扫描任务日志
 
 - 请求方法和路径：`GET /api/v1/scans/:id/logs`
 
@@ -470,7 +508,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
 curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
 ```
 
-## 10. 订阅扫描任务日志流
+## 11. 订阅扫描任务日志流
 
 - 请求方法和路径：`GET /api/v1/scans/:id/stream`
 

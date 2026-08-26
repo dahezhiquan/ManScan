@@ -20,6 +20,7 @@ import (
 type ScanTaskHandler interface {
 	Create(c *gin.Context)
 	List(c *gin.Context)
+	Stats(c *gin.Context)
 	Get(c *gin.Context)
 	Logs(c *gin.Context)
 	Stream(c *gin.Context)
@@ -65,6 +66,11 @@ func (h *scanTaskHandler) List(c *gin.Context) {
 		response.Fail(c, errcode.InvalidParams, "page_size 参数必须在 1-100 之间")
 		return
 	}
+	hasHighRisk, err := parseBoolQuery(c.Query("has_high_risk"), false)
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, "has_high_risk 参数必须是布尔值")
+		return
+	}
 
 	data, serviceErr := h.service.List(c.Request.Context(), dto.ListScanTasksQuery{
 		Page:           page,
@@ -73,9 +79,20 @@ func (h *scanTaskHandler) List(c *gin.Context) {
 		Statuses:       parseMultiValueQuery(c, "status"),
 		ScanStrategies: parseMultiValueQuery(c, "scan_strategy"),
 		CreatedBy:      strings.TrimSpace(c.Query("created_by")),
+		HasHighRisk:    hasHighRisk,
 	})
 	if serviceErr != nil {
 		response.Fail(c, errcode.InternalServerError, "获取任务列表失败")
+		return
+	}
+
+	response.Success(c, data)
+}
+
+func (h *scanTaskHandler) Stats(c *gin.Context) {
+	data, serviceErr := h.service.Stats(c.Request.Context())
+	if serviceErr != nil {
+		response.Fail(c, errcode.InternalServerError, "获取扫描任务统计失败")
 		return
 	}
 
@@ -256,6 +273,19 @@ func parsePositiveIntQuery(raw string, defaultValue int) (int, error) {
 	value, err := strconv.Atoi(raw)
 	if err != nil || value <= 0 {
 		return 0, fmt.Errorf("invalid positive int")
+	}
+	return value, nil
+}
+
+func parseBoolQuery(raw string, defaultValue bool) (bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultValue, nil
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, err
 	}
 	return value, nil
 }

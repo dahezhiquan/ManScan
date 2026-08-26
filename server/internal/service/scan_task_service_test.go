@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -168,6 +169,210 @@ func TestCalculateTaskDurationSeconds(t *testing.T) {
 	if got := calculateTaskDurationSeconds(&startedAt, &finishedAt, startedAt); got != 125 {
 		t.Fatalf("calculateTaskDurationSeconds() = %d, want 125", got)
 	}
+}
+
+func TestCalculateSavedRequests(t *testing.T) {
+	t.Parallel()
+
+	if got := calculateSavedRequests(120, 80); got != 40 {
+		t.Fatalf("calculateSavedRequests() = %d, want 40", got)
+	}
+	if got := calculateSavedRequests(50, 70); got != 0 {
+		t.Fatalf("calculateSavedRequests() negative guard = %d, want 0", got)
+	}
+}
+
+func TestHasHighRiskResult(t *testing.T) {
+	t.Parallel()
+
+	if !hasHighRiskResult(dto.ScanTaskListItem{CriticalCount: 1}) {
+		t.Fatalf("expected critical count to be treated as high risk")
+	}
+	if !hasHighRiskResult(dto.ScanTaskListItem{HighCount: 1}) {
+		t.Fatalf("expected high count to be treated as high risk")
+	}
+	if hasHighRiskResult(dto.ScanTaskListItem{MediumCount: 1, InfoCount: 2}) {
+		t.Fatalf("did not expect medium/info only result to be treated as high risk")
+	}
+}
+
+func TestListHighRiskTasksIncludesRuntimeSummary(t *testing.T) {
+	t.Parallel()
+
+	runtimeDir := t.TempDir()
+	runningState, err := scanruntime.NewState(3, "task-3", "runtime-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer runningState.Close()
+
+	runningState.RecordResult("runtime-high", "弃用 TLS/SSL 协议检测（证书安全）", "high")
+	runningState.UpdateProgress(func(snapshot *scanruntime.TaskProgressSnapshot) {
+		snapshot.Requests = 6
+		snapshot.TotalRequests = 20
+		snapshot.Percent = 30
+		snapshot.LastMessage = "运行时已发现高危"
+	})
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			listAllItems: []dto.ScanTaskListItem{
+				{ID: 3, TaskNo: "task-3", Name: "runtime-task", Status: "running"},
+				{ID: 2, TaskNo: "task-2", Name: "db-task", Status: "success", HighCount: 2},
+				{ID: 1, TaskNo: "task-1", Name: "safe-task", Status: "success", MediumCount: 1},
+			},
+		},
+		states: map[int64]*scanruntime.State{
+			3: runningState,
+		},
+	}
+
+	page, err := svc.List(context.Background(), dto.ListScanTasksQuery{
+		Page:        1,
+		PageSize:    10,
+		HasHighRisk: true,
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	if page.Total != 2 {
+		t.Fatalf("Total = %d, want 2", page.Total)
+	}
+	if len(page.Items) != 2 {
+		t.Fatalf("len(Items) = %d, want 2", len(page.Items))
+	}
+	if page.Items[0].ID != 3 {
+		t.Fatalf("first item ID = %d, want 3", page.Items[0].ID)
+	}
+	if page.Items[0].HighCount != 1 {
+		t.Fatalf("runtime high count = %d, want 1", page.Items[0].HighCount)
+	}
+	if page.Items[0].RealRequests != 6 || page.Items[0].TotalRequests != 20 {
+		t.Fatalf("unexpected runtime request stats: %+v", page.Items[0])
+	}
+	if page.Items[1].ID != 2 {
+		t.Fatalf("second item ID = %d, want 2", page.Items[1].ID)
+	}
+}
+
+func TestListHighRiskTasksPaginatesFilteredItems(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			listAllItems: []dto.ScanTaskListItem{
+				{ID: 5, TaskNo: "task-5", Status: "success", CriticalCount: 1},
+				{ID: 4, TaskNo: "task-4", Status: "success", HighCount: 1},
+				{ID: 3, TaskNo: "task-3", Status: "success", MediumCount: 2},
+			},
+		},
+		states: map[int64]*scanruntime.State{},
+	}
+
+	page, err := svc.List(context.Background(), dto.ListScanTasksQuery{
+		Page:        2,
+		PageSize:    1,
+		HasHighRisk: true,
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+
+	if page.Total != 2 || page.TotalPages != 2 {
+		t.Fatalf("unexpected pagination: %+v", page)
+	}
+	if len(page.Items) != 1 || page.Items[0].ID != 4 {
+		t.Fatalf("unexpected page items: %+v", page.Items)
+	}
+}
+
+func TestStatsIncludesRunningStateSavedRequests(t *testing.T) {
+	t.Parallel()
+
+	runtimeDir := t.TempDir()
+	runningState, err := scanruntime.NewState(9, "task-9", "running-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer runningState.Close()
+
+	runningState.UpdateProgress(func(snapshot *scanruntime.TaskProgressSnapshot) {
+		snapshot.TotalRequests = 200
+		snapshot.Requests = 125
+	})
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			statsResult: &dto.ScanTaskStats{
+				Total:         18,
+				Running:       1,
+				SavedRequests: 12345,
+			},
+		},
+		states: map[int64]*scanruntime.State{
+			9: runningState,
+		},
+	}
+
+	stats, err := svc.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+
+	if stats.Total != 18 || stats.Running != 1 {
+		t.Fatalf("unexpected count stats: %+v", stats)
+	}
+	if stats.SavedRequests != 12420 {
+		t.Fatalf("SavedRequests = %d, want 12420", stats.SavedRequests)
+	}
+}
+
+type scanTaskRepositoryStub struct {
+	listResult   *dto.PageResult[dto.ScanTaskListItem]
+	listAllItems []dto.ScanTaskListItem
+	statsResult  *dto.ScanTaskStats
+}
+
+func (s *scanTaskRepositoryStub) Create(_ context.Context, _ *entity.ScanTask) error {
+	return nil
+}
+
+func (s *scanTaskRepositoryStub) FindByID(_ context.Context, _ int64) (*entity.ScanTask, error) {
+	return nil, nil
+}
+
+func (s *scanTaskRepositoryStub) List(_ context.Context, _ dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error) {
+	if s.listResult != nil {
+		return s.listResult, nil
+	}
+	return &dto.PageResult[dto.ScanTaskListItem]{}, nil
+}
+
+func (s *scanTaskRepositoryStub) ListAll(_ context.Context, _ dto.ListScanTasksQuery) ([]dto.ScanTaskListItem, error) {
+	items := make([]dto.ScanTaskListItem, len(s.listAllItems))
+	copy(items, s.listAllItems)
+	return items, nil
+}
+
+func (s *scanTaskRepositoryStub) Stats(_ context.Context) (*dto.ScanTaskStats, error) {
+	if s.statsResult != nil {
+		copyStats := *s.statsResult
+		return &copyStats, nil
+	}
+	return &dto.ScanTaskStats{}, nil
+}
+
+func (s *scanTaskRepositoryStub) FindResultByTaskID(_ context.Context, _ int64) (*entity.ScanTaskResult, error) {
+	return nil, nil
+}
+
+func (s *scanTaskRepositoryStub) UpdateStatus(_ context.Context, _ int64, _ string, _, _ *time.Time) error {
+	return nil
+}
+
+func (s *scanTaskRepositoryStub) UpsertResult(_ context.Context, _ *entity.ScanTaskResult) error {
+	return nil
 }
 
 func ptr(value string) *string {

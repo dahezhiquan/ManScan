@@ -28,6 +28,7 @@ import (
 type ScanTaskService interface {
 	Create(ctx context.Context, request dto.CreateScanTaskRequest) (*dto.ScanTaskSummary, error)
 	List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error)
+	Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int) (*dto.ScanTaskLogsResponse, error)
 	Subscribe(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() dto.ScanTaskSummary, func() scanruntime.TaskProgressSnapshot, func(), error)
@@ -172,6 +173,10 @@ func (s *scanTaskService) Create(ctx context.Context, request dto.CreateScanTask
 }
 
 func (s *scanTaskService) List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error) {
+	if query.HasHighRisk {
+		return s.listHighRiskTasks(ctx, query)
+	}
+
 	page, err := s.repository.List(ctx, query)
 	if err != nil {
 		return nil, err
@@ -190,6 +195,83 @@ func (s *scanTaskService) List(ctx context.Context, query dto.ListScanTasksQuery
 	}
 
 	return page, nil
+}
+
+func (s *scanTaskService) Stats(ctx context.Context) (*dto.ScanTaskStats, error) {
+	stats, err := s.repository.Stats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	copyStats := *stats
+	for _, state := range s.snapshotRunningStates() {
+		summary := state.SnapshotResultSummary()
+		copyStats.SavedRequests += calculateSavedRequests(summary.TotalRequests, summary.RealRequests)
+	}
+	return &copyStats, nil
+}
+
+func (s *scanTaskService) listHighRiskTasks(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error) {
+	page := query.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := query.PageSize
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+
+	items, err := s.repository.ListAll(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	filteredItems := make([]dto.ScanTaskListItem, 0, len(items))
+	for index := range items {
+		item := &items[index]
+		progress := s.getProgress(ctx, item.ID, item.Status)
+		if state := s.getState(item.ID); state != nil {
+			applyRuntimeResultSummaryToListItem(item, state.SnapshotResultSummary())
+			progress = state.SnapshotProgress()
+		}
+		applyProgressSnapshotToListItem(item, progress)
+		item.DurationSeconds = calculateTaskDurationSeconds(item.StartedAt, item.FinishedAt, now)
+		if !hasHighRiskResult(*item) {
+			continue
+		}
+		filteredItems = append(filteredItems, *item)
+	}
+
+	total := len(filteredItems)
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + pageSize - 1) / pageSize
+	}
+
+	start := (page - 1) * pageSize
+	if start >= total {
+		return &dto.PageResult[dto.ScanTaskListItem]{
+			Page:       page,
+			PageSize:   pageSize,
+			Total:      total,
+			TotalPages: totalPages,
+			Items:      []dto.ScanTaskListItem{},
+		}, nil
+	}
+
+	end := start + pageSize
+	if end > total {
+		end = total
+	}
+
+	return &dto.PageResult[dto.ScanTaskListItem]{
+		Page:       page,
+		PageSize:   pageSize,
+		Total:      total,
+		TotalPages: totalPages,
+		Items:      filteredItems[start:end],
+	}, nil
 }
 
 func (s *scanTaskService) Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error) {
@@ -375,6 +457,24 @@ func (s *scanTaskService) releaseState(taskID int64) {
 			state.Close()
 		}
 	})
+}
+
+func (s *scanTaskService) snapshotRunningStates() []*scanruntime.State {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	states := make([]*scanruntime.State, 0, len(s.states))
+	for _, state := range s.states {
+		if state == nil {
+			continue
+		}
+		progress := state.SnapshotProgress()
+		if progress.Finished {
+			continue
+		}
+		states = append(states, state)
+	}
+	return states
 }
 
 func (s *scanTaskService) getProgress(ctx context.Context, taskID int64, status string) scanruntime.TaskProgressSnapshot {
@@ -688,6 +788,18 @@ func calculateTaskDurationSeconds(startedAt, finishedAt *time.Time, now time.Tim
 		return 0
 	}
 	return int64(end.Sub(*startedAt).Seconds())
+}
+
+func hasHighRiskResult(item dto.ScanTaskListItem) bool {
+	return item.CriticalCount > 0 || item.HighCount > 0
+}
+
+func calculateSavedRequests(totalRequests, realRequests int64) int64 {
+	saved := totalRequests - realRequests
+	if saved < 0 {
+		return 0
+	}
+	return saved
 }
 
 func (s *scanTaskService) buildTaskSummary(ctx context.Context, task *entity.ScanTask) (dto.ScanTaskSummary, error) {

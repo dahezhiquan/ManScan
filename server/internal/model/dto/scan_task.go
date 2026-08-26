@@ -80,6 +80,7 @@ type ListScanTasksQuery struct {
 	Statuses       []string
 	ScanStrategies []string
 	CreatedBy      string
+	HasHighRisk    bool
 }
 
 type ScanTaskListItem struct {
@@ -105,6 +106,12 @@ type ScanTaskListItem struct {
 	ProgressPercent float64    `json:"progress_percent"`
 	DurationSeconds int64      `json:"duration_seconds"`
 	LastMessage     string     `json:"last_message,omitempty"`
+}
+
+type ScanTaskStats struct {
+	Total         int64 `json:"total"`
+	Running       int64 `json:"running"`
+	SavedRequests int64 `json:"saved_requests"`
 }
 
 type ScanTaskSummary struct {

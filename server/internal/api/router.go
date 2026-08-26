@@ -26,6 +26,7 @@ func NewRouter(
 	v1.GET("/templates/stats", templateHandler.Stats)
 
 	v1.GET("/scans", scanTaskHandler.List)
+	v1.GET("/scans/stats", scanTaskHandler.Stats)
 	v1.POST("/scans", scanTaskHandler.Create)
 	v1.GET("/scans/:id", scanTaskHandler.Get)
 	v1.GET("/scans/:id/logs", scanTaskHandler.Logs)
