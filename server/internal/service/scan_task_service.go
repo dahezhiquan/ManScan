@@ -27,6 +27,7 @@ import (
 
 type ScanTaskService interface {
 	Create(ctx context.Context, request dto.CreateScanTaskRequest) (*dto.ScanTaskSummary, error)
+	List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int) (*dto.ScanTaskLogsResponse, error)
 	Subscribe(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() dto.ScanTaskSummary, func() scanruntime.TaskProgressSnapshot, func(), error)
@@ -168,6 +169,27 @@ func (s *scanTaskService) Create(ctx context.Context, request dto.CreateScanTask
 		Status:      task.Status,
 		CreatedBy:   task.CreatedBy,
 	}, nil
+}
+
+func (s *scanTaskService) List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error) {
+	page, err := s.repository.List(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	for index := range page.Items {
+		item := &page.Items[index]
+		progress := s.getProgress(ctx, item.ID, item.Status)
+		if state := s.getState(item.ID); state != nil {
+			applyRuntimeResultSummaryToListItem(item, state.SnapshotResultSummary())
+			progress = state.SnapshotProgress()
+		}
+		applyProgressSnapshotToListItem(item, progress)
+		item.DurationSeconds = calculateTaskDurationSeconds(item.StartedAt, item.FinishedAt, now)
+	}
+
+	return page, nil
 }
 
 func (s *scanTaskService) Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error) {
@@ -630,6 +652,44 @@ func applyRuntimeResultSummary(summary *dto.ScanTaskSummary, result scanruntime.
 	summary.TargetCount = result.TargetCount
 }
 
+func applyRuntimeResultSummaryToListItem(item *dto.ScanTaskListItem, result scanruntime.ResultSummary) {
+	item.CriticalCount = result.CriticalCount
+	item.HighCount = result.HighCount
+	item.MediumCount = result.MediumCount
+	item.LowCount = result.LowCount
+	item.InfoCount = result.InfoCount
+	item.TechCount = result.TechCount
+	item.PluginCount = result.PluginCount
+	item.TargetCount = result.TargetCount
+	item.TotalRequests = result.TotalRequests
+	item.RealRequests = result.RealRequests
+}
+
+func applyProgressSnapshotToListItem(item *dto.ScanTaskListItem, progress scanruntime.TaskProgressSnapshot) {
+	if progress.TotalRequests > 0 {
+		item.TotalRequests = progress.TotalRequests
+	}
+	if progress.Requests > 0 {
+		item.RealRequests = progress.Requests
+	}
+	item.ProgressPercent = progress.Percent
+	item.LastMessage = progress.LastMessage
+}
+
+func calculateTaskDurationSeconds(startedAt, finishedAt *time.Time, now time.Time) int64 {
+	if startedAt == nil {
+		return 0
+	}
+	end := now
+	if finishedAt != nil {
+		end = *finishedAt
+	}
+	if end.Before(*startedAt) {
+		return 0
+	}
+	return int64(end.Sub(*startedAt).Seconds())
+}
+
 func (s *scanTaskService) buildTaskSummary(ctx context.Context, task *entity.ScanTask) (dto.ScanTaskSummary, error) {
 	summary := toScanTaskSummary(task, nil)
 	if state := s.getState(task.ID); state != nil {
@@ -670,6 +730,8 @@ func toScanTaskResult(taskID int64, taskName string, startedAt, finishedAt time.
 		TechCount:     summary.TechCount,
 		PluginCount:   summary.PluginCount,
 		TargetCount:   summary.TargetCount,
+		TotalRequests: summary.TotalRequests,
+		RealRequests:  summary.RealRequests,
 		CreatedAt:     &startedAt,
 		FinishedAt:    &finishedAt,
 	}

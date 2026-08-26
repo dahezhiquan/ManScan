@@ -61,6 +61,8 @@ type ResultSummary struct {
 	TechCount     int
 	PluginCount   int
 	TargetCount   int
+	TotalRequests int64
+	RealRequests  int64
 }
 
 type progressLogState struct {
@@ -263,6 +265,8 @@ func (s *State) SnapshotResultSummary() ResultSummary {
 	summary := s.resultSummary
 	summary.TargetCount = s.TargetCount
 	summary.PluginCount = int(s.progress.Templates)
+	summary.TotalRequests = s.progress.TotalRequests
+	summary.RealRequests = s.progress.Requests
 	return summary
 }
 
@@ -565,7 +569,41 @@ func FormatJSONResultMessage(payload map[string]interface{}) string {
 		host = "unknown-target"
 	}
 
-	return fmt.Sprintf("[%s] 命中 %s", strings.Join(labels, "]["), host)
+	message := fmt.Sprintf("[%s] 命中 %s", strings.Join(labels, "]["), host)
+	if extractedResults := formatExtractedResultsLine(payload["extracted-results"]); extractedResults != "" {
+		message += "\n" + extractedResults
+	}
+	return message
+}
+
+func formatExtractedResultsLine(value interface{}) string {
+	var results []string
+
+	switch typed := value.(type) {
+	case []interface{}:
+		results = make([]string, 0, len(typed))
+		for _, item := range typed {
+			if normalized := strings.TrimSpace(AsString(item)); normalized != "" {
+				results = append(results, normalized)
+			}
+		}
+	case []string:
+		results = make([]string, 0, len(typed))
+		for _, item := range typed {
+			if normalized := strings.TrimSpace(item); normalized != "" {
+				results = append(results, normalized)
+			}
+		}
+	default:
+		if normalized := strings.TrimSpace(AsString(value)); normalized != "" {
+			results = append(results, normalized)
+		}
+	}
+
+	if len(results) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("extracted-results：%s", strings.Join(results, ", "))
 }
 
 func HandleStatsJSONLine(line string, state *State) bool {

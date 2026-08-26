@@ -200,7 +200,10 @@ func TestFormatJSONResultMessageWithExtractorName(t *testing.T) {
 	payload := map[string]interface{}{
 		"template-id":    "deprecated-tls",
 		"extractor-name": "tls_1.1",
-		"host":           "ct-xray.dxmkj01-int.com:443",
+		"extracted-results": []interface{}{
+			"tls11",
+		},
+		"host": "ct-xray.dxmkj01-int.com:443",
 		"info": map[string]interface{}{
 			"name":     "弃用 TLS/SSL 协议检测（证书安全）",
 			"severity": "info",
@@ -208,9 +211,32 @@ func TestFormatJSONResultMessageWithExtractorName(t *testing.T) {
 	}
 
 	got := FormatJSONResultMessage(payload)
-	want := "[弃用 TLS/SSL 协议检测（证书安全）][info][tls_1.1] 命中 ct-xray.dxmkj01-int.com:443"
+	want := "[弃用 TLS/SSL 协议检测（证书安全）][info][tls_1.1] 命中 ct-xray.dxmkj01-int.com:443\nextracted-results：tls11"
 	if got != want {
 		t.Fatalf("FormatJSONResultMessageWithExtractorName() = %q, want %q", got, want)
+	}
+}
+
+func TestFormatJSONResultMessageWithExtractedResultsOnly(t *testing.T) {
+	t.Parallel()
+
+	payload := map[string]interface{}{
+		"template-id": "tls-version",
+		"host":        "anquan.duxiaoman-int.com:443",
+		"extracted-results": []interface{}{
+			"tls12",
+			"tls13",
+		},
+		"info": map[string]interface{}{
+			"name":     "TLS 版本识别（证书安全）",
+			"severity": "info",
+		},
+	}
+
+	got := FormatJSONResultMessage(payload)
+	want := "[TLS 版本识别（证书安全）][info] 命中 anquan.duxiaoman-int.com:443\nextracted-results：tls12, tls13"
+	if got != want {
+		t.Fatalf("FormatJSONResultMessageWithExtractedResultsOnly() = %q, want %q", got, want)
 	}
 }
 
@@ -299,5 +325,24 @@ func TestRecordResultCountsVulnerabilityBySeverity(t *testing.T) {
 	}
 	if summary.TechCount != 0 {
 		t.Fatalf("TechCount = %d, want 0", summary.TechCount)
+	}
+}
+
+func TestSnapshotResultSummaryIncludesRequestStats(t *testing.T) {
+	t.Parallel()
+
+	state := &State{TargetCount: 2}
+	state.progress.TotalRequests = 120
+	state.progress.Requests = 88
+
+	summary := state.SnapshotResultSummary()
+	if summary.TotalRequests != 120 {
+		t.Fatalf("TotalRequests = %d, want 120", summary.TotalRequests)
+	}
+	if summary.RealRequests != 88 {
+		t.Fatalf("RealRequests = %d, want 88", summary.RealRequests)
+	}
+	if summary.TargetCount != 2 {
+		t.Fatalf("TargetCount = %d, want 2", summary.TargetCount)
 	}
 }

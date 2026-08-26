@@ -73,6 +73,40 @@ type CreateScanTaskRequest struct {
 	HTTPStats                     bool     `json:"http_stats"`
 }
 
+type ListScanTasksQuery struct {
+	Page           int
+	PageSize       int
+	Keyword        string
+	Statuses       []string
+	ScanStrategies []string
+	CreatedBy      string
+}
+
+type ScanTaskListItem struct {
+	ID              int64      `json:"id"`
+	TaskNo          string     `json:"task_no"`
+	Name            string     `json:"name"`
+	Description     string     `json:"description"`
+	Status          string     `json:"status"`
+	CreatedBy       string     `json:"created_by"`
+	ScanStrategy    string     `json:"scan_strategy"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	FinishedAt      *time.Time `json:"finished_at,omitempty"`
+	CriticalCount   int        `json:"critical_count"`
+	HighCount       int        `json:"high_count"`
+	MediumCount     int        `json:"medium_count"`
+	LowCount        int        `json:"low_count"`
+	InfoCount       int        `json:"info_count"`
+	TechCount       int        `json:"tech_count"`
+	PluginCount     int        `json:"plugin_count"`
+	TargetCount     int        `json:"target_count"`
+	TotalRequests   int64      `json:"total_requests"`
+	RealRequests    int64      `json:"real_requests"`
+	ProgressPercent float64    `json:"progress_percent"`
+	DurationSeconds int64      `json:"duration_seconds"`
+	LastMessage     string     `json:"last_message,omitempty"`
+}
+
 type ScanTaskSummary struct {
 	ID            int64      `json:"id"`
 	TaskNo        string     `json:"task_no"`

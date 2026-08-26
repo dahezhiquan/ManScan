@@ -3,8 +3,10 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
+	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
 
 	"gorm.io/gorm"
@@ -14,6 +16,7 @@ import (
 type ScanTaskRepository interface {
 	Create(ctx context.Context, task *entity.ScanTask) error
 	FindByID(ctx context.Context, taskID int64) (*entity.ScanTask, error)
+	List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error)
 	FindResultByTaskID(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error)
 	UpdateStatus(ctx context.Context, taskID int64, status string, startedAt, finishedAt *time.Time) error
 	UpsertResult(ctx context.Context, result *entity.ScanTaskResult) error
@@ -40,6 +43,67 @@ func (r *scanTaskRepository) FindByID(ctx context.Context, taskID int64) (*entit
 		return nil, err
 	}
 	return &task, nil
+}
+
+func (r *scanTaskRepository) List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error) {
+	page := query.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := query.PageSize
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+
+	countQuery := r.applyListFilters(r.db.WithContext(ctx).Table("manscan_scan_tasks AS t"), query)
+	var total int64
+	if err := countQuery.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]dto.ScanTaskListItem, 0)
+	dataQuery := r.applyListFilters(r.db.WithContext(ctx).Table("manscan_scan_tasks AS t"), query).
+		Select(`
+			t.id,
+			t.task_no,
+			t.name,
+			COALESCE(t.description, '') AS description,
+			t.status,
+			t.created_by,
+			COALESCE(t.scan_strategy, 'auto') AS scan_strategy,
+			t.started_at,
+			t.finished_at,
+			COALESCE(r.critical_count, 0) AS critical_count,
+			COALESCE(r.high_count, 0) AS high_count,
+			COALESCE(r.medium_count, 0) AS medium_count,
+			COALESCE(r.low_count, 0) AS low_count,
+			COALESCE(r.info_count, 0) AS info_count,
+			COALESCE(r.tech_count, 0) AS tech_count,
+			COALESCE(r.plugin_count, 0) AS plugin_count,
+			COALESCE(r.target_count, 0) AS target_count,
+			COALESCE(r.total_requests, 0) AS total_requests,
+			COALESCE(r.real_requests, 0) AS real_requests
+		`).
+		Joins("LEFT JOIN manscan_task_results AS r ON r.task_id = t.id").
+		Order("t.id DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize)
+	if err := dataQuery.Scan(&items).Error; err != nil {
+		return nil, err
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
+	}
+
+	return &dto.PageResult[dto.ScanTaskListItem]{
+		Page:       page,
+		PageSize:   pageSize,
+		Total:      int(total),
+		TotalPages: totalPages,
+		Items:      items,
+	}, nil
 }
 
 func (r *scanTaskRepository) FindResultByTaskID(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error) {
@@ -79,7 +143,32 @@ func (r *scanTaskRepository) UpsertResult(ctx context.Context, result *entity.Sc
 			"tech_count",
 			"plugin_count",
 			"target_count",
+			"total_requests",
+			"real_requests",
 			"finished_at",
 		}),
 	}).Create(result).Error
+}
+
+func (r *scanTaskRepository) applyListFilters(db *gorm.DB, query dto.ListScanTasksQuery) *gorm.DB {
+	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
+		like := "%" + keyword + "%"
+		db = db.Where(
+			"(t.name LIKE ? OR t.task_no LIKE ? OR t.created_by LIKE ? OR t.description LIKE ?)",
+			like,
+			like,
+			like,
+			like,
+		)
+	}
+	if len(query.Statuses) > 0 {
+		db = db.Where("t.status IN ?", query.Statuses)
+	}
+	if len(query.ScanStrategies) > 0 {
+		db = db.Where("t.scan_strategy IN ?", query.ScanStrategies)
+	}
+	if createdBy := strings.TrimSpace(query.CreatedBy); createdBy != "" {
+		db = db.Where("t.created_by = ?", createdBy)
+	}
+	return db
 }

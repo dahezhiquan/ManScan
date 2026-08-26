@@ -19,6 +19,7 @@ import (
 
 type ScanTaskHandler interface {
 	Create(c *gin.Context)
+	List(c *gin.Context)
 	Get(c *gin.Context)
 	Logs(c *gin.Context)
 	Stream(c *gin.Context)
@@ -51,6 +52,34 @@ func (h *scanTaskHandler) Create(c *gin.Context) {
 		"stream":   fmt.Sprintf("/api/v1/scans/%d/stream", task.ID),
 		"task_api": fmt.Sprintf("/api/v1/scans/%d", task.ID),
 	})
+}
+
+func (h *scanTaskHandler) List(c *gin.Context) {
+	page, err := parsePositiveIntQuery(c.Query("page"), 1)
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, "page 参数必须是大于等于 1 的整数")
+		return
+	}
+	pageSize, err := parsePositiveIntQuery(c.Query("page_size"), 10)
+	if err != nil || pageSize > 100 {
+		response.Fail(c, errcode.InvalidParams, "page_size 参数必须在 1-100 之间")
+		return
+	}
+
+	data, serviceErr := h.service.List(c.Request.Context(), dto.ListScanTasksQuery{
+		Page:           page,
+		PageSize:       pageSize,
+		Keyword:        strings.TrimSpace(c.Query("keyword")),
+		Statuses:       parseMultiValueQuery(c, "status"),
+		ScanStrategies: parseMultiValueQuery(c, "scan_strategy"),
+		CreatedBy:      strings.TrimSpace(c.Query("created_by")),
+	})
+	if serviceErr != nil {
+		response.Fail(c, errcode.InternalServerError, "获取任务列表失败")
+		return
+	}
+
+	response.Success(c, data)
 }
 
 func (h *scanTaskHandler) Get(c *gin.Context) {
@@ -214,6 +243,19 @@ func parseTaskID(raw string) (int64, error) {
 	value, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
 	if err != nil || value <= 0 {
 		return 0, fmt.Errorf("任务 id 不合法")
+	}
+	return value, nil
+}
+
+func parsePositiveIntQuery(raw string, defaultValue int) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultValue, nil
+	}
+
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("invalid positive int")
 	}
 	return value, nil
 }

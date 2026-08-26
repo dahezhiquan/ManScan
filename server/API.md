@@ -203,7 +203,77 @@ curl "http://127.0.0.1:8686/api/v1/templates/options/protocols"
 curl "http://127.0.0.1:8686/api/v1/templates/stats"
 ```
 
-## 6. 创建扫描任务
+## 6. 获取扫描任务列表
+
+- 请求方法和路径：`GET /api/v1/scans`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | `int` | 否 | 页码，最小为 `1`，默认 `1` |
+| `page_size` | `int` | 否 | 每页数量，范围 `1-100`，默认 `10` |
+| `keyword` | `string` | 否 | 按任务名称、任务编号、创建人、描述模糊搜索 |
+| `status` | `string` / `string[]` | 否 | 按任务状态过滤，支持逗号分隔和多参数 |
+| `scan_strategy` | `string` / `string[]` | 否 | 按扫描策略过滤，支持逗号分隔和多参数 |
+| `created_by` | `string` | 否 | 按创建人精确过滤 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 2,
+    "totalPages": 1,
+    "items": [
+      {
+        "id": 1,
+        "task_no": "d4l8h4crvimc0n1abcde",
+        "name": "demo-scan",
+        "description": "",
+        "status": "running",
+        "created_by": "anonymous",
+        "scan_strategy": "auto",
+        "started_at": "2026-06-09T21:00:00+08:00",
+        "finished_at": null,
+        "critical_count": 0,
+        "high_count": 1,
+        "medium_count": 2,
+        "low_count": 0,
+        "info_count": 3,
+        "tech_count": 4,
+        "plugin_count": 50,
+        "target_count": 1,
+        "total_requests": 100,
+        "real_requests": 10,
+        "progress_percent": 10,
+        "duration_seconds": 120,
+        "last_message": "扫描进度更新"
+      }
+    ]
+  }
+}
+```
+
+- 说明：
+  - 该接口以扫描任务表为主数据源，`manscan_task_results` 仅用于补充已完成任务的结果统计。
+  - 运行中任务会叠加当前运行时快照，因此也会出现在列表中。
+
+- 错误码说明：
+  - `40001`：分页或过滤参数非法
+  - `50001`：查询任务列表失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status=running"
+```
+
+## 7. 创建扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans`
 
@@ -270,7 +340,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
   }'
 ```
 
-## 7. 获取扫描任务详情
+## 8. 获取扫描任务详情
 
 - 请求方法和路径：`GET /api/v1/scans/:id`
 
@@ -333,7 +403,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 curl "http://127.0.0.1:8686/api/v1/scans/1"
 ```
 
-## 8. 获取扫描任务日志
+## 9. 获取扫描任务日志
 
 - 请求方法和路径：`GET /api/v1/scans/:id/logs`
 
@@ -400,7 +470,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
 curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
 ```
 
-## 9. 订阅扫描任务日志流
+## 10. 订阅扫描任务日志流
 
 - 请求方法和路径：`GET /api/v1/scans/:id/stream`
 

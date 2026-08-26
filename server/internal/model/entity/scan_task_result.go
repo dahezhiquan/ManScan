@@ -14,6 +14,8 @@ type ScanTaskResult struct {
 	TechCount     int        `gorm:"column:tech_count"`
 	PluginCount   int        `gorm:"column:plugin_count"`
 	TargetCount   int        `gorm:"column:target_count"`
+	TotalRequests int64      `gorm:"column:total_requests"`
+	RealRequests  int64      `gorm:"column:real_requests"`
 	CreatedAt     *time.Time `gorm:"column:created_at"`
 	FinishedAt    *time.Time `gorm:"column:finished_at"`
 }
