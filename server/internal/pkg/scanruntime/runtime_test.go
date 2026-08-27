@@ -117,6 +117,64 @@ func TestBuildFrontendEventsBefore(t *testing.T) {
 	}
 }
 
+func TestBuildFrontendEventsBeforeKeepsLatestDuplicateResult(t *testing.T) {
+	t.Parallel()
+
+	events := []TaskLogEvent{
+		{Seq: 1, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com"},
+		{Seq: 2, Level: "info", Type: "progress", Message: "扫描进度更新"},
+		{Seq: 3, Level: "match", Type: "result", Message: "[other][info] 命中 http://example.com"},
+		{Seq: 4, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com"},
+	}
+
+	page := buildFrontendEventsBefore(events, 0, 10)
+	if len(page.Events) != 3 {
+		t.Fatalf("buildFrontendEventsBefore() len = %d, want 3: %+v", len(page.Events), page.Events)
+	}
+	if page.Events[0].Seq != 2 || page.Events[1].Seq != 3 || page.Events[2].Seq != 4 {
+		t.Fatalf("buildFrontendEventsBefore() events = %+v, want seq 2,3,4", page.Events)
+	}
+	if page.HasMore {
+		t.Fatalf("buildFrontendEventsBefore() HasMore = true, want false")
+	}
+}
+
+func TestEventsSinceNextOffsetMatchesLastReturnedSeq(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewState(101, "task-101", "runtime-task", 1, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	state.Append("info", "first", "first event")
+	state.Append("info", "second", "second event")
+	state.Append("info", "third", "third event")
+
+	page := state.EventsSince(0, 2)
+	if len(page.Events) != 2 {
+		t.Fatalf("EventsSince() len = %d, want 2", len(page.Events))
+	}
+	if page.NextOffset != 2 {
+		t.Fatalf("EventsSince() NextOffset = %d, want 2", page.NextOffset)
+	}
+	if !page.HasMore {
+		t.Fatalf("EventsSince() HasMore = false, want true")
+	}
+
+	nextPage := state.EventsSince(page.NextOffset, 2)
+	if len(nextPage.Events) != 1 || nextPage.Events[0].Seq != 3 {
+		t.Fatalf("EventsSince() next page = %+v, want seq 3", nextPage.Events)
+	}
+	if nextPage.NextOffset != 3 {
+		t.Fatalf("EventsSince() next page NextOffset = %d, want 3", nextPage.NextOffset)
+	}
+	if nextPage.HasMore {
+		t.Fatalf("EventsSince() next page HasMore = true, want false")
+	}
+}
+
 func TestReadFrontendLogEventsBeforeFromFile(t *testing.T) {
 	t.Parallel()
 
@@ -171,6 +229,81 @@ func TestReadFrontendLogEventsBeforeFromFile(t *testing.T) {
 
 	if nextOffset != 3 {
 		t.Fatalf("ReadFrontendLogEventsBeforeFromFile() NextOffset = %d, want 3", nextOffset)
+	}
+}
+
+func TestReadFrontendLogEventsBeforeFromFileKeepsLatestDuplicateResult(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	now := time.Now()
+	events := []TaskLogEvent{
+		{Seq: 1, Time: now, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com"},
+		{Seq: 2, Time: now, Level: "info", Type: "progress", Message: "扫描进度更新"},
+		{Seq: 3, Time: now, Level: "match", Type: "result", Message: "[other][info] 命中 http://example.com"},
+		{Seq: 4, Time: now, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com"},
+	}
+	writeTaskLogEvents(t, path, events)
+
+	filtered, hasMore, nextOffset, err := ReadFrontendLogEventsBeforeFromFile(path, 0, 10)
+	if err != nil {
+		t.Fatalf("ReadFrontendLogEventsBeforeFromFile() error = %v", err)
+	}
+	if len(filtered) != 3 {
+		t.Fatalf("ReadFrontendLogEventsBeforeFromFile() len = %d, want 3: %+v", len(filtered), filtered)
+	}
+	if filtered[0].Seq != 2 || filtered[1].Seq != 3 || filtered[2].Seq != 4 {
+		t.Fatalf("ReadFrontendLogEventsBeforeFromFile() events = %+v, want seq 2,3,4", filtered)
+	}
+	if hasMore {
+		t.Fatalf("ReadFrontendLogEventsBeforeFromFile() HasMore = true, want false")
+	}
+	if nextOffset != 2 {
+		t.Fatalf("ReadFrontendLogEventsBeforeFromFile() NextOffset = %d, want 2", nextOffset)
+	}
+}
+
+func TestReadLogEventsFromFileNextOffsetMatchesLastReturnedSeq(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+
+	now := time.Now()
+	events := []TaskLogEvent{
+		{Seq: 1, Time: now, Level: "info", Type: "first", Message: "first event"},
+		{Seq: 2, Time: now, Level: "info", Type: "second", Message: "second event"},
+		{Seq: 3, Time: now, Level: "info", Type: "third", Message: "third event"},
+	}
+	writeTaskLogEvents(t, path, events)
+
+	filtered, hasMore, nextOffset, err := ReadLogEventsFromFile(path, 0, 2)
+	if err != nil {
+		t.Fatalf("ReadLogEventsFromFile() error = %v", err)
+	}
+	if len(filtered) != 2 {
+		t.Fatalf("ReadLogEventsFromFile() len = %d, want 2", len(filtered))
+	}
+	if nextOffset != 2 {
+		t.Fatalf("ReadLogEventsFromFile() NextOffset = %d, want 2", nextOffset)
+	}
+	if !hasMore {
+		t.Fatalf("ReadLogEventsFromFile() HasMore = false, want true")
+	}
+
+	nextEvents, nextHasMore, nextNextOffset, err := ReadLogEventsFromFile(path, nextOffset, 2)
+	if err != nil {
+		t.Fatalf("ReadLogEventsFromFile() next page error = %v", err)
+	}
+	if len(nextEvents) != 1 || nextEvents[0].Seq != 3 {
+		t.Fatalf("ReadLogEventsFromFile() next page = %+v, want seq 3", nextEvents)
+	}
+	if nextNextOffset != 3 {
+		t.Fatalf("ReadLogEventsFromFile() next page NextOffset = %d, want 3", nextNextOffset)
+	}
+	if nextHasMore {
+		t.Fatalf("ReadLogEventsFromFile() next page HasMore = true, want false")
 	}
 }
 
@@ -255,6 +388,142 @@ func TestFormatJSONResultMessageFallback(t *testing.T) {
 	want := "[http-missing-security-headers][medium] 命中 http://10.107.71.65:8889/"
 	if got != want {
 		t.Fatalf("FormatJSONResultMessageFallback() = %q, want %q", got, want)
+	}
+}
+
+func TestHandleJSONResultLineDeduplicatesRepeatedMatches(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	state, err := NewState(34, "task-34", "demo", 1, dir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	line := `{"template-id":"http-missing-security-headers","matcher-name":"strict-transport-security","matched-at":"http://10.107.71.65:8889/","info":{"name":"HTTP 安全响应头缺失","severity":"info"}}`
+	if !HandleJSONResultLine(line, state) {
+		t.Fatalf("HandleJSONResultLine() = false, want true")
+	}
+	if !HandleJSONResultLine(line, state) {
+		t.Fatalf("HandleJSONResultLine() duplicate = false, want true")
+	}
+
+	summary := state.SnapshotResultSummary()
+	if summary.InfoCount != 1 {
+		t.Fatalf("InfoCount = %d, want 1", summary.InfoCount)
+	}
+	progress := state.SnapshotProgress()
+	if progress.Matched != 1 {
+		t.Fatalf("Matched = %d, want 1", progress.Matched)
+	}
+
+	state.Close()
+	data, err := os.ReadFile(filepath.Join(dir, "34", "match.log"))
+	if err != nil {
+		t.Fatalf("ReadFile(match.log) error = %v", err)
+	}
+	if got := bytes.Count(data, []byte{'\n'}); got != 1 {
+		t.Fatalf("match.log lines = %d, want 1", got)
+	}
+}
+
+func TestNewStateLoadsExistingMatchKeysForResumeDeduplication(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	state, err := NewState(35, "task-35", "demo", 1, dir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+
+	line := `{"template-id":"http-missing-security-headers","matcher-name":"strict-transport-security","matched-at":"http://10.107.71.65:8889/","info":{"name":"HTTP 安全响应头缺失","severity":"info"}}`
+	if !HandleJSONResultLine(line, state) {
+		t.Fatalf("HandleJSONResultLine() = false, want true")
+	}
+	state.Close()
+
+	resumed, err := NewState(35, "task-35", "demo", 1, dir)
+	if err != nil {
+		t.Fatalf("NewState() resumed error = %v", err)
+	}
+	defer resumed.Close()
+
+	if !HandleJSONResultLine(line, resumed) {
+		t.Fatalf("HandleJSONResultLine() duplicate after resume = false, want true")
+	}
+	summary := resumed.SnapshotResultSummary()
+	if summary.InfoCount != 0 {
+		t.Fatalf("InfoCount = %d, want 0 for duplicate after resume", summary.InfoCount)
+	}
+}
+
+func TestReadResultSummaryFromMatchLogDeduplicatesMatches(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "match.log")
+	now := time.Now()
+	events := []TaskLogEvent{
+		{Seq: 1, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/"},
+		{Seq: 2, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/"},
+		{Seq: 3, Time: now, Level: "match", Type: "result", Message: "[任意文件读取][high] 命中 http://example.com/"},
+	}
+	writeTaskLogEvents(t, path, events)
+
+	summary, ok, err := ReadResultSummaryFromMatchLog(path, 2)
+	if err != nil {
+		t.Fatalf("ReadResultSummaryFromMatchLog() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("ReadResultSummaryFromMatchLog() ok = false, want true")
+	}
+	if summary.InfoCount != 1 || summary.HighCount != 1 {
+		t.Fatalf("unexpected summary counts: %+v", summary)
+	}
+	if summary.TargetCount != 2 {
+		t.Fatalf("TargetCount = %d, want 2", summary.TargetCount)
+	}
+}
+
+func TestHandleStatsJSONLineAccumulatesResumeSessionRequests(t *testing.T) {
+	t.Parallel()
+
+	state := &State{
+		progress: TaskProgressSnapshot{
+			TotalRequests: 100,
+			Requests:      30,
+			Percent:       40,
+		},
+		completedRequests: 40,
+	}
+
+	if !HandleStatsJSONLine(`{"requests":"5","actual_requests":"3","total":"100","percent":"5","matched":"9"}`, state) {
+		t.Fatalf("HandleStatsJSONLine() = false, want true")
+	}
+	progress := state.SnapshotProgress()
+	if progress.Requests != 33 {
+		t.Fatalf("Requests = %d, want cumulative actual requests 33", progress.Requests)
+	}
+	if progress.TotalRequests != 100 {
+		t.Fatalf("TotalRequests = %d, want 100", progress.TotalRequests)
+	}
+	if progress.Percent != 45 {
+		t.Fatalf("Percent = %v, want cumulative logical percent 45", progress.Percent)
+	}
+	if progress.Matched != 0 {
+		t.Fatalf("Matched = %d, want result-event based matched count 0", progress.Matched)
+	}
+
+	if !HandleStatsJSONLine(`{"requests":"8","actual_requests":"4","total":"100","percent":"8"}`, state) {
+		t.Fatalf("HandleStatsJSONLine() second = false, want true")
+	}
+	progress = state.SnapshotProgress()
+	if progress.Requests != 34 {
+		t.Fatalf("Requests after second stats = %d, want 34", progress.Requests)
+	}
+	if progress.Percent != 48 {
+		t.Fatalf("Percent after second stats = %v, want 48", progress.Percent)
 	}
 }
 
@@ -344,5 +613,29 @@ func TestSnapshotResultSummaryIncludesRequestStats(t *testing.T) {
 	}
 	if summary.TargetCount != 2 {
 		t.Fatalf("TargetCount = %d, want 2", summary.TargetCount)
+	}
+}
+
+func writeTaskLogEvents(t *testing.T, path string, events []TaskLogEvent) {
+	t.Helper()
+
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+
+	for _, event := range events {
+		encoded, marshalErr := json.Marshal(event)
+		if marshalErr != nil {
+			_ = file.Close()
+			t.Fatalf("Marshal() error = %v", marshalErr)
+		}
+		if _, writeErr := file.Write(append(encoded, '\n')); writeErr != nil {
+			_ = file.Close()
+			t.Fatalf("Write() error = %v", writeErr)
+		}
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
 }

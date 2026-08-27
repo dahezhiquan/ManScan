@@ -128,6 +128,12 @@ func (resumeCfg *ResumeCfg) Compile() {
 		if resumeInfo.Completed && len(resumeInfo.InFlight) > 0 {
 			resumeInfo.InFlight = make(map[uint32]struct{})
 		}
+		resumeInfo.Repeat = map[uint32]struct{}{}
+		if !resumeInfo.Completed && len(resumeInfo.InFlight) == 0 {
+			resumeInfo.SkipUnder = 0
+			resumeInfo.DoAbove = 0
+			continue
+		}
 		min := uint32(math.MaxUint32)
 		max := uint32(0)
 		for index := range resumeInfo.InFlight {
@@ -139,7 +145,6 @@ func (resumeCfg *ResumeCfg) Compile() {
 			}
 		}
 		// maybe redundant but ensures we track the indexes to be repeated
-		resumeInfo.Repeat = map[uint32]struct{}{}
 		for index := range resumeInfo.InFlight {
 			resumeInfo.Repeat[index] = struct{}{}
 		}

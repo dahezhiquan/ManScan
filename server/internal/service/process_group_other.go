@@ -22,3 +22,14 @@ func terminateTaskCommand(cmd *exec.Cmd) error {
 	}
 	return nil
 }
+
+func interruptTaskCommand(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+
+	if err := cmd.Process.Signal(os.Interrupt); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	return nil
+}

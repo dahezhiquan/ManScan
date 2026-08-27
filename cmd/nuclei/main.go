@@ -220,7 +220,6 @@ func main() {
 		if options.EnableCloudUpload {
 			options.Logger.Info().Msgf("Uploading scan results to cloud...")
 		}
-		nucleiRunner.Close()
 		if options.ShouldSaveResume() {
 			options.Logger.Info().Msgf("Creating resume file: %s\n", resumeFileName)
 			err := nucleiRunner.SaveResumeConfig(resumeFileName)
@@ -228,6 +227,7 @@ func main() {
 				options.Logger.Error().Msgf("Couldn't create resume file: %s\n", err)
 			}
 		}
+		nucleiRunner.Close()
 		for _, f := range inlineSecretsTempFiles {
 			_ = os.Remove(f)
 		}

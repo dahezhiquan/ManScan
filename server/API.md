@@ -228,8 +228,8 @@ curl "http://127.0.0.1:8686/api/v1/templates/stats"
 - 说明：
   - `total` 表示扫描任务总数。
   - `running` 表示当前状态为 `running` 的任务数。
-  - `saved_requests` 表示所有扫描任务综合节省的请求数，统计口径为 `SUM(total_requests - real_requests)`。
-  - 对于仍在运行中的任务，接口会叠加运行时快照中的当前请求节省量，不必等 `manscan_task_results` 落库后才可见。
+  - `saved_requests` 仅统计最终状态为 `success` 的扫描任务，统计口径为 `SUM(total_requests - real_requests)`。
+  - `failed`、`cancelled`、`paused` 以及仍在 `running` 的任务都不会计入该字段。
 
 - 错误码说明：
   - `50001`：获取扫描任务统计失败
@@ -405,6 +405,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 - 说明：
   - 当任务仍在执行时，接口会立即返回受理结果，并向扫描子进程发出取消信号；响应中的 `status` 保留任务取消前的当前状态，最终状态会在子进程退出后更新为 `cancelled`。
   - 当任务已经是 `cancelled` 状态时，接口会直接返回当前状态。
+  - 当任务已经是 `paused` 状态时，接口会直接将其收口为 `cancelled`，不会再恢复执行。
   - 当数据库中任务仍是 `pending` 或 `running`，但运行态已经丢失时，接口会直接将任务收口为 `cancelled`。
 
 - 错误码说明：
@@ -418,7 +419,88 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 ```
 
-## 10. 获取扫描任务详情
+## 10. 暂停扫描任务
+
+- 请求方法和路径：`POST /api/v1/scans/:id/pause`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 任务 ID，路径参数 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task_id": 1,
+    "status": "running",
+    "pause_requested": true
+  }
+}
+```
+
+- 说明：
+  - 当任务仍在执行时，接口会立即返回受理结果，并向该任务所属进程组发送中断信号，等待扫描子进程优雅退出并写出 `resume` 进度文件。
+  - 响应中的 `status` 保留任务暂停前的当前状态，最终状态会在子进程退出后更新为 `paused`。
+  - 暂停后的任务不会新建记录，后续恢复时会继续使用同一个任务 ID、同一个运行目录和同一个 `resume` 文件。
+
+- 错误码说明：
+  - `40001`：任务 ID 非法，或任务当前状态不支持暂停
+  - `40401`：任务不存在
+  - `50001`：暂停请求处理失败
+
+- 使用示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/pause"
+```
+
+## 11. 恢复扫描任务
+
+- 请求方法和路径：`POST /api/v1/scans/:id/resume`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 任务 ID，路径参数 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task_id": 1,
+    "status": "running",
+    "resume_requested": true
+  }
+}
+```
+
+- 说明：
+  - 只有 `paused` 状态的任务可以恢复。
+  - 恢复时不会创建新任务，而是基于原任务配置重新启动扫描子进程，并继续使用原任务运行目录中的 `resume` 文件。
+  - 恢复受理后，任务状态会原子更新为 `running`，避免恢复过程中在 `pending` 与 `running` 之间反复切换。
+  - 重复恢复同一个任务时，只有第一个仍处于 `paused` 状态的请求会被受理，后续请求会按“不支持恢复”返回。
+
+- 错误码说明：
+  - `40001`：任务 ID 非法，或任务当前状态不支持恢复
+  - `40401`：任务不存在
+  - `50001`：恢复请求处理失败
+
+- 使用示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
+```
+
+## 12. 获取扫描任务详情
 
 - 请求方法和路径：`GET /api/v1/scans/:id`
 
@@ -470,6 +552,12 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 }
 ```
 
+- 说明：
+  - `progress.requests` 表示扫描进程实际发出的请求数，会排除项目缓存、模板聚类等没有真实出网的请求。
+  - `progress.total_requests` 表示本次任务按模板和目标预估的逻辑请求总数。
+  - `progress.percent` 表示逻辑扫描完成度，不直接用 `requests / total_requests` 计算，因此缓存或聚类节省大量请求时，进度仍会按扫描执行进度平滑推进。
+  - `progress.matched` 表示服务端保留的去重后结果数量。
+
 - 错误码说明：
   - `40001`：任务 ID 非法
   - `40401`：任务不存在
@@ -481,7 +569,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 curl "http://127.0.0.1:8686/api/v1/scans/1"
 ```
 
-## 11. 获取扫描任务日志
+## 13. 获取扫描任务日志
 
 - 请求方法和路径：`GET /api/v1/scans/:id/logs`
 
@@ -490,8 +578,9 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `id` | `int64` | 是 | 任务 ID，路径参数 |
-| `offset` | `int64` | 否 | 起始偏移，默认 `0` |
+| `offset` | `int64` | 否 | 日志偏移，默认 `0`，含义取决于 `direction` |
 | `limit` | `int` | 否 | 返回数量，范围 `1-1000`，默认 `200` |
+| `direction` | `string` | 否 | 读取方向，可选 `forward` 或 `before`；运行中任务默认 `forward`，已结束任务默认 `before` |
 
 - 响应格式：
 
@@ -531,14 +620,19 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
         "message": "扫描任务开始执行"
       }
     ],
-    "next_offset": 2,
+    "next_offset": 1,
     "has_more": false
   }
 }
 ```
 
+- 说明：
+  - `direction=forward` 用于按序向后读取增量日志，返回 `seq > offset` 的事件；`next_offset` 表示本次已处理的最大 `seq`，下一次请求可直接作为 `offset` 传回。
+  - `direction=before` 用于向前翻旧日志，返回 `seq < offset` 的最近一页可见事件；当 `offset=0` 时返回当前尾部最近一页；`next_offset` 表示本页最早可见事件的 `seq`，下一次请求可直接作为 `offset` 继续翻更早日志。
+  - 运行中任务也支持 `direction=before`，可用于浏览器刷新后从尾部向前回补历史日志。
+
 - 错误码说明：
-  - `40001`：任务 ID、`offset` 或 `limit` 非法
+  - `40001`：任务 ID、`offset`、`limit` 或 `direction` 非法
   - `40401`：任务不存在
   - `50001`：查询任务或读取日志失败
 
@@ -546,9 +640,10 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
 
 ```bash
 curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
+curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=100"
 ```
 
-## 12. 订阅扫描任务日志流
+## 14. 订阅扫描任务日志流
 
 - 请求方法和路径：`GET /api/v1/scans/:id/stream`
 
@@ -557,6 +652,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `id` | `int64` | 是 | 任务 ID，路径参数 |
+| `offset` | `int64` | 否 | 日志续传偏移，默认 `0`；流会先补发 `seq > offset` 的快照事件，再推送后续实时事件 |
 
 - 响应格式：
   - 使用 `SSE`（`text/event-stream`）返回
@@ -569,30 +665,30 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
 
 ```text
 event: snapshot
-data: {"task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"percent":10},"events":[],"nextOffset":1}
+data: {"task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"percent":10},"events":[{"seq":1,"level":"info","type":"task_started","message":"扫描任务开始执行"}],"nextOffset":1}
 ```
 
 - `event` 示例：
 
 ```text
 event: event
-data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"hosts":1,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":3}
+data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"hosts":1,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":2}
 ```
 
 - `result` 事件示例：
 
 ```text
 event: event
-data: {"task_id":1,"seq":3,"level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":4,"tech_count":4,"plugin_count":50,"target_count":1},"event":{"seq":3,"time":"2026-06-09T21:01:02+08:00","level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]"},"nextOffset":4}
+data: {"task_id":1,"seq":3,"level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":4,"tech_count":4,"plugin_count":50,"target_count":1},"event":{"seq":3,"time":"2026-06-09T21:01:02+08:00","level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]"},"nextOffset":3}
 ```
 
 - 错误码说明：
-  - `40001`：任务 ID 非法
+  - `40001`：任务 ID 或 `offset` 非法
   - `40401`：任务不存在
   - `50001`：建立流或序列化事件失败
 
 - 使用示例：
 
 ```bash
-curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream"
+curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
 ```

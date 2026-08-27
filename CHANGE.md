@@ -1,3 +1,31 @@
+## 2026-08-27 13:16 修复暂停恢复后断点与状态切换失真
+
+- 变动目录：`cmd/nuclei/`、`internal/runner/`
+- 变动文件：`cmd/nuclei/main.go`、`internal/runner/runner.go`
+- 具体修改内容：
+  - 在 `cmd/nuclei/main.go` 中调整 Ctrl+C 的收尾顺序，先调用 `SaveResumeConfig()` 写出断点文件，再执行 `Runner.Close()` 关闭运行器资源，避免暂停时因先关闭 dialer、项目文件或输出写入器而把未完成模板误判成已完成。
+  - 在 `internal/runner/runner.go` 中，当命中已有 `resume` 文件并进入恢复模式时，强制关闭模板聚类，避免恢复后的模板 ID 和聚类映射重新洗牌，导致断点窗口失真、后半段模板被跳过。
+- 修改目的或影响：
+  - 修复扫描任务暂停后继续执行时，因关闭顺序不当和恢复时仍启用聚类导致的漏扫问题。
+  - 让恢复扫描保持和断点文件一致的模板顺序与执行边界，减少恢复后“总请求数偏少、漏洞数量明显少于完整扫描”的情况。
+  - 这次调整只影响 CLI/runner 恢复链路，不改变正常新扫描的聚类与缓存策略，因此不会拖慢未恢复任务的扫描速度。
+
+## 2026-08-27 12:52 修复暂停恢复断点漏扫
+
+- 变动目录：`pkg/core/`、`pkg/types/`
+- 变动文件：`pkg/core/executors.go`、`pkg/core/executors_test.go`、`pkg/types/resume.go`、`pkg/types/resume_test.go`
+- 具体修改内容：
+  - 在 `pkg/core/executors.go` 中调整模板执行断点维护逻辑：当扫描上下文因暂停或取消结束时，不再清理正在执行的 target 的 `inFlight` 记录，避免保存 `resume.cfg` 时丢失未完成目标。
+  - 在 `pkg/core/executors.go` 中增加上下文取消判断，只有模板完整执行结束时才将模板标记为 `Completed=true`，防止暂停时把未完成模板误判为已完成。
+  - 在 `pkg/core/executors.go` 中跳过 host-error 目标时继续推进 target 索引，保证后续断点位置不被跳过分支打乱。
+  - 在 `pkg/types/resume.go` 中修复 resume 配置编译逻辑：当模板未完成但 `inFlight` 为空时，按保守重扫处理，不再把 `SkipUnder` 保持为 `math.MaxUint32` 导致恢复后跳过所有 target。
+  - 在 `pkg/core/executors_test.go` 中新增取消时保留 `inFlight` 且不标记完成的回归测试。
+  - 新增 `pkg/types/resume_test.go`，覆盖未完成空断点窗口应重扫而不是全跳过的场景。
+- 修改目的或影响：
+  - 修复扫描任务暂停后继续扫描可能漏扫的问题，避免任务恢复后显示成功但漏洞数量少于完整扫描结果。
+  - 对断点不完整的情况采用“宁可重扫，不可漏扫”的策略，可能在极端暂停时多执行少量请求，但不会改变正常扫描的并发、限速和模板调度逻辑。
+  - 提升暂停恢复后进度、实际请求数和漏洞统计的可信度，减少任务 51 这类恢复后命中数量明显偏少的问题。
+
 ## 2026-06-09 16:24 本地模块名切换为 ManScan
 
 - 变动目录：全目录

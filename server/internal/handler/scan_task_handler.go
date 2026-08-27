@@ -19,6 +19,8 @@ import (
 
 type ScanTaskHandler interface {
 	Create(c *gin.Context)
+	Pause(c *gin.Context)
+	Resume(c *gin.Context)
 	Cancel(c *gin.Context)
 	List(c *gin.Context)
 	Stats(c *gin.Context)
@@ -74,6 +76,54 @@ func (h *scanTaskHandler) Cancel(c *gin.Context) {
 			return
 		}
 		response.Fail(c, errcode.InternalServerError, "取消任务失败")
+		return
+	}
+
+	response.SuccessWithStatus(c, http.StatusAccepted, data)
+}
+
+func (h *scanTaskHandler) Pause(c *gin.Context) {
+	taskID, err := parseTaskID(c.Param("id"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+
+	data, serviceErr := h.service.Pause(c.Request.Context(), taskID)
+	if serviceErr != nil {
+		if serviceErr == gorm.ErrRecordNotFound {
+			response.Fail(c, errcode.NotFound, "任务不存在")
+			return
+		}
+		if serviceErr == service.ErrScanTaskNotPausable {
+			response.Fail(c, errcode.InvalidParams, serviceErr.Error())
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "暂停任务失败")
+		return
+	}
+
+	response.SuccessWithStatus(c, http.StatusAccepted, data)
+}
+
+func (h *scanTaskHandler) Resume(c *gin.Context) {
+	taskID, err := parseTaskID(c.Param("id"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+
+	data, serviceErr := h.service.Resume(c.Request.Context(), taskID)
+	if serviceErr != nil {
+		if serviceErr == gorm.ErrRecordNotFound {
+			response.Fail(c, errcode.NotFound, "任务不存在")
+			return
+		}
+		if serviceErr == service.ErrScanTaskNotResumable {
+			response.Fail(c, errcode.InvalidParams, serviceErr.Error())
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "恢复任务失败")
 		return
 	}
 
@@ -170,7 +220,15 @@ func (h *scanTaskHandler) Logs(c *gin.Context) {
 		limit = parsedLimit
 	}
 
-	data, serviceErr := h.service.GetLogs(c.Request.Context(), taskID, offset, limit)
+	direction := strings.ToLower(strings.TrimSpace(c.Query("direction")))
+	switch direction {
+	case "", "forward", "before":
+	default:
+		response.Fail(c, errcode.InvalidParams, "direction 只能是 forward 或 before")
+		return
+	}
+
+	data, serviceErr := h.service.GetLogs(c.Request.Context(), taskID, offset, limit, direction)
 	if serviceErr != nil {
 		if serviceErr == gorm.ErrRecordNotFound {
 			response.Fail(c, errcode.NotFound, "任务不存在")
@@ -190,7 +248,16 @@ func (h *scanTaskHandler) Stream(c *gin.Context) {
 		return
 	}
 
-	task, progress, events, nextOffset, ch, taskSnapshot, progressSnapshot, cancel, serviceErr := h.service.Subscribe(c.Request.Context(), taskID)
+	offset := int64(0)
+	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
+		offset, err = strconv.ParseInt(raw, 10, 64)
+		if err != nil || offset < 0 {
+			response.Fail(c, errcode.InvalidParams, "offset 必须是大于等于 0 的整数")
+			return
+		}
+	}
+
+	task, progress, events, nextOffset, ch, taskSnapshot, progressSnapshot, cancel, serviceErr := h.service.Subscribe(c.Request.Context(), taskID, offset)
 	if serviceErr != nil {
 		if serviceErr == gorm.ErrRecordNotFound {
 			response.Fail(c, errcode.NotFound, "任务不存在")
@@ -241,6 +308,9 @@ func (h *scanTaskHandler) Stream(c *gin.Context) {
 	}
 
 	currentOffset := nextOffset
+	if currentOffset < offset {
+		currentOffset = offset
+	}
 	for {
 		select {
 		case <-c.Request.Context().Done():
@@ -250,10 +320,10 @@ func (h *scanTaskHandler) Stream(c *gin.Context) {
 				_ = sendSSE("complete", gin.H{"task_id": taskID, "status": progress.FinishedStatus})
 				return
 			}
-			if event.Seq < currentOffset {
+			if event.Seq <= currentOffset {
 				continue
 			}
-			currentOffset = event.Seq + 1
+			currentOffset = event.Seq
 			if scanruntime.ShouldHideFrontendLogEvent(event) {
 				continue
 			}

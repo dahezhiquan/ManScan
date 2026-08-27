@@ -105,15 +105,19 @@ type State struct {
 	LogFile          *os.File
 	MatchLogFile     *os.File
 
-	mu              sync.RWMutex
-	events          []TaskLogEvent
-	nextSeq         int64
-	progress        TaskProgressSnapshot
-	resultSummary   ResultSummary
-	matchedTemplate map[string]struct{}
-	lastProgressLog progressLogState
-	mirroredErrors  int64
-	subscribers     map[chan TaskLogEvent]struct{}
+	mu                  sync.RWMutex
+	events              []TaskLogEvent
+	nextSeq             int64
+	progress            TaskProgressSnapshot
+	resultSummary       ResultSummary
+	matchedTemplate     map[string]struct{}
+	matchedResults      map[string]struct{}
+	lastProgressLog     progressLogState
+	lastStats           TaskProgressSnapshot
+	completedRequests   int64
+	lastLogicalRequests int64
+	mirroredErrors      int64
+	subscribers         map[chan TaskLogEvent]struct{}
 }
 
 func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir string) (*State, error) {
@@ -123,11 +127,20 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 	}
 
 	logFilePath := filepath.Join(taskDir, "events.jsonl")
+	events, nextSeq := loadExistingEvents(logFilePath, 5000)
+	progress := loadProgressSnapshot(filepath.Join(taskDir, "progress.json"))
+	matchedResults := make(map[string]struct{})
 	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, err
 	}
 	matchLogFilePath := filepath.Join(taskDir, "match.log")
+	for key := range loadExistingResultMessages(matchLogFilePath) {
+		matchedResults[key] = struct{}{}
+	}
+	if matchedCount := int64(len(matchedResults)); matchedCount > progress.Matched {
+		progress.Matched = matchedCount
+	}
 	matchLogFile, err := os.OpenFile(matchLogFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		_ = logFile.Close()
@@ -146,13 +159,15 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 		LogFile:          logFile,
 		MatchLogFile:     matchLogFile,
 		matchedTemplate:  make(map[string]struct{}),
+		matchedResults:   matchedResults,
 		subscribers:      make(map[chan TaskLogEvent]struct{}),
+		events:           events,
+		nextSeq:          nextSeq,
 		resultSummary: ResultSummary{
 			TargetCount: targetCount,
 		},
-		progress: TaskProgressSnapshot{
-			LastUpdatedAt: time.Now(),
-		},
+		progress:          progress,
+		completedRequests: estimateCompletedRequests(progress),
 	}, nil
 }
 
@@ -220,9 +235,23 @@ func (s *State) SnapshotProgress() TaskProgressSnapshot {
 	return s.progress
 }
 
-func (s *State) RecordResult(templateID, templateName, severity string) {
+func (s *State) RecordResult(templateID, templateName, severity string, keys ...string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	key := ""
+	if len(keys) > 0 {
+		key = strings.TrimSpace(keys[0])
+	}
+	if key != "" {
+		if s.matchedResults == nil {
+			s.matchedResults = make(map[string]struct{})
+		}
+		if _, ok := s.matchedResults[key]; ok {
+			return false
+		}
+		s.matchedResults[key] = struct{}{}
+	}
 
 	templateID = strings.TrimSpace(templateID)
 	if s.matchedTemplate == nil {
@@ -233,7 +262,9 @@ func (s *State) RecordResult(templateID, templateName, severity string) {
 	}
 	if isFingerprintTemplateName(templateName) {
 		s.resultSummary.TechCount++
-		return
+		s.progress.Matched++
+		s.writeProgressSnapshotLocked()
+		return true
 	}
 
 	switch strings.ToLower(strings.TrimSpace(severity)) {
@@ -248,6 +279,9 @@ func (s *State) RecordResult(templateID, templateName, severity string) {
 	case "info", "informational":
 		s.resultSummary.InfoCount++
 	}
+	s.progress.Matched++
+	s.writeProgressSnapshotLocked()
+	return true
 }
 
 func isFingerprintTemplateName(templateName string) bool {
@@ -268,6 +302,59 @@ func (s *State) SnapshotResultSummary() ResultSummary {
 	summary.TotalRequests = s.progress.TotalRequests
 	summary.RealRequests = s.progress.Requests
 	return summary
+}
+
+func (s *State) SetResultSummary(summary ResultSummary) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.resultSummary = summary
+	s.resultSummary.TargetCount = s.TargetCount
+	if summary.PluginCount > int(s.progress.Templates) {
+		s.progress.Templates = int64(summary.PluginCount)
+	}
+	if summary.TotalRequests > s.progress.TotalRequests {
+		s.progress.TotalRequests = summary.TotalRequests
+	}
+	if summary.RealRequests > s.progress.Requests {
+		s.progress.Requests = summary.RealRequests
+	}
+	if matched := resultSummaryMatchedCount(summary); matched > s.progress.Matched {
+		s.progress.Matched = matched
+	}
+	if completed := estimateCompletedRequests(s.progress); completed > s.completedRequests {
+		s.completedRequests = completed
+	}
+	s.writeProgressSnapshotLocked()
+}
+
+func resultSummaryMatchedCount(summary ResultSummary) int64 {
+	return int64(summary.CriticalCount + summary.HighCount + summary.MediumCount + summary.LowCount + summary.InfoCount + summary.TechCount)
+}
+
+func estimateCompletedRequests(progress TaskProgressSnapshot) int64 {
+	if progress.TotalRequests <= 0 {
+		return progress.Requests
+	}
+
+	completed := int64(math.Round(progress.Percent / 100 * float64(progress.TotalRequests)))
+	if completed < progress.Requests {
+		completed = progress.Requests
+	}
+	if completed > progress.TotalRequests {
+		return progress.TotalRequests
+	}
+	return completed
+}
+
+func progressPercentFromCounts(requests, total int64, fallback float64) float64 {
+	if total <= 0 {
+		return fallback
+	}
+	if requests <= 0 {
+		return 0
+	}
+	return float64(requests) / float64(total) * 100
 }
 
 func (s *State) MarkFinished(status string, finishedAt time.Time, message string) {
@@ -360,9 +447,9 @@ func (s *State) EventsSince(offset int64, limit int) TaskLogsPage {
 	hasMore := false
 	nextOffset := offset
 	if len(filtered) > 0 {
-		nextOffset = filtered[len(filtered)-1].Seq + 1
+		nextOffset = filtered[len(filtered)-1].Seq
 	}
-	if len(s.events) > 0 && nextOffset <= s.events[len(s.events)-1].Seq {
+	if len(s.events) > 0 && nextOffset < s.events[len(s.events)-1].Seq {
 		hasMore = true
 	}
 
@@ -455,6 +542,163 @@ func (s *State) Close() {
 	}
 }
 
+func loadExistingEvents(path string, limit int) ([]TaskLogEvent, int64) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+
+	events := make([]TaskLogEvent, 0, limit)
+	var maxSeq int64
+	for scanner.Scan() {
+		var event TaskLogEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if event.Seq > maxSeq {
+			maxSeq = event.Seq
+		}
+		if limit <= 0 {
+			continue
+		}
+		if len(events) < limit {
+			events = append(events, event)
+			continue
+		}
+		copy(events, events[1:])
+		events[len(events)-1] = event
+	}
+
+	return events, maxSeq
+}
+
+func loadProgressSnapshot(path string) TaskProgressSnapshot {
+	snapshot := TaskProgressSnapshot{
+		LastUpdatedAt: time.Now(),
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return snapshot
+	}
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return TaskProgressSnapshot{LastUpdatedAt: time.Now()}
+	}
+	if snapshot.LastUpdatedAt.IsZero() {
+		snapshot.LastUpdatedAt = time.Now()
+	}
+	return snapshot
+}
+
+func loadExistingResultMessages(path string) map[string]struct{} {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+
+	results := make(map[string]struct{})
+	for scanner.Scan() {
+		var event TaskLogEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		if !strings.EqualFold(event.Level, "match") || !strings.EqualFold(event.Type, "result") {
+			continue
+		}
+		key := strings.TrimSpace(event.Message)
+		if key == "" {
+			continue
+		}
+		results[key] = struct{}{}
+	}
+	return results
+}
+
+func ReadResultSummaryFromMatchLog(path string, targetCount int) (ResultSummary, bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return ResultSummary{}, false, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+
+	summary := ResultSummary{TargetCount: targetCount}
+	seenResults := make(map[string]struct{})
+	for scanner.Scan() {
+		var event TaskLogEvent
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		key := frontendResultEventKey(event)
+		if key == "" {
+			continue
+		}
+		if _, ok := seenResults[key]; ok {
+			continue
+		}
+		seenResults[key] = struct{}{}
+
+		templateName, severity := parseResultMessageLabels(key)
+		if isFingerprintTemplateName(templateName) {
+			summary.TechCount++
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(severity)) {
+		case "critical":
+			summary.CriticalCount++
+		case "high":
+			summary.HighCount++
+		case "medium":
+			summary.MediumCount++
+		case "low":
+			summary.LowCount++
+		case "info", "informational":
+			summary.InfoCount++
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return ResultSummary{}, false, err
+	}
+	return summary, len(seenResults) > 0, nil
+}
+
+func parseResultMessageLabels(message string) (string, string) {
+	message = strings.TrimSpace(message)
+	if !strings.HasPrefix(message, "[") {
+		return "", ""
+	}
+
+	labels := make([]string, 0, 3)
+	remaining := message
+	for strings.HasPrefix(remaining, "[") {
+		end := strings.Index(remaining, "]")
+		if end <= 0 {
+			break
+		}
+		labels = append(labels, strings.TrimSpace(remaining[1:end]))
+		remaining = strings.TrimSpace(remaining[end+1:])
+	}
+	if len(labels) == 0 {
+		return "", ""
+	}
+	templateName := labels[0]
+	severity := ""
+	if len(labels) > 1 {
+		severity = labels[1]
+	}
+	return templateName, severity
+}
+
 func writeLogLine(file *os.File, encoded []byte) {
 	if file == nil {
 		return
@@ -529,8 +773,11 @@ func HandleJSONResultLine(line string, state *State) bool {
 		templateName = AsString(infoValue["name"])
 		severityText = AsString(infoValue["severity"])
 	}
-	state.RecordResult(FirstNonEmpty(templateID, "unknown-template"), templateName, severityText)
-	state.Append("match", "result", FormatJSONResultMessage(payload))
+	message := FormatJSONResultMessage(payload)
+	if !state.RecordResult(FirstNonEmpty(templateID, "unknown-template"), templateName, severityText, message) {
+		return true
+	}
+	state.Append("match", "result", message)
 	return true
 }
 
@@ -625,23 +872,51 @@ func HandleStatsJSONLine(line string, state *State) bool {
 		actualRequests = requests
 	}
 	total := ParseInt64(payload.Total)
-	matched := ParseInt64(payload.Matched)
 	errorsCount := state.SyncScannerErrors()
 	hosts := ParseInt64(payload.Hosts)
 	templates := ParseInt64(payload.Templates)
-	percent := NormalizeProgressPercent(ParseFloat64(payload.Percent), actualRequests, total)
+	percent := ParseFloat64(payload.Percent)
+	matched := int64(0)
 
 	state.UpdateProgress(func(snapshot *TaskProgressSnapshot) {
-		snapshot.Requests = actualRequests
-		snapshot.TotalRequests = total
-		snapshot.Matched = matched
+		logicalDelta := requests - state.lastLogicalRequests
+		if logicalDelta < 0 {
+			logicalDelta = requests
+		}
+		state.completedRequests += logicalDelta
+
+		requestDelta := actualRequests - state.lastStats.Requests
+		if requestDelta < 0 {
+			requestDelta = actualRequests
+		}
+		snapshot.Requests += requestDelta
+		if total > snapshot.TotalRequests {
+			snapshot.TotalRequests = total
+		}
+		if hosts > snapshot.Hosts {
+			snapshot.Hosts = hosts
+		}
+		if templates > snapshot.Templates {
+			snapshot.Templates = templates
+		}
 		snapshot.Errors = errorsCount
-		snapshot.Hosts = hosts
-		snapshot.Templates = templates
-		snapshot.Percent = percent
+		snapshot.Percent = NormalizeProgressPercent(
+			progressPercentFromCounts(state.completedRequests, snapshot.TotalRequests, percent),
+			state.completedRequests,
+			snapshot.TotalRequests,
+		)
+		percent = snapshot.Percent
 		snapshot.LastUpdatedAt = time.Now()
 		snapshot.LastMessage = "扫描进度更新"
 		snapshot.FinishedStatus = "running"
+		state.lastLogicalRequests = requests
+		state.lastStats.Requests = actualRequests
+		state.lastStats.TotalRequests = total
+		state.lastStats.Errors = errorsCount
+		state.lastStats.Hosts = hosts
+		state.lastStats.Templates = templates
+		state.lastStats.Percent = snapshot.Percent
+		matched = snapshot.Matched
 	})
 
 	if state.ShouldLogProgress(percent, matched, errorsCount) {
@@ -656,9 +931,16 @@ func FilterFrontendLogEvents(events []TaskLogEvent) []TaskLogEvent {
 	}
 
 	filtered := make([]TaskLogEvent, 0, len(events))
+	seenResults := make(map[string]struct{})
 	for _, event := range events {
 		if ShouldHideFrontendLogEvent(event) {
 			continue
+		}
+		if key := frontendResultEventKey(event); key != "" {
+			if _, ok := seenResults[key]; ok {
+				continue
+			}
+			seenResults[key] = struct{}{}
 		}
 		filtered = append(filtered, event)
 	}
@@ -672,6 +954,8 @@ func buildFrontendEventsBefore(events []TaskLogEvent, offset int64, limit int) T
 
 	filtered := make([]TaskLogEvent, 0, limit)
 	matched := 0
+	seenResults := make(map[string]struct{})
+	indexedResults := make(map[string]int)
 	for _, event := range events {
 		if offset > 0 && event.Seq >= offset {
 			break
@@ -680,14 +964,7 @@ func buildFrontendEventsBefore(events []TaskLogEvent, offset int64, limit int) T
 			continue
 		}
 
-		matched++
-		if len(filtered) < limit {
-			filtered = append(filtered, event)
-			continue
-		}
-
-		copy(filtered, filtered[1:])
-		filtered[len(filtered)-1] = event
+		filtered, matched = appendLatestFrontendEvent(filtered, seenResults, indexedResults, matched, limit, event)
 	}
 
 	nextOffset := int64(0)
@@ -700,6 +977,54 @@ func buildFrontendEventsBefore(events []TaskLogEvent, offset int64, limit int) T
 		NextOffset: nextOffset,
 		HasMore:    matched > len(filtered),
 	}
+}
+
+func frontendResultEventKey(event TaskLogEvent) string {
+	if !strings.EqualFold(event.Level, "match") || !strings.EqualFold(event.Type, "result") {
+		return ""
+	}
+	return strings.TrimSpace(event.Message)
+}
+
+func appendLatestFrontendEvent(events []TaskLogEvent, seenResults map[string]struct{}, indexedResults map[string]int, matched, limit int, event TaskLogEvent) ([]TaskLogEvent, int) {
+	key := frontendResultEventKey(event)
+	if key != "" {
+		if _, ok := seenResults[key]; !ok {
+			seenResults[key] = struct{}{}
+			matched++
+		}
+		if index, ok := indexedResults[key]; ok {
+			events = removeIndexedFrontendEvent(events, indexedResults, index)
+		}
+	} else {
+		matched++
+	}
+
+	events = append(events, event)
+	if key != "" {
+		indexedResults[key] = len(events) - 1
+	}
+	if len(events) > limit {
+		events = removeIndexedFrontendEvent(events, indexedResults, 0)
+	}
+	return events, matched
+}
+
+func removeIndexedFrontendEvent(events []TaskLogEvent, indexedResults map[string]int, index int) []TaskLogEvent {
+	if index < 0 || index >= len(events) {
+		return events
+	}
+
+	if key := frontendResultEventKey(events[index]); key != "" {
+		delete(indexedResults, key)
+	}
+	events = append(events[:index], events[index+1:]...)
+	for key, itemIndex := range indexedResults {
+		if itemIndex > index {
+			indexedResults[key] = itemIndex - 1
+		}
+	}
+	return events
 }
 
 func ShouldHideFrontendLogEvent(event TaskLogEvent) bool {
@@ -855,7 +1180,7 @@ func ReadLogEventsFromFile(path string, offset int64, limit int) ([]TaskLogEvent
 		}
 		if len(events) < limit {
 			events = append(events, event)
-			nextOffset = event.Seq + 1
+			nextOffset = event.Seq
 			continue
 		}
 		hasMore = true
@@ -923,6 +1248,8 @@ func ReadFrontendLogEventsBeforeFromFile(path string, offset int64, limit int) (
 
 	events := make([]TaskLogEvent, 0, limit)
 	matched := 0
+	seenResults := make(map[string]struct{})
+	indexedResults := make(map[string]int)
 
 	for scanner.Scan() {
 		var event TaskLogEvent
@@ -936,14 +1263,7 @@ func ReadFrontendLogEventsBeforeFromFile(path string, offset int64, limit int) (
 			continue
 		}
 
-		matched++
-		if len(events) < limit {
-			events = append(events, event)
-			continue
-		}
-
-		copy(events, events[1:])
-		events[len(events)-1] = event
+		events, matched = appendLatestFrontendEvent(events, seenResults, indexedResults, matched, limit, event)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, false, 0, err

@@ -20,6 +20,7 @@ type ScanTaskRepository interface {
 	ListAll(ctx context.Context, query dto.ListScanTasksQuery) ([]dto.ScanTaskListItem, error)
 	Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	FindResultByTaskID(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error)
+	PrepareForResume(ctx context.Context, taskID int64) error
 	UpdateStatus(ctx context.Context, taskID int64, status string, startedAt, finishedAt *time.Time) error
 	UpsertResult(ctx context.Context, result *entity.ScanTaskResult) error
 }
@@ -93,7 +94,8 @@ func (r *scanTaskRepository) Stats(ctx context.Context) (*dto.ScanTaskStats, err
 			COUNT(*) AS total,
 			SUM(CASE WHEN t.status = 'running' THEN 1 ELSE 0 END) AS running,
 			COALESCE(SUM(CASE
-				WHEN COALESCE(r.total_requests, 0) > COALESCE(r.real_requests, 0)
+				WHEN t.status = 'success'
+					AND COALESCE(r.total_requests, 0) > COALESCE(r.real_requests, 0)
 					THEN COALESCE(r.total_requests, 0) - COALESCE(r.real_requests, 0)
 				ELSE 0
 			END), 0) AS saved_requests
@@ -112,6 +114,23 @@ func (r *scanTaskRepository) FindResultByTaskID(ctx context.Context, taskID int6
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (r *scanTaskRepository) PrepareForResume(ctx context.Context, taskID int64) error {
+	result := r.db.WithContext(ctx).
+		Model(&entity.ScanTask{}).
+		Where("id = ? AND status = ?", taskID, "paused").
+		Updates(map[string]interface{}{
+			"status":      "running",
+			"finished_at": nil,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *scanTaskRepository) UpdateStatus(ctx context.Context, taskID int64, status string, startedAt, finishedAt *time.Time) error {

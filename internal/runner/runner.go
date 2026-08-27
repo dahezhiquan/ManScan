@@ -331,6 +331,7 @@ func New(options *types.Options) (*Runner, error) {
 			return nil, err
 		}
 		resumeCfg.Compile()
+		runner.options.DisableClustering = true
 	}
 	runner.resumeCfg = resumeCfg
 

@@ -98,20 +98,30 @@ func (e *Engine) executeTemplateWithTargets(ctx context.Context, template *templ
 			defer workersWg.Done()
 			for t := range tasks {
 				func() {
-					defer cleanupInFlight(t.index)
+					completed := false
+					defer func() {
+						if completed {
+							cleanupInFlight(t.index)
+						}
+					}()
 					select {
 					case <-ctx.Done():
 						return
 					default:
 					}
 					if t.skip {
+						completed = true
 						return
 					}
 
 					match, err := e.executeTemplateOnInput(ctx, template, t.value)
-					if err != nil {
+					if err != nil && ctx.Err() == nil && e.options.Logger != nil {
 						e.options.Logger.Warning().Msgf("[%s] Could not execute step on %s: %s\n", template.ID, t.value.Input, err)
 					}
+					if ctx.Err() != nil {
+						return
+					}
+					completed = true
 					results.CompareAndSwap(false, match)
 				}()
 			}
@@ -143,10 +153,6 @@ func (e *Engine) executeTemplateWithTargets(ctx context.Context, template *templ
 			skip = false
 		}
 
-		currentInfo.Lock()
-		currentInfo.InFlight[index] = struct{}{}
-		currentInfo.Unlock()
-
 		// Skip if the host has had errors
 		if e.executerOpts.HostErrorsCache != nil && e.executerOpts.HostErrorsCache.Check(e.executerOpts.ProtocolType.String(), contextargs.NewWithMetaInput(ctx, scannedValue)) {
 			skipEvent := &output.ResultEvent{
@@ -165,8 +171,13 @@ func (e *Engine) executeTemplateWithTargets(ctx context.Context, template *templ
 			} else if e.executerOpts.Output != nil {
 				_ = e.executerOpts.Output.Write(skipEvent)
 			}
+			index++
 			return true
 		}
+
+		currentInfo.Lock()
+		currentInfo.InFlight[index] = struct{}{}
+		currentInfo.Unlock()
 
 		tasks <- task{index: index, skip: skip, value: scannedValue}
 		index++
@@ -177,9 +188,11 @@ func (e *Engine) executeTemplateWithTargets(ctx context.Context, template *templ
 	workersWg.Wait()
 
 	// on completion marks the template as completed
-	currentInfo.Lock()
-	currentInfo.Completed = true
-	currentInfo.Unlock()
+	if ctx.Err() == nil {
+		currentInfo.Lock()
+		currentInfo.Completed = true
+		currentInfo.Unlock()
+	}
 }
 
 // executeTemplatesOnTarget execute given templates on given single target

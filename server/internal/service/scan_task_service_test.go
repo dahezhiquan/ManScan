@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -290,20 +293,8 @@ func TestListHighRiskTasksPaginatesFilteredItems(t *testing.T) {
 	}
 }
 
-func TestStatsIncludesRunningStateSavedRequests(t *testing.T) {
+func TestStatsSavedRequestsOnlyUsesPersistedSuccessfulTasks(t *testing.T) {
 	t.Parallel()
-
-	runtimeDir := t.TempDir()
-	runningState, err := scanruntime.NewState(9, "task-9", "running-task", 1, runtimeDir)
-	if err != nil {
-		t.Fatalf("NewState() error = %v", err)
-	}
-	defer runningState.Close()
-
-	runningState.UpdateProgress(func(snapshot *scanruntime.TaskProgressSnapshot) {
-		snapshot.TotalRequests = 200
-		snapshot.Requests = 125
-	})
 
 	svc := &scanTaskService{
 		repository: &scanTaskRepositoryStub{
@@ -312,9 +303,6 @@ func TestStatsIncludesRunningStateSavedRequests(t *testing.T) {
 				Running:       1,
 				SavedRequests: 12345,
 			},
-		},
-		states: map[int64]*scanTaskRuntime{
-			9: newScanTaskRuntime(runningState),
 		},
 	}
 
@@ -326,8 +314,191 @@ func TestStatsIncludesRunningStateSavedRequests(t *testing.T) {
 	if stats.Total != 18 || stats.Running != 1 {
 		t.Fatalf("unexpected count stats: %+v", stats)
 	}
-	if stats.SavedRequests != 12420 {
-		t.Fatalf("SavedRequests = %d, want 12420", stats.SavedRequests)
+	if stats.SavedRequests != 12345 {
+		t.Fatalf("SavedRequests = %d, want 12345", stats.SavedRequests)
+	}
+}
+
+func TestGetLogsSupportsRunningForwardAndBeforeDirections(t *testing.T) {
+	t.Parallel()
+
+	runtimeDir := t.TempDir()
+	runningState, err := scanruntime.NewState(20, "task-20", "running-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer runningState.Close()
+
+	runningState.Append("info", "task_created", "扫描任务已创建，等待执行")
+	runningState.Append("error", "scanner_error", "scanner error")
+	runningState.Append("info", "task_started", "扫描任务开始执行")
+	runningState.Append("warn", "stderr", "warning")
+	runningState.Append("info", "process_started", "扫描子进程已启动")
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				20: {
+					ID:        20,
+					TaskNo:    "task-20",
+					Name:      "running-task",
+					Status:    "running",
+					CreatedBy: "tester",
+				},
+			},
+		},
+		states: map[int64]*scanTaskRuntime{
+			20: newScanTaskRuntime(runningState),
+		},
+	}
+
+	forward, err := svc.GetLogs(context.Background(), 20, 1, 2, "")
+	if err != nil {
+		t.Fatalf("GetLogs() forward error = %v", err)
+	}
+	if len(forward.Events) != 1 || forward.Events[0].Seq != 3 {
+		t.Fatalf("GetLogs() forward events = %+v, want seq 3", forward.Events)
+	}
+	if forward.NextOffset != 3 {
+		t.Fatalf("GetLogs() forward NextOffset = %d, want 3", forward.NextOffset)
+	}
+	if !forward.HasMore {
+		t.Fatalf("GetLogs() forward HasMore = false, want true")
+	}
+
+	before, err := svc.GetLogs(context.Background(), 20, 0, 2, "before")
+	if err != nil {
+		t.Fatalf("GetLogs() before error = %v", err)
+	}
+	if len(before.Events) != 2 || before.Events[0].Seq != 3 || before.Events[1].Seq != 5 {
+		t.Fatalf("GetLogs() before events = %+v, want seq 3 and 5", before.Events)
+	}
+	if before.NextOffset != 3 {
+		t.Fatalf("GetLogs() before NextOffset = %d, want 3", before.NextOffset)
+	}
+	if !before.HasMore {
+		t.Fatalf("GetLogs() before HasMore = false, want true")
+	}
+}
+
+func TestSubscribeUsesOffsetForSnapshotEvents(t *testing.T) {
+	t.Parallel()
+
+	runtimeDir := t.TempDir()
+	runningState, err := scanruntime.NewState(21, "task-21", "running-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer runningState.Close()
+
+	runningState.Append("info", "first", "first event")
+	runningState.Append("info", "second", "second event")
+	runningState.Append("info", "third", "third event")
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				21: {
+					ID:        21,
+					TaskNo:    "task-21",
+					Name:      "running-task",
+					Status:    "running",
+					CreatedBy: "tester",
+				},
+			},
+		},
+		states: map[int64]*scanTaskRuntime{
+			21: newScanTaskRuntime(runningState),
+		},
+	}
+
+	_, _, events, nextOffset, ch, _, _, cancel, err := svc.Subscribe(context.Background(), 21, 2)
+	if err != nil {
+		t.Fatalf("Subscribe() error = %v", err)
+	}
+	if cancel != nil {
+		defer cancel()
+	}
+	if ch == nil {
+		t.Fatalf("Subscribe() channel = nil, want active stream channel")
+	}
+	if len(events) != 1 || events[0].Seq != 3 {
+		t.Fatalf("Subscribe() events = %+v, want seq 3", events)
+	}
+	if nextOffset != 3 {
+		t.Fatalf("Subscribe() NextOffset = %d, want 3", nextOffset)
+	}
+}
+
+func TestFinishSuccessTaskRemovesResumeFile(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	runtimeDir := filepath.Join(rootDir, "data", "runtime")
+	state, err := scanruntime.NewState(18, "task-18", "success-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				18: {ID: 18, TaskNo: "task-18", Name: "success-task", Status: "running", CreatedBy: "tester"},
+			},
+		},
+		runtimeDir: runtimeDir,
+		states: map[int64]*scanTaskRuntime{
+			18: newScanTaskRuntime(state),
+		},
+	}
+
+	resumeFile := svc.resumeFilePath(18)
+	if err := os.WriteFile(resumeFile, []byte("resume-data"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	startedAt := time.Date(2026, 8, 26, 11, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	svc.finishSuccessTask(18, svc.getRuntime(18), startedAt)
+
+	if _, err := os.Stat(resumeFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("resume file still exists or unexpected error: %v", err)
+	}
+}
+
+func TestFinishPausedTaskKeepsResumeFile(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	runtimeDir := filepath.Join(rootDir, "data", "runtime")
+	state, err := scanruntime.NewState(19, "task-19", "paused-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				19: {ID: 19, TaskNo: "task-19", Name: "paused-task", Status: "running", CreatedBy: "tester"},
+			},
+		},
+		runtimeDir: runtimeDir,
+		states: map[int64]*scanTaskRuntime{
+			19: newScanTaskRuntime(state),
+		},
+	}
+
+	resumeFile := svc.resumeFilePath(19)
+	if err := os.WriteFile(resumeFile, []byte("resume-data"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	startedAt := time.Date(2026, 8, 26, 11, 5, 0, 0, time.FixedZone("CST", 8*3600))
+	svc.finishPausedTask(19, svc.getRuntime(19), &startedAt)
+
+	if _, err := os.Stat(resumeFile); err != nil {
+		t.Fatalf("resume file should remain after pause, got error: %v", err)
 	}
 }
 
@@ -384,6 +555,62 @@ func TestCancelRequestsRunningTaskCancellation(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected task_cancel_requested event, got %+v", events)
+	}
+}
+
+func TestPauseRequestsRunningTaskPause(t *testing.T) {
+	t.Parallel()
+
+	runtimeDir := t.TempDir()
+	runningState, err := scanruntime.NewState(15, "task-15", "running-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer runningState.Close()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				15: {
+					ID:        15,
+					TaskNo:    "task-15",
+					Name:      "running-task",
+					Status:    "running",
+					CreatedBy: "tester",
+				},
+			},
+		},
+		states: map[int64]*scanTaskRuntime{
+			15: newScanTaskRuntime(runningState),
+		},
+	}
+
+	resp, err := svc.Pause(context.Background(), 15)
+	if err != nil {
+		t.Fatalf("Pause() error = %v", err)
+	}
+	if !resp.PauseRequested {
+		t.Fatalf("PauseRequested = false, want true")
+	}
+	if resp.Status != "running" {
+		t.Fatalf("Status = %q, want running", resp.Status)
+	}
+
+	runtime := svc.getRuntime(15)
+	if runtime == nil || !runtime.IsPauseRequested() {
+		t.Fatalf("expected runtime pause flag to be set")
+	}
+
+	events := runningState.EventsSince(0, 10).Events
+	found := false
+	for _, event := range events {
+		if event.Type == "task_pause_requested" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected task_pause_requested event, got %+v", events)
 	}
 }
 
@@ -448,6 +675,231 @@ func TestCancelRejectsFinishedTask(t *testing.T) {
 	}
 }
 
+func TestCancelPausedTaskMarksCancelledImmediately(t *testing.T) {
+	t.Parallel()
+
+	runtimeDir := t.TempDir()
+	pausedState, err := scanruntime.NewState(17, "task-17", "paused-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer pausedState.Close()
+
+	pausedAt := time.Date(2026, 8, 26, 10, 30, 0, 0, time.FixedZone("CST", 8*3600))
+	pausedState.MarkFinished("paused", pausedAt, "扫描任务已暂停")
+
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{
+			17: {
+				ID:         17,
+				TaskNo:     "task-17",
+				Name:       "paused-task",
+				Status:     "paused",
+				CreatedBy:  "tester",
+				FinishedAt: &pausedAt,
+			},
+		},
+	}
+	svc := &scanTaskService{
+		repository: repo,
+		states: map[int64]*scanTaskRuntime{
+			17: newScanTaskRuntime(pausedState),
+		},
+	}
+
+	resp, err := svc.Cancel(context.Background(), 17)
+	if err != nil {
+		t.Fatalf("Cancel() error = %v", err)
+	}
+	if !resp.CancelRequested {
+		t.Fatalf("CancelRequested = false, want true")
+	}
+	if resp.Status != "cancelled" {
+		t.Fatalf("Status = %q, want cancelled", resp.Status)
+	}
+	if len(repo.updateStatusCalls) != 1 {
+		t.Fatalf("updateStatusCalls = %d, want 1", len(repo.updateStatusCalls))
+	}
+	if repo.updateStatusCalls[0].status != "cancelled" {
+		t.Fatalf("updated status = %q, want cancelled", repo.updateStatusCalls[0].status)
+	}
+
+	progress := pausedState.SnapshotProgress()
+	if !progress.Finished || progress.FinishedStatus != "cancelled" {
+		t.Fatalf("progress = %+v, want finished cancelled", progress)
+	}
+}
+
+func TestResumePausedTaskStartsRunningRun(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	runtimeDir := filepath.Join(rootDir, "data", "runtime", "16")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	task := &entity.ScanTask{
+		ID:        16,
+		TaskNo:    "task-16",
+		Name:      "paused-task",
+		Status:    "paused",
+		CreatedBy: "tester",
+		Targets:   `["https://example.com"]`,
+	}
+	startedAt := time.Date(2026, 8, 26, 9, 30, 0, 0, time.FixedZone("CST", 8*3600))
+	task.StartedAt = &startedAt
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{16: task},
+	}
+
+	called := false
+	var capturedPlan *normalizedTaskRequest
+	var capturedRuntime *scanTaskRuntime
+	svc := &scanTaskService{
+		repository: repo,
+		rootDir:    rootDir,
+		runtimeDir: filepath.Join(rootDir, "data", "runtime"),
+		states:     map[int64]*scanTaskRuntime{},
+		taskRunner: func(taskID int64, plan *normalizedTaskRequest, runtime *scanTaskRuntime) {
+			called = true
+			if taskID != 16 {
+				t.Fatalf("taskID = %d, want 16", taskID)
+			}
+			capturedPlan = plan
+			capturedRuntime = runtime
+		},
+	}
+
+	resp, err := svc.Resume(context.Background(), 16)
+	if err != nil {
+		t.Fatalf("Resume() error = %v", err)
+	}
+	if !resp.ResumeRequested {
+		t.Fatalf("ResumeRequested = false, want true")
+	}
+	if resp.Status != "running" {
+		t.Fatalf("Status = %q, want running", resp.Status)
+	}
+	if !called {
+		t.Fatalf("expected taskRunner to be called")
+	}
+	if capturedPlan == nil || len(capturedPlan.CollectedTargets) != 1 || capturedPlan.CollectedTargets[0] != "https://example.com" {
+		t.Fatalf("unexpected resumed plan: %+v", capturedPlan)
+	}
+	if capturedRuntime == nil || svc.getRuntime(16) != capturedRuntime {
+		t.Fatalf("expected resumed runtime to be registered")
+	}
+	progress := capturedRuntime.state.SnapshotProgress()
+	if progress.Finished || progress.FinishedStatus != "running" {
+		t.Fatalf("progress after resume = %+v, want unfinished running", progress)
+	}
+	if len(repo.prepareForResumeCalls) != 1 || repo.prepareForResumeCalls[0] != 16 {
+		t.Fatalf("prepareForResumeCalls = %+v, want [16]", repo.prepareForResumeCalls)
+	}
+	if repo.tasks[16].StartedAt == nil || !repo.tasks[16].StartedAt.Equal(startedAt) {
+		t.Fatalf("StartedAt after resume = %v, want %v", repo.tasks[16].StartedAt, startedAt)
+	}
+	if repo.tasks[16].FinishedAt != nil {
+		t.Fatalf("FinishedAt after resume = %v, want nil", repo.tasks[16].FinishedAt)
+	}
+}
+
+func TestResumePausedTaskRejectsDuplicateResume(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	task := &entity.ScanTask{
+		ID:        17,
+		TaskNo:    "task-17",
+		Name:      "paused-task",
+		Status:    "paused",
+		CreatedBy: "tester",
+		Targets:   `["https://example.com"]`,
+	}
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{17: task},
+	}
+	svc := &scanTaskService{
+		repository: repo,
+		rootDir:    rootDir,
+		runtimeDir: filepath.Join(rootDir, "data", "runtime"),
+		states:     map[int64]*scanTaskRuntime{},
+		taskRunner: func(taskID int64, plan *normalizedTaskRequest, runtime *scanTaskRuntime) {},
+	}
+
+	if _, err := svc.Resume(context.Background(), 17); err != nil {
+		t.Fatalf("first Resume() error = %v", err)
+	}
+	if _, err := svc.Resume(context.Background(), 17); !errors.Is(err, ErrScanTaskNotResumable) {
+		t.Fatalf("second Resume() error = %v, want ErrScanTaskNotResumable", err)
+	}
+	if len(repo.prepareForResumeCalls) != 1 {
+		t.Fatalf("prepareForResumeCalls = %d, want 1", len(repo.prepareForResumeCalls))
+	}
+}
+
+func TestRunTaskPreservesExistingStartedAt(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootDir, "manscan"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	runtimeDir := filepath.Join(rootDir, "data", "runtime")
+	startedAt := time.Date(2026, 8, 26, 9, 30, 0, 0, time.FixedZone("CST", 8*3600))
+	task := &entity.ScanTask{
+		ID:        29,
+		TaskNo:    "task-29",
+		Name:      "resumed-task",
+		Status:    "pending",
+		CreatedBy: "tester",
+		StartedAt: &startedAt,
+		Targets:   `["https://example.com"]`,
+	}
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{29: task},
+	}
+
+	state, err := scanruntime.NewState(task.ID, task.TaskNo, task.Name, 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	svc := &scanTaskService{
+		repository: repo,
+		rootDir:    rootDir,
+		runtimeDir: runtimeDir,
+		states: map[int64]*scanTaskRuntime{
+			task.ID: newScanTaskRuntime(state),
+		},
+	}
+	runtime := svc.getRuntime(task.ID)
+
+	svc.runTask(task.ID, &normalizedTaskRequest{
+		Raw:              dto.CreateScanTaskRequest{},
+		Name:             task.Name,
+		CreatedBy:        task.CreatedBy,
+		CollectedTargets: []string{"https://example.com"},
+	}, runtime)
+
+	if len(repo.updateStatusCalls) < 2 {
+		t.Fatalf("updateStatusCalls = %d, want at least 2", len(repo.updateStatusCalls))
+	}
+	runningCall := repo.updateStatusCalls[0]
+	if runningCall.status != "running" {
+		t.Fatalf("first status = %q, want running", runningCall.status)
+	}
+	if runningCall.startedAt != nil {
+		t.Fatalf("running startedAt update = %v, want nil to preserve original", runningCall.startedAt)
+	}
+	if repo.tasks[29].StartedAt == nil || !repo.tasks[29].StartedAt.Equal(startedAt) {
+		t.Fatalf("task StartedAt = %v, want %v", repo.tasks[29].StartedAt, startedAt)
+	}
+}
+
 func TestScanTaskRuntimeRequestCancelTriggersTerminate(t *testing.T) {
 	t.Parallel()
 
@@ -478,6 +930,27 @@ func TestScanTaskRuntimeRequestCancelTriggersTerminate(t *testing.T) {
 	}
 }
 
+func TestScanTaskRuntimeRequestPauseTriggersInterrupt(t *testing.T) {
+	t.Parallel()
+
+	runtime := newScanTaskRuntime(nil)
+
+	interruptCalled := false
+	if !runtime.AttachInterrupt(func() {
+		interruptCalled = true
+	}) {
+		t.Fatalf("AttachInterrupt() = false, want true")
+	}
+
+	alreadyRequested, accepted := runtime.RequestPause()
+	if alreadyRequested || !accepted {
+		t.Fatalf("RequestPause() = (%v, %v), want (false, true)", alreadyRequested, accepted)
+	}
+	if !interruptCalled {
+		t.Fatalf("expected interrupt func to be called")
+	}
+}
+
 func TestScanTaskRuntimeAttachTerminatorAfterCancelRunsImmediately(t *testing.T) {
 	t.Parallel()
 
@@ -505,13 +978,15 @@ type statusUpdateCall struct {
 }
 
 type scanTaskRepositoryStub struct {
-	listResult        *dto.PageResult[dto.ScanTaskListItem]
-	listAllItems      []dto.ScanTaskListItem
-	statsResult       *dto.ScanTaskStats
-	tasks             map[int64]*entity.ScanTask
-	findByIDErr       error
-	updateStatusErr   error
-	updateStatusCalls []statusUpdateCall
+	listResult            *dto.PageResult[dto.ScanTaskListItem]
+	listAllItems          []dto.ScanTaskListItem
+	statsResult           *dto.ScanTaskStats
+	tasks                 map[int64]*entity.ScanTask
+	findByIDErr           error
+	prepareForResumeCalls []int64
+	prepareForResumeErr   error
+	updateStatusErr       error
+	updateStatusCalls     []statusUpdateCall
 }
 
 func (s *scanTaskRepositoryStub) Create(_ context.Context, _ *entity.ScanTask) error {
@@ -558,6 +1033,22 @@ func (s *scanTaskRepositoryStub) Stats(_ context.Context) (*dto.ScanTaskStats, e
 
 func (s *scanTaskRepositoryStub) FindResultByTaskID(_ context.Context, _ int64) (*entity.ScanTaskResult, error) {
 	return nil, nil
+}
+
+func (s *scanTaskRepositoryStub) PrepareForResume(_ context.Context, taskID int64) error {
+	if s.prepareForResumeErr != nil {
+		return s.prepareForResumeErr
+	}
+	s.prepareForResumeCalls = append(s.prepareForResumeCalls, taskID)
+	if task, ok := s.tasks[taskID]; ok {
+		if task.Status != "paused" {
+			return gorm.ErrRecordNotFound
+		}
+		task.Status = "running"
+		task.FinishedAt = nil
+		return nil
+	}
+	return gorm.ErrRecordNotFound
 }
 
 func (s *scanTaskRepositoryStub) UpdateStatus(_ context.Context, taskID int64, status string, startedAt, finishedAt *time.Time) error {

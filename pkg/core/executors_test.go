@@ -131,6 +131,21 @@ func (s *slowExecuter) ExecuteWithResults(ctx *scan.ScanContext) ([]*output.Resu
 	return nil, nil
 }
 
+type cancelAwareExecuter struct {
+	started chan struct{}
+}
+
+func (s *cancelAwareExecuter) Compile() error { return nil }
+func (s *cancelAwareExecuter) Requests() int  { return 1 }
+func (s *cancelAwareExecuter) Execute(ctx *scan.ScanContext) (bool, error) {
+	close(s.started)
+	<-ctx.Context().Done()
+	return false, ctx.Context().Err()
+}
+func (s *cancelAwareExecuter) ExecuteWithResults(ctx *scan.ScanContext) ([]*output.ResultEvent, error) {
+	return nil, nil
+}
+
 func Test_executeTemplateWithTargets_RespectsCancellation(t *testing.T) {
 	e := newTestEngine()
 	e.SetExecuterOptions(&protocols.ExecutorOptions{Logger: e.Logger, ResumeCfg: types.NewResumeCfg(), ProtocolType: tmpltypes.HTTPProtocol})
@@ -145,4 +160,48 @@ func Test_executeTemplateWithTargets_RespectsCancellation(t *testing.T) {
 
 	var matched atomic.Bool
 	e.executeTemplateWithTargets(ctx, tpl, targets, &matched)
+}
+
+func Test_executeTemplateWithTargets_KeepsInFlightOnCancellation(t *testing.T) {
+	e := newTestEngine()
+	resumeCfg := types.NewResumeCfg()
+	e.SetExecuterOptions(&protocols.ExecutorOptions{Logger: e.Logger, ResumeCfg: resumeCfg, ProtocolType: tmpltypes.HTTPProtocol})
+
+	executer := &cancelAwareExecuter{started: make(chan struct{})}
+	tpl := &templates.Template{ID: "cancel-template"}
+	tpl.Executer = executer
+
+	targets := &fakeTargetProvider{values: []*contextargs.MetaInput{{Input: "a"}}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		var matched atomic.Bool
+		e.executeTemplateWithTargets(ctx, tpl, targets, &matched)
+		close(done)
+	}()
+
+	select {
+	case <-executer.started:
+	case <-time.After(time.Second):
+		t.Fatalf("template execution did not start")
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("template execution did not stop after cancellation")
+	}
+
+	currentInfo := resumeCfg.Current[tpl.ID]
+	if currentInfo == nil {
+		t.Fatalf("resume current info missing")
+	}
+	if currentInfo.Completed {
+		t.Fatalf("currentInfo.Completed = true, want false")
+	}
+	if !currentInfo.IsInFlight(0) {
+		t.Fatalf("target index 0 was removed from in-flight after cancellation")
+	}
 }

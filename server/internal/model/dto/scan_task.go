@@ -139,6 +139,18 @@ type CancelScanTaskResponse struct {
 	CancelRequested bool   `json:"cancel_requested"`
 }
 
+type PauseScanTaskResponse struct {
+	TaskID         int64  `json:"task_id"`
+	Status         string `json:"status"`
+	PauseRequested bool   `json:"pause_requested"`
+}
+
+type ResumeScanTaskResponse struct {
+	TaskID          int64  `json:"task_id"`
+	Status          string `json:"status"`
+	ResumeRequested bool   `json:"resume_requested"`
+}
+
 type GetScanTaskResponse struct {
 	Task     ScanTaskSummary                  `json:"task"`
 	Progress scanruntime.TaskProgressSnapshot `json:"progress"`
