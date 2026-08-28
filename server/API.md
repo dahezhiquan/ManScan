@@ -765,7 +765,7 @@ curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
 ```
 
 - 说明：
-  - 列表默认按 `last_found_at DESC, id DESC` 排序。
+  - 列表默认按严重级别从高到低排序：`critical`、`high`、`medium`、`low`、`info`、`unknown`；同级别按 `last_found_at DESC, id DESC` 排序。
   - `keyword` 匹配逻辑为 `vulnerability_name OR template_id` 模糊匹配，该 OR 条件与其他筛选条件整体做 AND 组合。
   - `severity`、`status`、`protocol` 为精确匹配；协议值按模板顶层执行块白名单归一化，例如 `network` 会按 `tcp` 处理。
   - `asset_host`、`template_id`、`vulnerability_name`、`latest_scan_task_name` 为模糊匹配。
