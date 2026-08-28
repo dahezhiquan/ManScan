@@ -27,6 +27,7 @@ import (
 
 type ScanTaskService interface {
 	Create(ctx context.Context, request dto.CreateScanTaskRequest) (*dto.ScanTaskSummary, error)
+	Rescan(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, error)
 	Pause(ctx context.Context, taskID int64) (*dto.PauseScanTaskResponse, error)
 	Resume(ctx context.Context, taskID int64) (*dto.ResumeScanTaskResponse, error)
 	Cancel(ctx context.Context, taskID int64) (*dto.CancelScanTaskResponse, error)
@@ -41,6 +42,7 @@ type ScanTaskService interface {
 var ErrScanTaskNotPausable = errors.New("当前任务状态不支持暂停")
 var ErrScanTaskNotCancelable = errors.New("当前任务状态不支持取消")
 var ErrScanTaskNotResumable = errors.New("当前任务状态不支持恢复")
+var ErrScanTaskInvalidConfiguration = errors.New("原任务配置不完整，无法重新扫描")
 
 const (
 	logDirectionForward = "forward"
@@ -108,6 +110,29 @@ func (s *scanTaskService) Create(ctx context.Context, request dto.CreateScanTask
 		return nil, err
 	}
 
+	return s.createFromNormalizedPlan(ctx, plan)
+}
+
+func (s *scanTaskService) Rescan(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, error) {
+	task, err := s.repository.FindByID(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	plan, err := normalizedTaskRequestFromTask(task)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrScanTaskInvalidConfiguration, err)
+	}
+
+	return s.createFromNormalizedPlan(ctx, plan)
+}
+
+func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *normalizedTaskRequest) (*dto.ScanTaskSummary, error) {
+	if plan == nil {
+		return nil, errors.New("扫描任务配置为空")
+	}
+
+	request := plan.Raw
 	taskNo := xid.New().String()
 	task := &entity.ScanTask{
 		TaskNo:                        taskNo,

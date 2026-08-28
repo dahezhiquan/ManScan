@@ -932,6 +932,156 @@ func TestCancelPausedTaskMarksCancelledImmediately(t *testing.T) {
 	}
 }
 
+func TestRescanCreatesNewTaskFromExistingConfiguration(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	sourceTask := &entity.ScanTask{
+		ID:                            31,
+		TaskNo:                        "task-31",
+		Name:                          "daily-web-scan",
+		Description:                   ptr("source description"),
+		Status:                        "success",
+		CreatedBy:                     "tester",
+		StartedAt:                     ptrTime(time.Date(2026, 8, 26, 10, 0, 0, 0, time.FixedZone("CST", 8*3600))),
+		FinishedAt:                    ptrTime(time.Date(2026, 8, 26, 10, 5, 0, 0, time.FixedZone("CST", 8*3600))),
+		Targets:                       `["https://example.com","https://admin.example.com"]`,
+		InlineTargetsList:             ptr("https://example.com\nhttps://admin.example.com\n"),
+		ExcludeTargets:                `["https://example.com/logout"]`,
+		ScanAllIPs:                    true,
+		IPVersion:                     `["4","6"]`,
+		InputFileMode:                 "list",
+		NewTemplates:                  true,
+		AutomaticScan:                 true,
+		EnableGlobalMatchersTemplates: true,
+		Tags:                          `["cve","exposure"]`,
+		IncludeIDs:                    `["CVE-2026-0001"]`,
+		Severities:                    `["high","critical"]`,
+		Protocols:                     `["http","tcp"]`,
+		StoreResponse:                 true,
+		CustomHeaders:                 `["X-Test: 1"]`,
+		FollowRedirects:               true,
+		MaxRedirects:                  3,
+		RateLimit:                     20,
+		RateLimitDuration:             2000,
+		BulkSize:                      7,
+		TemplateThreads:               8,
+		Timeout:                       12,
+		Retries:                       2,
+		MaxHostError:                  5,
+		Project:                       true,
+		ProjectPath:                   ptr("/tmp/manscan-project"),
+		ScanStrategy:                  ptr("auto"),
+		Headless:                      true,
+		PageTimeout:                   30,
+		HeadlessOptionalArguments:     `["--no-sandbox"]`,
+		Proxy:                         `["http://127.0.0.1:8080"]`,
+		EnableProgressBar:             true,
+		StatsInterval:                 2,
+		MetricsPort:                   9099,
+	}
+	repo := &scanTaskRepositoryStub{
+		tasks:        map[int64]*entity.ScanTask{31: sourceTask},
+		nextCreateID: 88,
+	}
+
+	called := false
+	var capturedTaskID int64
+	var capturedPlan *normalizedTaskRequest
+	svc := &scanTaskService{
+		repository: repo,
+		rootDir:    rootDir,
+		runtimeDir: filepath.Join(rootDir, "data", "runtime"),
+		states:     map[int64]*scanTaskRuntime{},
+		taskRunner: func(taskID int64, plan *normalizedTaskRequest, runtime *scanTaskRuntime) {
+			called = true
+			capturedTaskID = taskID
+			capturedPlan = plan
+			if runtime == nil || runtime.state == nil {
+				t.Fatalf("runtime is nil")
+			}
+		},
+	}
+
+	summary, err := svc.Rescan(context.Background(), 31)
+	if err != nil {
+		t.Fatalf("Rescan() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("expected taskRunner to be called")
+	}
+	if summary.ID != 88 || capturedTaskID != 88 {
+		t.Fatalf("new task ID summary=%d runner=%d, want 88", summary.ID, capturedTaskID)
+	}
+	if summary.TaskNo == "" || summary.TaskNo == sourceTask.TaskNo {
+		t.Fatalf("TaskNo = %q, want non-empty new task no", summary.TaskNo)
+	}
+	if summary.Status != "pending" || summary.StartedAt != nil || summary.FinishedAt != nil {
+		t.Fatalf("unexpected new task summary: %+v", summary)
+	}
+
+	if len(repo.createdTasks) != 1 {
+		t.Fatalf("createdTasks = %d, want 1", len(repo.createdTasks))
+	}
+	created := repo.createdTasks[0]
+	if created.ID != 88 || created.Name != sourceTask.Name || created.CreatedBy != sourceTask.CreatedBy {
+		t.Fatalf("unexpected created task identity: %+v", created)
+	}
+	if created.StartedAt != nil || created.FinishedAt != nil || created.Status != "pending" {
+		t.Fatalf("created task carried runtime state: %+v", created)
+	}
+	if created.Targets != `["https://example.com","https://admin.example.com"]` {
+		t.Fatalf("Targets = %s", created.Targets)
+	}
+	if created.ExcludeTargets != sourceTask.ExcludeTargets || created.Tags != sourceTask.Tags || created.Severities != sourceTask.Severities {
+		t.Fatalf("created task did not copy filters: %+v", created)
+	}
+	if !created.ScanAllIPs || !created.NewTemplates || !created.AutomaticScan || !created.Headless {
+		t.Fatalf("created task did not copy boolean options: %+v", created)
+	}
+	if created.RateLimit != 20 || created.TemplateThreads != 8 || created.Timeout != 12 || created.MetricsPort != 9099 {
+		t.Fatalf("created task did not copy numeric options: %+v", created)
+	}
+	if capturedPlan == nil || len(capturedPlan.CollectedTargets) != 2 {
+		t.Fatalf("unexpected captured plan: %+v", capturedPlan)
+	}
+	if svc.getRuntime(88) == nil {
+		t.Fatalf("expected new runtime to be registered")
+	}
+}
+
+func TestRescanRejectsSourceTaskWithoutTargets(t *testing.T) {
+	t.Parallel()
+
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{
+			32: {
+				ID:        32,
+				TaskNo:    "task-32",
+				Name:      "empty-task",
+				Status:    "success",
+				CreatedBy: "tester",
+			},
+		},
+	}
+	svc := &scanTaskService{
+		repository: repo,
+		runtimeDir: t.TempDir(),
+		states:     map[int64]*scanTaskRuntime{},
+		taskRunner: func(taskID int64, plan *normalizedTaskRequest, runtime *scanTaskRuntime) {
+			t.Fatalf("taskRunner should not be called for invalid source task")
+		},
+	}
+
+	_, err := svc.Rescan(context.Background(), 32)
+	if !errors.Is(err, ErrScanTaskInvalidConfiguration) {
+		t.Fatalf("Rescan() error = %v, want ErrScanTaskInvalidConfiguration", err)
+	}
+	if len(repo.createdTasks) != 0 {
+		t.Fatalf("createdTasks = %d, want 0", len(repo.createdTasks))
+	}
+}
+
 func TestResumePausedTaskStartsRunningRun(t *testing.T) {
 	t.Parallel()
 
@@ -1184,6 +1334,9 @@ type scanTaskRepositoryStub struct {
 	listAllItems          []dto.ScanTaskListItem
 	statsResult           *dto.ScanTaskStats
 	tasks                 map[int64]*entity.ScanTask
+	createdTasks          []*entity.ScanTask
+	nextCreateID          int64
+	createErr             error
 	findByIDErr           error
 	prepareForResumeCalls []int64
 	prepareForResumeErr   error
@@ -1191,7 +1344,29 @@ type scanTaskRepositoryStub struct {
 	updateStatusCalls     []statusUpdateCall
 }
 
-func (s *scanTaskRepositoryStub) Create(_ context.Context, _ *entity.ScanTask) error {
+func (s *scanTaskRepositoryStub) Create(_ context.Context, task *entity.ScanTask) error {
+	if s.createErr != nil {
+		return s.createErr
+	}
+	if task == nil {
+		return errors.New("scan task is nil")
+	}
+	if task.ID == 0 {
+		if s.nextCreateID > 0 {
+			task.ID = s.nextCreateID
+			s.nextCreateID++
+		} else {
+			task.ID = int64(len(s.createdTasks) + 1)
+		}
+	}
+
+	copyTask := *task
+	s.createdTasks = append(s.createdTasks, &copyTask)
+	if s.tasks == nil {
+		s.tasks = make(map[int64]*entity.ScanTask)
+	}
+	storedTask := copyTask
+	s.tasks[task.ID] = &storedTask
 	return nil
 }
 
@@ -1352,5 +1527,9 @@ func (s *templateRepositoryStub) Stats() (*dto.TemplateStats, error) {
 }
 
 func ptr(value string) *string {
+	return &value
+}
+
+func ptrTime(value time.Time) *time.Time {
 	return &value
 }

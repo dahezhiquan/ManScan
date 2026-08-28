@@ -436,7 +436,56 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
   }'
 ```
 
-## 10. 取消扫描任务
+## 10. 重新扫描任务
+
+- 请求方法和路径：`POST /api/v1/scans/:id/rescan`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 原扫描任务 ID，路径参数，对应 `manscan_scan_tasks.id` |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task": {
+      "id": 2,
+      "task_no": "d4l8h4crvimc0n1newid",
+      "name": "demo-scan",
+      "description": "",
+      "status": "pending",
+      "created_by": "anonymous"
+    },
+    "log_api": "/api/v1/scans/2/logs",
+    "stream": "/api/v1/scans/2/stream",
+    "task_api": "/api/v1/scans/2"
+  }
+}
+```
+
+- 说明：
+  - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的扫描配置，并创建一条新的扫描任务记录。
+  - 新任务会生成新的 `id` 和 `task_no`，初始状态为 `pending`，不会继承原任务的 `started_at`、`finished_at`、运行日志、进度快照或结果统计。
+  - 新任务的名称、描述、创建人、目标、模板筛选、协议筛选、并发、限速、代理、headless 等扫描配置与原任务保持一致。
+  - 该接口不同于 `/api/v1/scans/:id/resume`；`resume` 只恢复暂停任务并继续使用原任务 ID，`rescan` 始终创建新任务并重新发起完整扫描。
+
+- 错误码说明：
+  - `40001`：任务 ID 非法，或原任务中保存的目标配置为空
+  - `40401`：原任务不存在
+  - `50001`：新任务入库失败、运行时目录创建失败或重新扫描任务失败
+
+- 使用示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
+```
+
+## 11. 取消扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/cancel`
 
@@ -477,7 +526,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 ```
 
-## 11. 暂停扫描任务
+## 12. 暂停扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/pause`
 
@@ -517,7 +566,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/pause"
 ```
 
-## 12. 恢复扫描任务
+## 13. 恢复扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/resume`
 
@@ -558,7 +607,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/pause"
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
 ```
 
-## 13. 获取扫描任务详情
+## 14. 获取扫描任务详情
 
 - 请求方法和路径：`GET /api/v1/scans/:id`
 
@@ -627,7 +676,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
 curl "http://127.0.0.1:8686/api/v1/scans/1"
 ```
 
-## 14. 获取扫描任务日志
+## 15. 获取扫描任务日志
 
 - 请求方法和路径：`GET /api/v1/scans/:id/logs`
 
@@ -703,7 +752,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
 curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=100"
 ```
 
-## 15. 订阅扫描任务日志流
+## 16. 订阅扫描任务日志流
 
 - 请求方法和路径：`GET /api/v1/scans/:id/stream`
 
@@ -762,7 +811,7 @@ data: {"task_id":1,"seq":4,"level":"info","type":"match_failure","message":"[HTT
 curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
 ```
 
-## 16. 获取漏洞列表
+## 17. 获取漏洞列表
 
 - 请求方法和路径：`GET /api/v1/vulnerabilities`
 
@@ -836,7 +885,7 @@ curl "http://127.0.0.1:8686/api/v1/vulnerabilities?page=1&page_size=20&keyword=s
   - 翻页、修改每页数量、修改筛选条件时重新请求列表；筛选条件变化后将 `page` 重置为 `1`。
   - 严重级别建议按 `critical`、`high`、`medium`、`low`、`info`、`unknown` 做固定选项；状态至少兼容当前后端写入的 `unreviewed`。
 
-## 17. 获取漏洞详情
+## 18. 获取漏洞详情
 
 - 请求方法和路径：`GET /api/v1/vulnerabilities/:id`
 

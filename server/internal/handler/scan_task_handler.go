@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 
 type ScanTaskHandler interface {
 	Create(c *gin.Context)
+	Rescan(c *gin.Context)
 	Pause(c *gin.Context)
 	Resume(c *gin.Context)
 	Cancel(c *gin.Context)
@@ -48,6 +50,35 @@ func (h *scanTaskHandler) Create(c *gin.Context) {
 	task, err := h.service.Create(c.Request.Context(), request)
 	if err != nil {
 		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+
+	response.SuccessWithStatus(c, http.StatusAccepted, gin.H{
+		"task":     task,
+		"log_api":  fmt.Sprintf("/api/v1/scans/%d/logs", task.ID),
+		"stream":   fmt.Sprintf("/api/v1/scans/%d/stream", task.ID),
+		"task_api": fmt.Sprintf("/api/v1/scans/%d", task.ID),
+	})
+}
+
+func (h *scanTaskHandler) Rescan(c *gin.Context) {
+	taskID, err := parseTaskID(c.Param("id"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+
+	task, serviceErr := h.service.Rescan(c.Request.Context(), taskID)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
+			response.Fail(c, errcode.NotFound, "任务不存在")
+			return
+		}
+		if errors.Is(serviceErr, service.ErrScanTaskInvalidConfiguration) {
+			response.Fail(c, errcode.InvalidParams, serviceErr.Error())
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "重新扫描任务失败")
 		return
 	}
 
