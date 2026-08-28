@@ -27,6 +27,8 @@ func NewRouter(
 	v1.GET("/templates/stats", templateHandler.Stats)
 
 	v1.GET("/vulnerabilities", vulnerabilityHandler.List)
+	v1.PATCH("/vulnerabilities/status", vulnerabilityHandler.BatchUpdateStatus)
+	v1.PATCH("/vulnerabilities/:id/status", vulnerabilityHandler.UpdateStatus)
 	v1.GET("/vulnerabilities/:id", vulnerabilityHandler.Detail)
 
 	v1.GET("/scans", scanTaskHandler.List)

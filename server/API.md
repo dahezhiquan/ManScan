@@ -823,7 +823,7 @@ curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
 | `page_size` | `int` | 否 | 每页数量，范围 `1-100`，默认 `10` |
 | `keyword` | `string` | 否 | 按漏洞名称或模板 ID 统一模糊搜索 |
 | `asset_host` | `string` / `string[]` | 否 | 按资产 Host 模糊过滤，支持逗号分隔和多参数 |
-| `status` | `string` / `string[]` | 否 | 按漏洞状态精确过滤，支持逗号分隔和多参数 |
+| `status` | `string` / `string[]` | 否 | 按漏洞状态精确过滤，支持逗号分隔和多参数；状态值见下方漏洞状态说明 |
 | `tag` / `tags` | `string` / `string[]` | 否 | 按漏洞标签过滤，支持逗号分隔和多参数 |
 | `severity` / `level` | `string` / `string[]` | 否 | 按严重级别精确过滤，支持逗号分隔和多参数 |
 | `template_id` | `string` / `string[]` | 否 | 按模板 ID 模糊过滤，支持逗号分隔和多参数 |
@@ -864,6 +864,7 @@ curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
   - 列表默认按严重级别从高到低排序：`critical`、`high`、`medium`、`low`、`info`、`unknown`；同级别按 `last_found_at DESC, id DESC` 排序。
   - `keyword` 匹配逻辑为 `vulnerability_name OR template_id` 模糊匹配，该 OR 条件与其他筛选条件整体做 AND 组合。
   - `severity`、`status`、`protocol` 为精确匹配；协议值按模板顶层执行块白名单归一化，例如 `network` 会按 `tcp` 处理。
+  - 漏洞状态包括：`unreviewed` 未审核、`confirmed` 已确认、`ticketed` 已发单、`fixed` 已修复、`false_positive` 误报、`ignored` 忽略。
   - `asset_host`、`template_id`、`vulnerability_name`、`latest_scan_task_name` 为模糊匹配。
   - `tag` 和 `tags` 含义一致；`severity` 和 `level` 含义一致，前端任选一种命名即可。
 
@@ -883,9 +884,118 @@ curl "http://127.0.0.1:8686/api/v1/vulnerabilities?page=1&page_size=20&keyword=s
   - “搜索漏洞名称或 Template ID”输入框统一传 `keyword=<输入值>`，前端不再自行判断传 `vulnerability_name` 还是 `template_id`。
   - 筛选区提供 `asset_host`、`status`、`tags`、`severity`、`latest_scan_task_name`、`protocol`。扫描任务名称选项来自 `/api/v1/scans/options/names`，多选值用重复 query 参数或逗号分隔传给后端。
   - 翻页、修改每页数量、修改筛选条件时重新请求列表；筛选条件变化后将 `page` 重置为 `1`。
-  - 严重级别建议按 `critical`、`high`、`medium`、`low`、`info`、`unknown` 做固定选项；状态至少兼容当前后端写入的 `unreviewed`。
+  - 严重级别建议按 `critical`、`high`、`medium`、`low`、`info`、`unknown` 做固定选项；状态建议按 `unreviewed`、`confirmed`、`ticketed`、`fixed`、`false_positive`、`ignored` 做固定选项。
 
-## 18. 获取漏洞详情
+## 18. 更新漏洞状态
+
+- 请求方法和路径：`PATCH /api/v1/vulnerabilities/:id/status`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 漏洞 ID，路径参数，必须为大于 `0` 的整数 |
+| `status` | `string` | 是 | 请求体字段，漏洞状态，只允许 `unreviewed`、`confirmed`、`ticketed`、`fixed`、`false_positive`、`ignored` |
+
+- 请求体示例：
+
+```json
+{
+  "status": "fixed"
+}
+```
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "status": "fixed",
+    "fixed_at": "2026-08-28T18:30:00+08:00"
+  }
+}
+```
+
+- 说明：
+  - 该接口只更新单个漏洞；如需批量更新，请使用 `PATCH /api/v1/vulnerabilities/status`。
+  - 当 `status=fixed` 时，后端会将 `fixed_at` 更新为当前服务器时间。
+  - 当 `status` 为其他任一允许状态时，后端会清空 `fixed_at`。
+  - 状态值会去除首尾空格并转为小写后保存。
+  - 漏洞状态含义：`unreviewed` 未审核、`confirmed` 已确认、`ticketed` 已发单、`fixed` 已修复、`false_positive` 误报、`ignored` 忽略。
+
+- 错误码说明：
+  - `40001`：漏洞 ID 非法、请求体非法，或 `status` 不在允许范围内
+  - `40401`：漏洞不存在
+  - `50001`：更新漏洞状态失败
+
+- 使用示例：
+
+```bash
+curl -X PATCH "http://127.0.0.1:8686/api/v1/vulnerabilities/1/status" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"fixed"}'
+```
+
+## 19. 批量更新漏洞状态
+
+- 请求方法和路径：`PATCH /api/v1/vulnerabilities/status`
+
+- 请求参数：
+
+请求体为 JSON：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `ids` | `int64[]` | 是 | 漏洞 ID 列表，必须是 `1-1000` 个大于 `0` 的整数；重复 ID 会自动去重 |
+| `status` | `string` | 是 | 漏洞状态，只允许 `unreviewed`、`confirmed`、`ticketed`、`fixed`、`false_positive`、`ignored` |
+
+- 请求体示例：
+
+```json
+{
+  "ids": [1, 2, 3],
+  "status": "confirmed"
+}
+```
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "ids": [1, 2, 3],
+    "status": "confirmed",
+    "fixed_at": null,
+    "updated_count": 3
+  }
+}
+```
+
+- 说明：
+  - 批量接口会先校验 `ids` 中的漏洞是否全部存在；只要有任一 ID 不存在，整批返回 `40401`，不会更新任何漏洞。
+  - 当 `status=fixed` 时，后端会将本批漏洞的 `fixed_at` 更新为同一个当前服务器时间。
+  - 当 `status` 为其他任一允许状态时，后端会清空本批漏洞的 `fixed_at`。
+  - `updated_count` 表示本次确认并处理的漏洞数量，不受数据库“值未变化时 affected rows 为 0”的口径影响。
+
+- 错误码说明：
+  - `40001`：`ids` 为空、超过 `1000` 个、包含非法 ID、请求体非法，或 `status` 不在允许范围内
+  - `40401`：`ids` 中至少有一个漏洞不存在
+  - `50001`：批量更新漏洞状态失败
+
+- 使用示例：
+
+```bash
+curl -X PATCH "http://127.0.0.1:8686/api/v1/vulnerabilities/status" \
+  -H "Content-Type: application/json" \
+  -d '{"ids":[1,2,3],"status":"confirmed"}'
+```
+
+## 20. 获取漏洞详情
 
 - 请求方法和路径：`GET /api/v1/vulnerabilities/:id`
 

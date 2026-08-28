@@ -1491,6 +1491,14 @@ func (s *vulnerabilityRepositoryStub) FindByID(_ context.Context, _ int64) (*ent
 	return nil, gorm.ErrRecordNotFound
 }
 
+func (s *vulnerabilityRepositoryStub) UpdateStatus(_ context.Context, _ int64, _ string, _ *time.Time) error {
+	return nil
+}
+
+func (s *vulnerabilityRepositoryStub) BatchUpdateStatus(_ context.Context, _ []int64, _ string, _ *time.Time) (int64, error) {
+	return 0, nil
+}
+
 type templateRepositoryStub struct {
 	details map[string]*dto.TemplateDetail
 }
