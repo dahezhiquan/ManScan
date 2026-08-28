@@ -20,6 +20,10 @@
 
 服务默认监听地址为 `:8686`，接口统一挂载在 `/api/v1` 下。
 
+统计口径说明：
+
+- 扫描任务响应中的 `tech_count` 表示命中结果中 `info.tags` 包含 `tech` 标签的数量，不再根据模板名称或结果名称是否包含“指纹识别”判断。
+
 ## 1. 获取模板列表
 
 - 请求方法和路径：`GET /api/v1/templates`
@@ -193,6 +197,9 @@ curl "http://127.0.0.1:8686/api/v1/templates/options/protocols"
   }
 }
 ```
+
+- 说明：
+  - `fingerprintTemplateCount` 表示 `info.tags` 中包含 `tech` 标签的模板数量，其他标签不计入该字段。
 
 - 错误码说明：
   - `50001`：模板目录读取或解析失败
@@ -630,6 +637,8 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
   - `direction=forward` 用于按序向后读取增量日志，返回 `seq > offset` 的事件；`next_offset` 表示本次已处理的最大 `seq`，下一次请求可直接作为 `offset` 传回。
   - `direction=before` 用于向前翻旧日志，返回 `seq < offset` 的最近一页可见事件；当 `offset=0` 时返回当前尾部最近一页；`next_offset` 表示本页最早可见事件的 `seq`，下一次请求可直接作为 `offset` 继续翻更早日志。
   - 运行中任务也支持 `direction=before`，可用于浏览器刷新后从尾部向前回补历史日志。
+  - `result` 类型事件可能包含 `tags` 字段，用于记录该命中结果的模板标签。
+  - 当任务开启 `matcher_status` 时，模板匹配失败会以 `level=info`、`type=match_failure` 输出为调试日志；这类事件不计入 `progress.matched`，不写入漏洞结果。
 
 - 错误码说明：
   - `40001`：任务 ID、`offset`、`limit` 或 `direction` 非法
@@ -659,6 +668,8 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=
   - 首个事件为 `snapshot`
   - 后续事件为 `event`
   - `progress` 与 `result` 类型事件会额外携带最新的 `task` 统计快照，便于前端实时刷新漏洞数、指纹数、目标数和插件数
+  - `result` 类型事件中的 `event.tags` 为该命中结果的模板标签，包含 `tech` 时计入 `tech_count`
+  - 开启 `matcher_status` 后产生的 `match_failure` 事件只用于展示匹配失败调试信息，不会触发漏洞命中统计刷新
   - 任务结束后发送 `complete`
 
 - `snapshot` 示例：
@@ -679,7 +690,14 @@ data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进
 
 ```text
 event: event
-data: {"task_id":1,"seq":3,"level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":4,"tech_count":4,"plugin_count":50,"target_count":1},"event":{"seq":3,"time":"2026-06-09T21:01:02+08:00","level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]"},"nextOffset":3}
+data: {"task_id":1,"seq":3,"level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":4,"tech_count":4,"plugin_count":50,"target_count":1},"event":{"seq":3,"time":"2026-06-09T21:01:02+08:00","level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","tags":["cve"]},"nextOffset":3}
+```
+
+- `match_failure` 事件示例：
+
+```text
+event: event
+data: {"task_id":1,"seq":4,"level":"info","type":"match_failure","message":"[HTTP 安全响应头缺失][info][strict-transport-security] 匹配失败 http://example.com/","nextOffset":4}
 ```
 
 - 错误码说明：

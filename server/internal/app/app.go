@@ -32,8 +32,11 @@ func Run() error {
 	templateService := service.NewTemplateService(templateRepository)
 
 	scanTaskRepository := repository.NewScanTaskRepository(db)
+	vulnerabilityRepository := repository.NewVulnerabilityRepository(db)
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
+		vulnerabilityRepository,
+		templateRepository,
 		logger,
 		cfg.RootDir,
 	)

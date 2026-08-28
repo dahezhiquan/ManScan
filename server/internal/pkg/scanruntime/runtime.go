@@ -44,6 +44,7 @@ type TaskLogEvent struct {
 	Level   string    `json:"level"`
 	Type    string    `json:"type"`
 	Message string    `json:"message"`
+	Tags    []string  `json:"tags,omitempty"`
 }
 
 type TaskLogsPage struct {
@@ -91,6 +92,8 @@ type scannerErrorLogEntry struct {
 	Address   string     `json:"address"`
 	Error     string     `json:"error"`
 }
+
+type ResultHandler func(payload map[string]interface{})
 
 // State 保存单个扫描任务的运行时状态。
 type State struct {
@@ -180,6 +183,17 @@ func (s *State) Append(level, eventType, message string) {
 	})
 }
 
+// AppendResult records a match event with normalized template tags.
+func (s *State) AppendResult(message string, tags []string) {
+	s.AppendEvent(TaskLogEvent{
+		Time:    time.Now(),
+		Level:   "match",
+		Type:    "result",
+		Message: message,
+		Tags:    NormalizeResultTags(tags),
+	})
+}
+
 func (s *State) AppendEvent(event TaskLogEvent) {
 	if event.Time.IsZero() {
 		event.Time = time.Now()
@@ -235,7 +249,7 @@ func (s *State) SnapshotProgress() TaskProgressSnapshot {
 	return s.progress
 }
 
-func (s *State) RecordResult(templateID, templateName, severity string, keys ...string) bool {
+func (s *State) RecordResult(templateID, templateName, severity string, tags []string, keys ...string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -260,7 +274,7 @@ func (s *State) RecordResult(templateID, templateName, severity string, keys ...
 	if templateID != "" {
 		s.matchedTemplate[templateID] = struct{}{}
 	}
-	if isFingerprintTemplateName(templateName) {
+	if HasTechTag(tags) {
 		s.resultSummary.TechCount++
 		s.progress.Matched++
 		s.writeProgressSnapshotLocked()
@@ -284,12 +298,37 @@ func (s *State) RecordResult(templateID, templateName, severity string, keys ...
 	return true
 }
 
-func isFingerprintTemplateName(templateName string) bool {
-	templateName = strings.TrimSpace(templateName)
-	if templateName == "" {
-		return false
+// HasTechTag reports whether a template tag list contains the tech tag.
+func HasTechTag(tags []string) bool {
+	for _, tag := range tags {
+		for _, item := range strings.Split(tag, ",") {
+			if strings.EqualFold(strings.TrimSpace(item), "tech") {
+				return true
+			}
+		}
 	}
-	return strings.Contains(templateName, "指纹识别")
+	return false
+}
+
+// NormalizeResultTags trims, lowercases and deduplicates result tags.
+func NormalizeResultTags(tags []string) []string {
+	result := make([]string, 0, len(tags))
+	seen := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		for _, item := range strings.Split(tag, ",") {
+			normalized := strings.ToLower(strings.TrimSpace(item))
+			if normalized == "" {
+				continue
+			}
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			result = append(result, normalized)
+		}
+	}
+	sort.Strings(result)
+	return result
 }
 
 func (s *State) SnapshotResultSummary() ResultSummary {
@@ -648,8 +687,8 @@ func ReadResultSummaryFromMatchLog(path string, targetCount int) (ResultSummary,
 		}
 		seenResults[key] = struct{}{}
 
-		templateName, severity := parseResultMessageLabels(key)
-		if isFingerprintTemplateName(templateName) {
+		_, severity := parseResultMessageLabels(key)
+		if HasTechTag(event.Tags) {
 			summary.TechCount++
 			continue
 		}
@@ -716,6 +755,10 @@ func (s *State) writeProgressSnapshotLocked() {
 }
 
 func StreamCommandOutput(reader io.Reader, state *State, stream string, parseResultJSON bool) {
+	StreamCommandOutputWithResultHandler(reader, state, stream, parseResultJSON, nil)
+}
+
+func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream string, parseResultJSON bool, resultHandler ResultHandler) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
@@ -726,7 +769,7 @@ func StreamCommandOutput(reader io.Reader, state *State, stream string, parseRes
 		}
 
 		if parseResultJSON {
-			if HandleJSONResultLine(line, state) {
+			if HandleJSONResultLineWithResultHandler(line, state, resultHandler) {
 				continue
 			}
 		} else {
@@ -757,6 +800,10 @@ func StreamCommandOutput(reader io.Reader, state *State, stream string, parseRes
 }
 
 func HandleJSONResultLine(line string, state *State) bool {
+	return HandleJSONResultLineWithResultHandler(line, state, nil)
+}
+
+func HandleJSONResultLineWithResultHandler(line string, state *State, resultHandler ResultHandler) bool {
 	if !strings.HasPrefix(line, "{") {
 		return false
 	}
@@ -766,19 +813,89 @@ func HandleJSONResultLine(line string, state *State) bool {
 		return false
 	}
 
+	if IsMatcherStatusFailurePayload(payload) {
+		state.Append("info", "match_failure", FormatJSONMatcherFailureMessage(payload))
+		return true
+	}
+
 	templateID := AsString(payload["template-id"])
 	templateName := ""
 	severityText := ""
+	tags := []string{}
 	if infoValue, ok := payload["info"].(map[string]interface{}); ok {
 		templateName = AsString(infoValue["name"])
 		severityText = AsString(infoValue["severity"])
+		tags = ResultTagsFromInfo(infoValue)
 	}
 	message := FormatJSONResultMessage(payload)
-	if !state.RecordResult(FirstNonEmpty(templateID, "unknown-template"), templateName, severityText, message) {
+	if !state.RecordResult(FirstNonEmpty(templateID, "unknown-template"), templateName, severityText, tags, message) {
 		return true
 	}
-	state.Append("match", "result", message)
+	state.AppendResult(message, tags)
+	if resultHandler != nil {
+		resultHandler(payload)
+	}
 	return true
+}
+
+// IsMatcherStatusFailurePayload reports whether a nuclei JSONL event is only a matcher failure status.
+func IsMatcherStatusFailurePayload(payload map[string]interface{}) bool {
+	rawStatus, ok := payload["matcher-status"]
+	if !ok {
+		return false
+	}
+
+	switch status := rawStatus.(type) {
+	case bool:
+		return !status
+	case string:
+		normalized := strings.ToLower(strings.TrimSpace(status))
+		return normalized == "false" || normalized == "0" || normalized == "failed"
+	case float64:
+		return status == 0
+	case int:
+		return status == 0
+	default:
+		return false
+	}
+}
+
+func FormatJSONMatcherFailureMessage(payload map[string]interface{}) string {
+	templateID := strings.TrimSpace(AsString(payload["template-id"]))
+	templateName := templateID
+	severityText := strings.TrimSpace(AsString(payload["severity"]))
+	if infoValue, ok := payload["info"].(map[string]interface{}); ok {
+		if name := strings.TrimSpace(AsString(infoValue["name"])); name != "" {
+			templateName = name
+		}
+		if severity := strings.TrimSpace(AsString(infoValue["severity"])); severity != "" {
+			severityText = severity
+		}
+	}
+	if templateName == "" {
+		templateName = "unknown-template"
+	}
+	if severityText == "" {
+		severityText = "unknown"
+	}
+
+	labels := []string{templateName, severityText}
+	if matcherName := strings.TrimSpace(AsString(payload["matcher-name"])); matcherName != "" {
+		labels = append(labels, matcherName)
+	} else if extractorName := strings.TrimSpace(AsString(payload["extractor-name"])); extractorName != "" {
+		labels = append(labels, extractorName)
+	}
+
+	host := FirstNonEmpty(
+		AsString(payload["matched-at"]),
+		AsString(payload["host"]),
+		AsString(payload["url"]),
+	)
+	if host == "" {
+		host = "unknown-target"
+	}
+
+	return fmt.Sprintf("[%s] 匹配失败 %s", strings.Join(labels, "]["), host)
 }
 
 func FormatJSONResultMessage(payload map[string]interface{}) string {
@@ -851,6 +968,33 @@ func formatExtractedResultsLine(value interface{}) string {
 		return ""
 	}
 	return fmt.Sprintf("extracted-results：%s", strings.Join(results, ", "))
+}
+
+// ResultTagsFromInfo extracts normalized tags from a nuclei result info object.
+func ResultTagsFromInfo(info map[string]interface{}) []string {
+	if len(info) == 0 {
+		return nil
+	}
+	return NormalizeResultTags(resultStringSlice(info["tags"]))
+}
+
+func resultStringSlice(value interface{}) []string {
+	switch typed := value.(type) {
+	case []interface{}:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			result = append(result, AsString(item))
+		}
+		return result
+	case []string:
+		return typed
+	default:
+		text := AsString(value)
+		if text == "" {
+			return nil
+		}
+		return []string{text}
+	}
 }
 
 func HandleStatsJSONLine(line string, state *State) bool {

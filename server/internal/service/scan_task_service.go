@@ -46,10 +46,12 @@ const (
 )
 
 type scanTaskService struct {
-	repository repository.ScanTaskRepository
-	logger     *logx.Logger
-	rootDir    string
-	runtimeDir string
+	repository              repository.ScanTaskRepository
+	vulnerabilityRepository repository.VulnerabilityRepository
+	templateRepository      repository.TemplateRepository
+	logger                  *logx.Logger
+	rootDir                 string
+	runtimeDir              string
 
 	mu         sync.RWMutex
 	states     map[int64]*scanTaskRuntime
@@ -65,7 +67,8 @@ type normalizedTaskRequest struct {
 }
 
 type scanTaskRuntime struct {
-	state *scanruntime.State
+	state              *scanruntime.State
+	vulnerabilityQueue *vulnerabilityQueue
 
 	mu              sync.Mutex
 	cancel          context.CancelFunc
@@ -78,6 +81,8 @@ type scanTaskRuntime struct {
 
 func NewScanTaskService(
 	repo repository.ScanTaskRepository,
+	vulnerabilityRepo repository.VulnerabilityRepository,
+	templateRepo repository.TemplateRepository,
 	logger *logx.Logger,
 	rootDir string,
 ) ScanTaskService {
@@ -85,11 +90,13 @@ func NewScanTaskService(
 	_ = os.MkdirAll(runtimeDir, 0o755)
 
 	return &scanTaskService{
-		repository: repo,
-		logger:     logger,
-		rootDir:    rootDir,
-		runtimeDir: runtimeDir,
-		states:     make(map[int64]*scanTaskRuntime),
+		repository:              repo,
+		vulnerabilityRepository: vulnerabilityRepo,
+		templateRepository:      templateRepo,
+		logger:                  logger,
+		rootDir:                 rootDir,
+		runtimeDir:              runtimeDir,
+		states:                  make(map[int64]*scanTaskRuntime),
 	}
 }
 
@@ -179,6 +186,7 @@ func (s *scanTaskService) Create(ctx context.Context, request dto.CreateScanTask
 	}
 
 	runtime := newScanTaskRuntime(state)
+	runtime.vulnerabilityQueue = newVulnerabilityQueue(s)
 	s.mu.Lock()
 	s.states[task.ID] = runtime
 	s.mu.Unlock()
@@ -332,8 +340,10 @@ func (s *scanTaskService) Resume(ctx context.Context, taskID int64) (*dto.Resume
 	state.Append("info", "task_resume_requested", "扫描任务恢复执行")
 
 	runtime := newScanTaskRuntime(state)
+	runtime.vulnerabilityQueue = newVulnerabilityQueue(s)
 	if err := s.repository.PrepareForResume(ctx, taskID); err != nil {
 		runtime.state.Close()
+		runtime.closeVulnerabilityQueue()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrScanTaskNotResumable
 		}
@@ -681,7 +691,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		scanruntime.StreamCommandOutput(stdoutPipe, state, "stdout", true)
+		scanruntime.StreamCommandOutputWithResultHandler(stdoutPipe, state, "stdout", true, s.resultHandler(state.ID, state.TaskName, runtime.vulnerabilityQueue))
 	}()
 	go func() {
 		defer wg.Done()
@@ -701,6 +711,7 @@ func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntim
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
+	runtime.closeVulnerabilityQueue()
 
 	state := runtime.state
 	finishedAt := time.Now()
@@ -716,6 +727,7 @@ func (s *scanTaskService) finishSuccessTask(taskID int64, runtime *scanTaskRunti
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
+	runtime.closeVulnerabilityQueue()
 
 	state := runtime.state
 	finishedAt := time.Now()
@@ -731,6 +743,7 @@ func (s *scanTaskService) finishCancelledTask(taskID int64, runtime *scanTaskRun
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
+	runtime.closeVulnerabilityQueue()
 
 	state := runtime.state
 	finishedAt := time.Now()
@@ -748,6 +761,7 @@ func (s *scanTaskService) finishPausedTask(taskID int64, runtime *scanTaskRuntim
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
+	runtime.closeVulnerabilityQueue()
 
 	state := runtime.state
 	finishedAt := time.Now()
@@ -1427,6 +1441,14 @@ func firstNonEmpty(values ...string) string {
 
 func newScanTaskRuntime(state *scanruntime.State) *scanTaskRuntime {
 	return &scanTaskRuntime{state: state}
+}
+
+func (r *scanTaskRuntime) closeVulnerabilityQueue() {
+	if r == nil || r.vulnerabilityQueue == nil {
+		return
+	}
+	r.vulnerabilityQueue.CloseAndWait()
+	r.vulnerabilityQueue = nil
 }
 
 func (r *scanTaskRuntime) RequestPause() (bool, bool) {

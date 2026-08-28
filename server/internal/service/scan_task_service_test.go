@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -122,6 +123,182 @@ func TestToScanTaskResultIncludesRequestStats(t *testing.T) {
 	}
 }
 
+func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
+	t.Parallel()
+
+	foundAt := time.Date(2026, 8, 27, 12, 30, 0, 0, time.UTC)
+	vulnerabilityRepo := &vulnerabilityRepositoryStub{}
+	svc := &scanTaskService{
+		vulnerabilityRepository: vulnerabilityRepo,
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"CVE-2026-0001": {
+					ID:          "CVE-2026-0001",
+					Name:        "HTTP 安全响应头缺失",
+					Protocols:   []string{"http"},
+					Tags:        []string{"cve", "kev"},
+					Severity:    "high",
+					Description: "模板描述",
+					Impact:      "模板影响",
+					Remediation: "模板修复建议",
+					Reference:   []string{"https://example.com/advisory"},
+					CVSSScore:   8.8,
+					Vendor:      "demo-vendor",
+					Product:     "demo-product",
+				},
+			},
+		},
+	}
+
+	queue := newVulnerabilityQueue(svc)
+	handler := svc.resultHandler(42, "即时扫描任务", queue)
+	handler(map[string]interface{}{
+		"template-id":   "CVE-2026-0001",
+		"matched-at":    "https://app.example.com:8443/login",
+		"host":          "app.example.com",
+		"ip":            "192.0.2.10",
+		"port":          "8443",
+		"type":          "http",
+		"matcher-name":  "cross-origin-embedder-policy",
+		"request":       "GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
+		"response":      "HTTP/1.1 200 OK\r\n\r\n",
+		"curl-command":  "curl -k https://app.example.com:8443/login",
+		"template-path": "/tmp/template.yaml",
+		"timestamp":     foundAt.Format(time.RFC3339Nano),
+		"info": map[string]interface{}{
+			"name":     "result name should not win",
+			"severity": "low",
+		},
+	})
+	queue.CloseAndWait()
+
+	if len(vulnerabilityRepo.items) != 1 {
+		t.Fatalf("upserted vulnerabilities = %d, want 1", len(vulnerabilityRepo.items))
+	}
+	if vulnerabilityRepo.batchCalls != 1 {
+		t.Fatalf("batch upsert calls = %d, want 1", vulnerabilityRepo.batchCalls)
+	}
+	got := vulnerabilityRepo.items[0]
+	if got.Severity != "high" {
+		t.Fatalf("template detail was not reused: %+v", got)
+	}
+	if got.VulnerabilityName != "HTTP 安全响应头缺失 - cross-origin-embedder-policy" {
+		t.Fatalf("VulnerabilityName = %q, want %q", got.VulnerabilityName, "HTTP 安全响应头缺失 - cross-origin-embedder-policy")
+	}
+	if got.AssetDomain == nil || *got.AssetDomain != "https://app.example.com:8443/login" {
+		t.Fatalf("AssetDomain = %v, want https://app.example.com:8443/login", got.AssetDomain)
+	}
+	if got.AssetHost == nil || *got.AssetHost != "192.0.2.10" {
+		t.Fatalf("AssetHost = %v, want 192.0.2.10", got.AssetHost)
+	}
+	if got.AssetPort == nil || *got.AssetPort != 8443 {
+		t.Fatalf("AssetPort = %v, want 8443", got.AssetPort)
+	}
+	if got.FirstFoundAt != foundAt || got.LastFoundAt != foundAt {
+		t.Fatalf("found time = %s/%s, want %s", got.FirstFoundAt, got.LastFoundAt, foundAt)
+	}
+	wantFingerprint := buildVulnerabilityFingerprint("CVE-2026-0001", "192.0.2.10", 8443, "http", "/login|cross-origin-embedder-policy")
+	if got.VulnFingerprint != wantFingerprint {
+		t.Fatalf("VulnFingerprint = %q, want %q", got.VulnFingerprint, wantFingerprint)
+	}
+
+	var tags []string
+	if got.Tags == nil || json.Unmarshal([]byte(*got.Tags), &tags) != nil || len(tags) != 2 || tags[0] != "cve" || tags[1] != "kev" {
+		t.Fatalf("Tags = %v, want JSON tags", got.Tags)
+	}
+	if got.Detail == nil {
+		t.Fatal("Detail = nil, want JSON object")
+	}
+	var detail map[string]interface{}
+	if err := json.Unmarshal([]byte(*got.Detail), &detail); err != nil {
+		t.Fatalf("unmarshal Detail failed: %v", err)
+	}
+	if len(detail) != 3 {
+		t.Fatalf("Detail keys = %v, want exactly 3 keys", detail)
+	}
+	if _, ok := detail["request"]; !ok {
+		t.Fatal("Detail missing request")
+	}
+	if _, ok := detail["response"]; !ok {
+		t.Fatal("Detail missing response")
+	}
+	if _, ok := detail["curl-command"]; !ok {
+		t.Fatal("Detail missing curl-command")
+	}
+	if _, ok := detail["template-path"]; ok {
+		t.Fatal("Detail unexpectedly contains template-path")
+	}
+}
+
+func TestBuildVulnerabilitySkipsTechTagResult(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"nginx-detect": {
+					ID:       "nginx-detect",
+					Name:     "Nginx Detect",
+					Tags:     []string{"web", "tech"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+
+	vulnerability, err := svc.buildVulnerabilityFromPayload(context.Background(), 42, "即时扫描任务", map[string]interface{}{
+		"template-id": "nginx-detect",
+		"matched-at":  "https://app.example.com/",
+		"info": map[string]interface{}{
+			"name":     "Nginx Detect",
+			"severity": "info",
+			"tags":     []interface{}{"web", "tech"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVulnerabilityFromPayload() error = %v", err)
+	}
+	if vulnerability != nil {
+		t.Fatalf("vulnerability = %+v, want nil for tech tag result", vulnerability)
+	}
+}
+
+func TestBuildVulnerabilityDoesNotSkipFingerprintNameWithoutTechTag(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"legacy-fingerprint": {
+					ID:       "legacy-fingerprint",
+					Name:     "Nginx 指纹识别",
+					Tags:     []string{"web"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+
+	vulnerability, err := svc.buildVulnerabilityFromPayload(context.Background(), 42, "即时扫描任务", map[string]interface{}{
+		"template-id": "legacy-fingerprint",
+		"matched-at":  "https://app.example.com/",
+		"info": map[string]interface{}{
+			"name":     "Nginx 指纹识别",
+			"severity": "info",
+			"tags":     []interface{}{"web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVulnerabilityFromPayload() error = %v", err)
+	}
+	if vulnerability == nil {
+		t.Fatal("vulnerability = nil, want item when tech tag is absent")
+	}
+	if vulnerability.VulnerabilityName != "Nginx 指纹识别" {
+		t.Fatalf("VulnerabilityName = %q, want Nginx 指纹识别", vulnerability.VulnerabilityName)
+	}
+}
+
 func TestApplyRuntimeResultSummaryToListItem(t *testing.T) {
 	t.Parallel()
 
@@ -212,7 +389,7 @@ func TestListHighRiskTasksIncludesRuntimeSummary(t *testing.T) {
 	}
 	defer runningState.Close()
 
-	runningState.RecordResult("runtime-high", "弃用 TLS/SSL 协议检测（证书安全）", "high")
+	runningState.RecordResult("runtime-high", "弃用 TLS/SSL 协议检测（证书安全）", "high", nil)
 	runningState.UpdateProgress(func(snapshot *scanruntime.TaskProgressSnapshot) {
 		snapshot.Requests = 6
 		snapshot.TotalRequests = 20
@@ -1079,6 +1256,62 @@ func (s *scanTaskRepositoryStub) UpdateStatus(_ context.Context, taskID int64, s
 
 func (s *scanTaskRepositoryStub) UpsertResult(_ context.Context, _ *entity.ScanTaskResult) error {
 	return nil
+}
+
+type vulnerabilityRepositoryStub struct {
+	items      []*entity.Vulnerability
+	batchCalls int
+}
+
+func (s *vulnerabilityRepositoryStub) Upsert(_ context.Context, vulnerability *entity.Vulnerability) error {
+	return s.UpsertBatch(context.Background(), []*entity.Vulnerability{vulnerability})
+}
+
+func (s *vulnerabilityRepositoryStub) UpsertBatch(_ context.Context, vulnerabilities []*entity.Vulnerability) error {
+	s.batchCalls++
+	for _, vulnerability := range vulnerabilities {
+		if vulnerability == nil {
+			continue
+		}
+		copied := *vulnerability
+		s.items = append(s.items, &copied)
+	}
+	return nil
+}
+
+type templateRepositoryStub struct {
+	details map[string]*dto.TemplateDetail
+}
+
+func (s *templateRepositoryStub) List() ([]dto.TemplateListItem, error) {
+	return nil, nil
+}
+
+func (s *templateRepositoryStub) FindByID(templateID string) (*dto.TemplateDetail, error) {
+	if s.details == nil {
+		return nil, nil
+	}
+	detail := s.details[templateID]
+	if detail == nil {
+		return nil, nil
+	}
+	copied := *detail
+	copied.Protocols = append([]string(nil), detail.Protocols...)
+	copied.Tags = append([]string(nil), detail.Tags...)
+	copied.Reference = append([]string(nil), detail.Reference...)
+	return &copied, nil
+}
+
+func (s *templateRepositoryStub) Tags() ([]string, error) {
+	return nil, nil
+}
+
+func (s *templateRepositoryStub) Protocols() ([]string, error) {
+	return nil, nil
+}
+
+func (s *templateRepositoryStub) Stats() (*dto.TemplateStats, error) {
+	return &dto.TemplateStats{}, nil
 }
 
 func ptr(value string) *string {

@@ -428,6 +428,123 @@ func TestHandleJSONResultLineDeduplicatesRepeatedMatches(t *testing.T) {
 	}
 }
 
+func TestHandleJSONResultLineCallsResultHandlerForNewMatchesOnly(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	state, err := NewState(36, "task-36", "demo", 1, dir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	calls := 0
+	handler := func(payload map[string]interface{}) {
+		calls++
+		if payload["template-id"] != "http-missing-security-headers" {
+			t.Fatalf("template-id = %v, want http-missing-security-headers", payload["template-id"])
+		}
+	}
+	line := `{"template-id":"http-missing-security-headers","matcher-name":"strict-transport-security","matched-at":"http://10.107.71.65:8889/","info":{"name":"HTTP 安全响应头缺失","severity":"info"}}`
+	if !HandleJSONResultLineWithResultHandler(line, state, handler) {
+		t.Fatalf("HandleJSONResultLineWithResultHandler() = false, want true")
+	}
+	if !HandleJSONResultLineWithResultHandler(line, state, handler) {
+		t.Fatalf("HandleJSONResultLineWithResultHandler() duplicate = false, want true")
+	}
+	if calls != 1 {
+		t.Fatalf("result handler calls = %d, want 1", calls)
+	}
+}
+
+func TestHandleJSONResultLineSkipsMatcherStatusFailures(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	state, err := NewState(38, "task-38", "demo", 1, dir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	calls := 0
+	handler := func(payload map[string]interface{}) {
+		calls++
+	}
+	line := `{"template-id":"http-missing-security-headers","matcher-name":"strict-transport-security","matched-at":"http://10.107.71.65:8889/","matcher-status":false,"info":{"name":"HTTP 安全响应头缺失","severity":"info"}}`
+	if !HandleJSONResultLineWithResultHandler(line, state, handler) {
+		t.Fatalf("HandleJSONResultLineWithResultHandler() = false, want true")
+	}
+	if calls != 0 {
+		t.Fatalf("result handler calls = %d, want 0 for matcher failure", calls)
+	}
+
+	summary := state.SnapshotResultSummary()
+	if summary.InfoCount != 0 || summary.HighCount != 0 || summary.TechCount != 0 {
+		t.Fatalf("unexpected result summary for matcher failure: %+v", summary)
+	}
+	progress := state.SnapshotProgress()
+	if progress.Matched != 0 {
+		t.Fatalf("Matched = %d, want 0 for matcher failure", progress.Matched)
+	}
+
+	page := state.EventsSince(0, 10)
+	if len(page.Events) != 1 {
+		t.Fatalf("events len = %d, want 1: %+v", len(page.Events), page.Events)
+	}
+	if page.Events[0].Level != "info" || page.Events[0].Type != "match_failure" {
+		t.Fatalf("unexpected failure event: %+v", page.Events[0])
+	}
+	if page.Events[0].Message != "[HTTP 安全响应头缺失][info][strict-transport-security] 匹配失败 http://10.107.71.65:8889/" {
+		t.Fatalf("failure message = %q", page.Events[0].Message)
+	}
+
+	state.Close()
+	data, err := os.ReadFile(filepath.Join(dir, "38", "match.log"))
+	if err != nil {
+		t.Fatalf("ReadFile(match.log) error = %v", err)
+	}
+	if len(bytes.TrimSpace(data)) != 0 {
+		t.Fatalf("match.log should be empty for matcher failure: %s", string(data))
+	}
+}
+
+func TestHandleJSONResultLineCountsTechTagAsTech(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	state, err := NewState(37, "task-37", "demo", 1, dir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	line := `{"template-id":"nginx-detect","matched-at":"http://example.com/","info":{"name":"Nginx Detect","severity":"info","tags":["web","tech"]}}`
+	if !HandleJSONResultLine(line, state) {
+		t.Fatalf("HandleJSONResultLine() = false, want true")
+	}
+
+	summary := state.SnapshotResultSummary()
+	if summary.TechCount != 1 {
+		t.Fatalf("TechCount = %d, want 1", summary.TechCount)
+	}
+	if summary.InfoCount != 0 {
+		t.Fatalf("InfoCount = %d, want 0", summary.InfoCount)
+	}
+
+	state.Close()
+	summary, ok, err := ReadResultSummaryFromMatchLog(filepath.Join(dir, "37", "match.log"), 1)
+	if err != nil {
+		t.Fatalf("ReadResultSummaryFromMatchLog() error = %v", err)
+	}
+	if !ok {
+		t.Fatalf("ReadResultSummaryFromMatchLog() ok = false, want true")
+	}
+	if summary.TechCount != 1 || summary.InfoCount != 0 {
+		t.Fatalf("unexpected match log summary: %+v", summary)
+	}
+}
+
 func TestNewStateLoadsExistingMatchKeysForResumeDeduplication(t *testing.T) {
 	t.Parallel()
 
@@ -468,6 +585,7 @@ func TestReadResultSummaryFromMatchLogDeduplicatesMatches(t *testing.T) {
 		{Seq: 1, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/"},
 		{Seq: 2, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/"},
 		{Seq: 3, Time: now, Level: "match", Type: "result", Message: "[任意文件读取][high] 命中 http://example.com/"},
+		{Seq: 4, Time: now, Level: "match", Type: "result", Message: "[Nginx Detect][info] 命中 http://example.com/", Tags: []string{"tech"}},
 	}
 	writeTaskLogEvents(t, path, events)
 
@@ -478,7 +596,7 @@ func TestReadResultSummaryFromMatchLogDeduplicatesMatches(t *testing.T) {
 	if !ok {
 		t.Fatalf("ReadResultSummaryFromMatchLog() ok = false, want true")
 	}
-	if summary.InfoCount != 1 || summary.HighCount != 1 {
+	if summary.InfoCount != 1 || summary.HighCount != 1 || summary.TechCount != 1 {
 		t.Fatalf("unexpected summary counts: %+v", summary)
 	}
 	if summary.TargetCount != 2 {
@@ -563,11 +681,11 @@ func TestAppendEventWritesMatchLog(t *testing.T) {
 	}
 }
 
-func TestRecordResultCountsFingerprintAsTech(t *testing.T) {
+func TestRecordResultCountsTechTagAsTech(t *testing.T) {
 	t.Parallel()
 
 	state := &State{}
-	state.RecordResult("fingerprint-template", "Nginx 指纹识别", "info")
+	state.RecordResult("tech-template", "Nginx", "info", []string{"web", "tech"})
 
 	summary := state.SnapshotResultSummary()
 	if summary.TechCount != 1 {
@@ -578,12 +696,27 @@ func TestRecordResultCountsFingerprintAsTech(t *testing.T) {
 	}
 }
 
+func TestRecordResultDoesNotUseFingerprintNameAsTech(t *testing.T) {
+	t.Parallel()
+
+	state := &State{}
+	state.RecordResult("fingerprint-template", "Nginx 指纹识别", "info", nil)
+
+	summary := state.SnapshotResultSummary()
+	if summary.TechCount != 0 {
+		t.Fatalf("TechCount = %d, want 0", summary.TechCount)
+	}
+	if summary.InfoCount != 1 {
+		t.Fatalf("InfoCount = %d, want 1", summary.InfoCount)
+	}
+}
+
 func TestRecordResultCountsVulnerabilityBySeverity(t *testing.T) {
 	t.Parallel()
 
 	state := &State{}
-	state.RecordResult("vuln-template", "HTTP 安全响应头缺失", "info")
-	state.RecordResult("high-template", "任意文件读取", "high")
+	state.RecordResult("vuln-template", "HTTP 安全响应头缺失", "info", nil)
+	state.RecordResult("high-template", "任意文件读取", "high", nil)
 
 	summary := state.SnapshotResultSummary()
 	if summary.InfoCount != 1 {
