@@ -83,6 +83,16 @@ type ListScanTasksQuery struct {
 	HasHighRisk    bool
 }
 
+type ListScanTaskNameOptionsQuery struct {
+	Page     int
+	PageSize int
+	Keyword  string
+}
+
+type ScanTaskNameOption struct {
+	Name string `json:"name"`
+}
+
 type ScanTaskListItem struct {
 	ID              int64      `json:"id"`
 	TaskNo          string     `json:"task_no"`

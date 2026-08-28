@@ -27,9 +27,11 @@ func NewRouter(
 	v1.GET("/templates/stats", templateHandler.Stats)
 
 	v1.GET("/vulnerabilities", vulnerabilityHandler.List)
+	v1.GET("/vulnerabilities/:id", vulnerabilityHandler.Detail)
 
 	v1.GET("/scans", scanTaskHandler.List)
 	v1.GET("/scans/stats", scanTaskHandler.Stats)
+	v1.GET("/scans/options/names", scanTaskHandler.NameOptions)
 	v1.POST("/scans", scanTaskHandler.Create)
 	v1.POST("/scans/:id/pause", scanTaskHandler.Pause)
 	v1.POST("/scans/:id/resume", scanTaskHandler.Resume)

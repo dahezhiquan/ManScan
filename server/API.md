@@ -251,7 +251,54 @@ curl "http://127.0.0.1:8686/api/v1/templates/stats"
 curl "http://127.0.0.1:8686/api/v1/scans/stats"
 ```
 
-## 7. 获取扫描任务列表
+## 7. 获取扫描任务名称选项
+
+- 请求方法和路径：`GET /api/v1/scans/options/names`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | `int` | 否 | 页码，最小为 `1`，默认 `1` |
+| `page_size` | `int` | 否 | 每页数量，范围 `1-100`，默认 `20` |
+| `keyword` | `string` | 否 | 按扫描任务名称模糊搜索 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "page": 1,
+    "pageSize": 20,
+    "total": 2,
+    "totalPages": 1,
+    "items": [
+      {
+        "name": "demo-scan"
+      }
+    ]
+  }
+}
+```
+
+- 说明：
+  - 该接口只返回去重后的任务名称，不返回任务详情。
+  - 仅过滤空名称，名称以 `TRIM(name) <> ''` 为准。
+  - 前端会在菜单打开时加载第一页，输入关键词后重新加载第一页，滚动到底部后继续请求下一页。
+
+- 错误码说明：
+  - `40001`：分页参数非法
+  - `50001`：查询扫描任务名称失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/scans/options/names?page=1&page_size=20&keyword=demo"
+```
+
+## 8. 获取扫描任务列表
 
 - 请求方法和路径：`GET /api/v1/scans`
 
@@ -322,7 +369,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/stats"
 curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status=running&has_high_risk=true"
 ```
 
-## 8. 创建扫描任务
+## 9. 创建扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans`
 
@@ -389,7 +436,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
   }'
 ```
 
-## 9. 取消扫描任务
+## 10. 取消扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/cancel`
 
@@ -430,7 +477,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 ```
 
-## 10. 暂停扫描任务
+## 11. 暂停扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/pause`
 
@@ -470,7 +517,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/pause"
 ```
 
-## 11. 恢复扫描任务
+## 12. 恢复扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/resume`
 
@@ -511,7 +558,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/pause"
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
 ```
 
-## 12. 获取扫描任务详情
+## 13. 获取扫描任务详情
 
 - 请求方法和路径：`GET /api/v1/scans/:id`
 
@@ -580,7 +627,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
 curl "http://127.0.0.1:8686/api/v1/scans/1"
 ```
 
-## 13. 获取扫描任务日志
+## 14. 获取扫描任务日志
 
 - 请求方法和路径：`GET /api/v1/scans/:id/logs`
 
@@ -656,7 +703,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
 curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=100"
 ```
 
-## 14. 订阅扫描任务日志流
+## 15. 订阅扫描任务日志流
 
 - 请求方法和路径：`GET /api/v1/scans/:id/stream`
 
@@ -715,7 +762,7 @@ data: {"task_id":1,"seq":4,"level":"info","type":"match_failure","message":"[HTT
 curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
 ```
 
-## 15. 获取漏洞列表
+## 16. 获取漏洞列表
 
 - 请求方法和路径：`GET /api/v1/vulnerabilities`
 
@@ -732,7 +779,7 @@ curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
 | `severity` / `level` | `string` / `string[]` | 否 | 按严重级别精确过滤，支持逗号分隔和多参数 |
 | `template_id` | `string` / `string[]` | 否 | 按模板 ID 模糊过滤，支持逗号分隔和多参数 |
 | `vulnerability_name` | `string` / `string[]` | 否 | 按漏洞名称模糊过滤，支持逗号分隔和多参数 |
-| `latest_scan_task_name` | `string` / `string[]` | 否 | 按最近扫描任务名称模糊过滤，支持逗号分隔和多参数 |
+| `latest_scan_task_name` | `string` / `string[]` | 否 | 按最近扫描任务名称模糊过滤，支持逗号分隔和多参数，前端选项来自 `/api/v1/scans/options/names` |
 | `protocol` | `string` / `string[]` | 否 | 按协议类型精确过滤，支持逗号分隔和多参数 |
 
 - 响应格式：
@@ -785,6 +832,70 @@ curl "http://127.0.0.1:8686/api/v1/vulnerabilities?page=1&page_size=20&keyword=s
   - 新增“漏洞查询”列表页，进入页面默认请求 `GET /api/v1/vulnerabilities?page=1&page_size=10`。
   - 表格列至少展示 `name`、`severity`、`template_id`、`asset_host`、`status`；建议同时展示 `latest_scan_task_name`、`protocol`、`last_found_at` 便于溯源。
   - “搜索漏洞名称或 Template ID”输入框统一传 `keyword=<输入值>`，前端不再自行判断传 `vulnerability_name` 还是 `template_id`。
-  - 筛选区提供 `asset_host`、`status`、`tags`、`severity`、`latest_scan_task_name`、`protocol`。多选值用重复 query 参数或逗号分隔传给后端。
+  - 筛选区提供 `asset_host`、`status`、`tags`、`severity`、`latest_scan_task_name`、`protocol`。扫描任务名称选项来自 `/api/v1/scans/options/names`，多选值用重复 query 参数或逗号分隔传给后端。
   - 翻页、修改每页数量、修改筛选条件时重新请求列表；筛选条件变化后将 `page` 重置为 `1`。
   - 严重级别建议按 `critical`、`high`、`medium`、`low`、`info`、`unknown` 做固定选项；状态至少兼容当前后端写入的 `unreviewed`。
+
+## 17. 获取漏洞详情
+
+- 请求方法和路径：`GET /api/v1/vulnerabilities/:id`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 漏洞 ID，必须为大于 `0` 的整数 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "template_id": "http-missing-security-headers",
+    "vulnerability_name": "HTTP 安全响应头缺失",
+    "latest_scan_task_name": "demo-scan",
+    "latest_scan_task_id": "42",
+    "first_found_at": "2026-08-27T12:00:00+08:00",
+    "last_found_at": "2026-08-27T12:30:00+08:00",
+    "fixed_at": null,
+    "status": "unreviewed",
+    "asset_domain": "https://app.example.com/login",
+    "asset_host": "192.0.2.10",
+    "asset_port": 8443,
+    "tags": ["cve", "kev"],
+    "severity": "high",
+    "description": "漏洞描述",
+    "impact": "漏洞影响",
+    "cvss_score": 8.1,
+    "protocol": "http",
+    "vendor": "example-vendor",
+    "product": "example-product",
+    "remediation": "修复建议",
+    "reference_links": ["https://example.com/ref"],
+    "detail": {
+      "matched-at": "https://app.example.com/login"
+    },
+    "vuln_fingerprint": "sha256-fingerprint"
+  }
+}
+```
+
+- 说明：
+  - 详情接口按漏洞 ID 查询 `manscan_vulnerabilities` 中的单条记录，并返回漏洞表当前保存的完整业务字段。
+  - `first_found_at` 表示首次发现时间，`last_found_at` 表示最近发现时间，列表页中的发现时间对应 `last_found_at`。
+  - `tags`、`reference_links` 返回数组；`detail` 会在内容为合法 JSON 时返回解析后的对象或数组，否则返回原始字符串。
+  - `protocol` 返回值会按模板顶层执行块白名单归一化，例如 `requests` 会返回为 `http`。
+
+- 错误码说明：
+  - `40001`：漏洞 ID 非法，例如不是整数或小于等于 `0`
+  - `40401`：漏洞不存在
+  - `50001`：查询漏洞详情失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/vulnerabilities/1"
+```

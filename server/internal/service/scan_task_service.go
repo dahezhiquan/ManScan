@@ -31,6 +31,7 @@ type ScanTaskService interface {
 	Resume(ctx context.Context, taskID int64) (*dto.ResumeScanTaskResponse, error)
 	Cancel(ctx context.Context, taskID int64) (*dto.CancelScanTaskResponse, error)
 	List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error)
+	ListNameOptions(ctx context.Context, query dto.ListScanTaskNameOptionsQuery) (*dto.PageResult[dto.ScanTaskNameOption], error)
 	Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int, direction string) (*dto.ScanTaskLogsResponse, error)
@@ -388,6 +389,10 @@ func (s *scanTaskService) List(ctx context.Context, query dto.ListScanTasksQuery
 	}
 
 	return page, nil
+}
+
+func (s *scanTaskService) ListNameOptions(ctx context.Context, query dto.ListScanTaskNameOptionsQuery) (*dto.PageResult[dto.ScanTaskNameOption], error) {
+	return s.repository.ListNameOptions(ctx, query)
 }
 
 func (s *scanTaskService) Stats(ctx context.Context) (*dto.ScanTaskStats, error) {

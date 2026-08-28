@@ -1219,6 +1219,10 @@ func (s *scanTaskRepositoryStub) List(_ context.Context, _ dto.ListScanTasksQuer
 	return &dto.PageResult[dto.ScanTaskListItem]{}, nil
 }
 
+func (s *scanTaskRepositoryStub) ListNameOptions(_ context.Context, _ dto.ListScanTaskNameOptionsQuery) (*dto.PageResult[dto.ScanTaskNameOption], error) {
+	return &dto.PageResult[dto.ScanTaskNameOption]{}, nil
+}
+
 func (s *scanTaskRepositoryStub) ListAll(_ context.Context, _ dto.ListScanTasksQuery) ([]dto.ScanTaskListItem, error) {
 	items := make([]dto.ScanTaskListItem, len(s.listAllItems))
 	copy(items, s.listAllItems)
@@ -1306,6 +1310,10 @@ func (s *vulnerabilityRepositoryStub) UpsertBatch(_ context.Context, vulnerabili
 
 func (s *vulnerabilityRepositoryStub) List(_ context.Context, _ dto.ListVulnerabilitiesQuery) (*dto.PageResult[entity.Vulnerability], error) {
 	return &dto.PageResult[entity.Vulnerability]{}, nil
+}
+
+func (s *vulnerabilityRepositoryStub) FindByID(_ context.Context, _ int64) (*entity.Vulnerability, error) {
+	return nil, gorm.ErrRecordNotFound
 }
 
 type templateRepositoryStub struct {

@@ -17,6 +17,7 @@ type ScanTaskRepository interface {
 	Create(ctx context.Context, task *entity.ScanTask) error
 	FindByID(ctx context.Context, taskID int64) (*entity.ScanTask, error)
 	List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error)
+	ListNameOptions(ctx context.Context, query dto.ListScanTaskNameOptionsQuery) (*dto.PageResult[dto.ScanTaskNameOption], error)
 	ListAll(ctx context.Context, query dto.ListScanTasksQuery) ([]dto.ScanTaskListItem, error)
 	Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	FindResultByTaskID(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error)
@@ -85,6 +86,47 @@ func (r *scanTaskRepository) List(ctx context.Context, query dto.ListScanTasksQu
 
 func (r *scanTaskRepository) ListAll(ctx context.Context, query dto.ListScanTasksQuery) ([]dto.ScanTaskListItem, error) {
 	return r.listItems(ctx, query, 0, 0)
+}
+
+func (r *scanTaskRepository) ListNameOptions(ctx context.Context, query dto.ListScanTaskNameOptionsQuery) (*dto.PageResult[dto.ScanTaskNameOption], error) {
+	page := query.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := query.PageSize
+	if pageSize <= 0 {
+		pageSize = 20
+	}
+
+	countQuery := r.applyNameOptionFilters(r.db.WithContext(ctx).Table("manscan_scan_tasks AS t"), query)
+	var total int64
+	if err := countQuery.Distinct("t.name").Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	items := make([]dto.ScanTaskNameOption, 0)
+	dataQuery := r.applyNameOptionFilters(r.db.WithContext(ctx).Table("manscan_scan_tasks AS t"), query).
+		Select("t.name AS name, MAX(t.id) AS latest_id").
+		Group("t.name").
+		Order("latest_id DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize)
+	if err := dataQuery.Scan(&items).Error; err != nil {
+		return nil, err
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
+	}
+
+	return &dto.PageResult[dto.ScanTaskNameOption]{
+		Page:       page,
+		PageSize:   pageSize,
+		Total:      int(total),
+		TotalPages: totalPages,
+		Items:      items,
+	}, nil
 }
 
 func (r *scanTaskRepository) Stats(ctx context.Context) (*dto.ScanTaskStats, error) {
@@ -189,6 +231,16 @@ func (r *scanTaskRepository) applyListFilters(db *gorm.DB, query dto.ListScanTas
 	if createdBy := strings.TrimSpace(query.CreatedBy); createdBy != "" {
 		db = db.Where("t.created_by = ?", createdBy)
 	}
+	return db
+}
+
+func (r *scanTaskRepository) applyNameOptionFilters(db *gorm.DB, query dto.ListScanTaskNameOptionsQuery) *gorm.DB {
+	db = db.Where("TRIM(t.name) <> ''")
+
+	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
+		db = db.Where("t.name LIKE ?", "%"+keyword+"%")
+	}
+
 	return db
 }
 

@@ -23,6 +23,7 @@ type ScanTaskHandler interface {
 	Resume(c *gin.Context)
 	Cancel(c *gin.Context)
 	List(c *gin.Context)
+	NameOptions(c *gin.Context)
 	Stats(c *gin.Context)
 	Get(c *gin.Context)
 	Logs(c *gin.Context)
@@ -158,6 +159,31 @@ func (h *scanTaskHandler) List(c *gin.Context) {
 	})
 	if serviceErr != nil {
 		response.Fail(c, errcode.InternalServerError, "获取任务列表失败")
+		return
+	}
+
+	response.Success(c, data)
+}
+
+func (h *scanTaskHandler) NameOptions(c *gin.Context) {
+	page, err := parsePositiveIntQuery(c.Query("page"), 1)
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, "page 参数必须是大于等于 1 的整数")
+		return
+	}
+	pageSize, err := parsePositiveIntQuery(c.Query("page_size"), 20)
+	if err != nil || pageSize > 100 {
+		response.Fail(c, errcode.InvalidParams, "page_size 参数必须在 1-100 之间")
+		return
+	}
+
+	data, serviceErr := h.service.ListNameOptions(c.Request.Context(), dto.ListScanTaskNameOptionsQuery{
+		Page:     page,
+		PageSize: pageSize,
+		Keyword:  strings.TrimSpace(c.Query("keyword")),
+	})
+	if serviceErr != nil {
+		response.Fail(c, errcode.InternalServerError, "获取扫描任务名称失败")
 		return
 	}
 
