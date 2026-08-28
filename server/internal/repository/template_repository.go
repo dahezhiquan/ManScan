@@ -15,6 +15,7 @@ import (
 	"ManScan/pkg/model"
 	modelstringslice "ManScan/pkg/model/types/stringslice"
 	"ManScan/server/internal/model/dto"
+	"ManScan/server/internal/pkg/templateprotocol"
 
 	fileutil "github.com/projectdiscovery/utils/file"
 	"gopkg.in/yaml.v2"
@@ -48,22 +49,9 @@ type templateCache struct {
 }
 
 type templateMetadata struct {
-	ID                  string        `yaml:"id"`
-	Info                model.Info    `yaml:"info"`
-	RequestsHTTP        []interface{} `yaml:"requests"`
-	RequestsWithHTTP    []interface{} `yaml:"http"`
-	RequestsDNS         []interface{} `yaml:"dns"`
-	RequestsFile        []interface{} `yaml:"file"`
-	RequestsNetwork     []interface{} `yaml:"network"`
-	RequestsWithTCP     []interface{} `yaml:"tcp"`
-	RequestsHeadless    []interface{} `yaml:"headless"`
-	RequestsJavaScript  []interface{} `yaml:"javascript"`
-	RequestsWebsocket   []interface{} `yaml:"websocket"`
-	RequestsWhois       []interface{} `yaml:"whois"`
-	RequestsOfflineHTTP []interface{} `yaml:"offlinehttp"`
-	RequestsSSL         []interface{} `yaml:"ssl"`
-	RequestsCode        []interface{} `yaml:"code"`
-	Workflows           []interface{} `yaml:"workflows"`
+	ID           string              `yaml:"id"`
+	Info         model.Info          `yaml:"info"`
+	TopLevelKeys map[string]struct{} `yaml:"-"`
 }
 
 type templateListRecord struct {
@@ -260,7 +248,32 @@ func parseTemplateMetadataBytes(data []byte) (*templateMetadata, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, err
 	}
+	topLevelKeys, err := parseTopLevelYAMLKeys(data)
+	if err != nil {
+		return nil, err
+	}
+	doc.TopLevelKeys = topLevelKeys
 	return &doc, nil
+}
+
+func parseTopLevelYAMLKeys(data []byte) (map[string]struct{}, error) {
+	var raw map[interface{}]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+
+	keys := make(map[string]struct{}, len(raw))
+	for key := range raw {
+		keyText, ok := key.(string)
+		if !ok {
+			continue
+		}
+		keyText = strings.ToLower(strings.TrimSpace(keyText))
+		if keyText != "" {
+			keys[keyText] = struct{}{}
+		}
+	}
+	return keys, nil
 }
 
 func normalizeReferenceList(reference *modelstringslice.RawStringSlice) []string {
@@ -415,34 +428,10 @@ func collectSortedUniqueTemplateFieldValues(items []dto.TemplateListItem, extrac
 }
 
 func collectTemplateProtocols(doc *templateMetadata) []string {
-	protocols := make([]string, 0, 8)
-	fields := []struct {
-		name  string
-		count int
-	}{
-		{name: "http", count: len(doc.RequestsHTTP) + len(doc.RequestsWithHTTP)},
-		{name: "dns", count: len(doc.RequestsDNS)},
-		{name: "file", count: len(doc.RequestsFile)},
-		{name: "network", count: len(doc.RequestsNetwork) + len(doc.RequestsWithTCP)},
-		{name: "headless", count: len(doc.RequestsHeadless)},
-		{name: "javascript", count: len(doc.RequestsJavaScript)},
-		{name: "websocket", count: len(doc.RequestsWebsocket)},
-		{name: "whois", count: len(doc.RequestsWhois)},
-		{name: "offlinehttp", count: len(doc.RequestsOfflineHTTP)},
-		{name: "ssl", count: len(doc.RequestsSSL)},
-		{name: "code", count: len(doc.RequestsCode)},
+	if doc == nil {
+		return []string{}
 	}
-
-	for _, field := range fields {
-		if field.count > 0 {
-			protocols = append(protocols, field.name)
-		}
-	}
-	if len(doc.Workflows) > 0 {
-		protocols = append(protocols, "workflow")
-	}
-	sort.Strings(protocols)
-	return protocols
+	return templateprotocol.CollectFromTopLevelKeys(doc.TopLevelKeys)
 }
 
 func truncateDescription(value string, limit int) string {

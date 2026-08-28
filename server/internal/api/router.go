@@ -12,6 +12,7 @@ func NewRouter(
 	logger *logx.Logger,
 	templateHandler handler.TemplateHandler,
 	scanTaskHandler handler.ScanTaskHandler,
+	vulnerabilityHandler handler.VulnerabilityHandler,
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -24,6 +25,8 @@ func NewRouter(
 	v1.GET("/templates/options/tags", templateHandler.Tags)
 	v1.GET("/templates/options/protocols", templateHandler.Protocols)
 	v1.GET("/templates/stats", templateHandler.Stats)
+
+	v1.GET("/vulnerabilities", vulnerabilityHandler.List)
 
 	v1.GET("/scans", scanTaskHandler.List)
 	v1.GET("/scans/stats", scanTaskHandler.Stats)

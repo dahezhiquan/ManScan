@@ -299,6 +299,31 @@ func TestBuildVulnerabilityDoesNotSkipFingerprintNameWithoutTechTag(t *testing.T
 	}
 }
 
+func TestBuildVulnerabilityNormalizesProtocol(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{},
+	}
+
+	vulnerability, err := svc.buildVulnerabilityFromPayload(context.Background(), 42, "即时扫描任务", map[string]interface{}{
+		"template-id": "tcp-detect",
+		"matched-at":  "10.0.0.1:6379",
+		"type":        "network",
+		"timestamp":   time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+		"info": map[string]interface{}{
+			"name":     "TCP Detect",
+			"severity": "low",
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVulnerabilityFromPayload() error = %v", err)
+	}
+	if vulnerability == nil || vulnerability.Protocol == nil || *vulnerability.Protocol != "tcp" {
+		t.Fatalf("Protocol = %v, want tcp", vulnerability)
+	}
+}
+
 func TestApplyRuntimeResultSummaryToListItem(t *testing.T) {
 	t.Parallel()
 
@@ -1277,6 +1302,10 @@ func (s *vulnerabilityRepositoryStub) UpsertBatch(_ context.Context, vulnerabili
 		s.items = append(s.items, &copied)
 	}
 	return nil
+}
+
+func (s *vulnerabilityRepositoryStub) List(_ context.Context, _ dto.ListVulnerabilitiesQuery) (*dto.PageResult[entity.Vulnerability], error) {
+	return &dto.PageResult[entity.Vulnerability]{}, nil
 }
 
 type templateRepositoryStub struct {

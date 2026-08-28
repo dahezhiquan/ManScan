@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"ManScan/server/internal/model/dto"
+	"ManScan/server/internal/pkg/templateprotocol"
 	"ManScan/server/internal/repository"
 )
 
@@ -134,11 +135,11 @@ func filterTemplateListItems(items []dto.TemplateListItem, query dto.ListTemplat
 	}
 
 	if len(query.Protocols) > 0 {
-		targets := normalizeQueries(query.Protocols)
+		targets := templateprotocol.NormalizeList(query.Protocols)
 		tmp := make([]dto.TemplateListItem, 0, len(filtered))
 		for _, item := range filtered {
 			for _, protocol := range item.Protocols {
-				if contains(targets, strings.ToLower(strings.TrimSpace(protocol))) {
+				if contains(targets, templateprotocol.Normalize(protocol)) {
 					tmp = append(tmp, item)
 					break
 				}

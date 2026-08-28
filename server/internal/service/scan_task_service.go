@@ -18,6 +18,7 @@ import (
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/pkg/logx"
 	"ManScan/server/internal/pkg/scanruntime"
+	"ManScan/server/internal/pkg/templateprotocol"
 	"ManScan/server/internal/repository"
 
 	"github.com/rs/xid"
@@ -125,7 +126,7 @@ func (s *scanTaskService) Create(ctx context.Context, request dto.CreateScanTask
 		Tags:                          mustJSON(cleanStringSlice(request.Tags)),
 		IncludeIDs:                    mustJSON(cleanStringSlice(request.IncludeIDs)),
 		Severities:                    mustJSON(cleanStringSlice(request.Severities)),
-		Protocols:                     mustJSON(cleanStringSlice(request.Protocols)),
+		Protocols:                     mustJSON(templateprotocol.NormalizeList(request.Protocols)),
 		StoreResponse:                 request.StoreResponse,
 		Timestamp:                     request.Timestamp,
 		MatcherStatus:                 request.MatcherStatus,
@@ -1103,7 +1104,7 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 	if values := cleanStringSlice(request.Severities); len(values) > 0 {
 		args = append(args, "-s", strings.Join(values, ","))
 	}
-	if values := cleanStringSlice(request.Protocols); len(values) > 0 {
+	if values := templateprotocol.NormalizeList(request.Protocols); len(values) > 0 {
 		args = append(args, "-pt", strings.Join(values, ","))
 	}
 	for _, header := range cleanStringSlice(request.CustomHeaders) {
