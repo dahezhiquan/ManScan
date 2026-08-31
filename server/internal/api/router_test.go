@@ -12,6 +12,7 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	router := NewRouter(nil, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{})
 	routes := router.Routes()
 
+	assertRouteRegistered(t, routes, "DELETE", "/api/v1/vulnerabilities")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
 }
@@ -55,3 +56,4 @@ func (noopVulnerabilityHandler) List(*gin.Context)              {}
 func (noopVulnerabilityHandler) Detail(*gin.Context)            {}
 func (noopVulnerabilityHandler) UpdateStatus(*gin.Context)      {}
 func (noopVulnerabilityHandler) BatchUpdateStatus(*gin.Context) {}
+func (noopVulnerabilityHandler) Delete(*gin.Context)            {}

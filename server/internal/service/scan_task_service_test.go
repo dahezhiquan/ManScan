@@ -1499,6 +1499,10 @@ func (s *vulnerabilityRepositoryStub) BatchUpdateStatus(_ context.Context, _ []i
 	return 0, nil
 }
 
+func (s *vulnerabilityRepositoryStub) Delete(_ context.Context, _ []int64) (int64, error) {
+	return 0, nil
+}
+
 type templateRepositoryStub struct {
 	details map[string]*dto.TemplateDetail
 }

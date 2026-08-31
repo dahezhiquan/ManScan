@@ -995,7 +995,70 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/vulnerabilities/status" \
   -d '{"ids":[1,2,3],"status":"confirmed"}'
 ```
 
-## 20. 获取漏洞详情
+## 20. 删除漏洞
+
+- 请求方法和路径：`DELETE /api/v1/vulnerabilities`
+
+- 请求参数：
+
+请求体为 JSON：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 否 | 单个漏洞 ID，必须为大于 `0` 的整数；传入 `id` 时可不传 `ids` |
+| `ids` | `int64[]` | 否 | 多个漏洞 ID，必须为大于 `0` 的整数；支持 `1-1000` 个 ID，重复 ID 会自动去重 |
+
+- 请求体示例：
+
+单个删除：
+
+```json
+{
+  "id": 1
+}
+```
+
+批量删除：
+
+```json
+{
+  "ids": [1, 2, 3]
+}
+```
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "ids": [1, 2, 3],
+    "deleted_count": 3
+  }
+}
+```
+
+- 说明：
+  - 该接口按漏洞 ID 删除 `manscan_vulnerabilities` 中的漏洞记录。
+  - `id` 与 `ids` 可二选一，也可以同时传入；后端会合并后按首次出现顺序去重。
+  - 删除前会先校验合并后的漏洞 ID 是否全部存在；只要有任一 ID 不存在，整批返回 `40401`，不会删除任何漏洞。
+  - `deleted_count` 表示本次确认并删除的漏洞数量。
+
+- 错误码说明：
+  - `40001`：请求体非法，或 `id` / `ids` 为空、超过 `1000` 个、包含非法 ID
+  - `40401`：`id` / `ids` 中至少有一个漏洞不存在
+  - `50001`：删除漏洞失败
+
+- 使用示例：
+
+```bash
+curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
+  -H "Content-Type: application/json" \
+  -d '{"ids":[1,2,3]}'
+```
+
+## 21. 获取漏洞详情
 
 - 请求方法和路径：`GET /api/v1/vulnerabilities/:id`
 
