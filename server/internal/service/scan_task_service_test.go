@@ -961,6 +961,122 @@ func TestCancelPausedTaskMarksCancelledImmediately(t *testing.T) {
 	}
 }
 
+func TestDeleteScanTasksRemovesArtifactsAndDeduplicatesIDs(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	runtimeDir := filepath.Join(rootDir, "data", "runtime")
+
+	pausedState, err := scanruntime.NewState(41, "task-41", "paused-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer pausedState.Close()
+
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{
+			41: {
+				ID:        41,
+				TaskNo:    "task-41",
+				Name:      "paused-task",
+				Status:    "paused",
+				CreatedBy: "tester",
+			},
+			42: {
+				ID:        42,
+				TaskNo:    "task-42",
+				Name:      "finished-task",
+				Status:    "success",
+				CreatedBy: "tester",
+			},
+		},
+	}
+	svc := &scanTaskService{
+		repository: repo,
+		runtimeDir: runtimeDir,
+		states: map[int64]*scanTaskRuntime{
+			41: newScanTaskRuntime(pausedState),
+		},
+	}
+
+	resp, err := svc.Delete(context.Background(), dto.DeleteScanTaskRequest{
+		ID:  ptrInt64(42),
+		IDs: []int64{41, 41},
+	})
+	if err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	if len(resp.IDs) != 2 || resp.IDs[0] != 42 || resp.IDs[1] != 41 {
+		t.Fatalf("IDs = %+v, want [42 41]", resp.IDs)
+	}
+	if resp.DeletedCount != 2 {
+		t.Fatalf("DeletedCount = %d, want 2", resp.DeletedCount)
+	}
+	if len(repo.deleteCalls) != 1 {
+		t.Fatalf("deleteCalls = %d, want 1", len(repo.deleteCalls))
+	}
+	if got := repo.deleteCalls[0]; len(got) != 2 || got[0] != 42 || got[1] != 41 {
+		t.Fatalf("deleted IDs = %+v, want [42 41]", got)
+	}
+	if _, ok := repo.tasks[41]; ok {
+		t.Fatalf("task 41 still exists in repo")
+	}
+	if _, ok := repo.tasks[42]; ok {
+		t.Fatalf("task 42 still exists in repo")
+	}
+	if svc.getRuntime(41) != nil {
+		t.Fatalf("expected runtime 41 to be released")
+	}
+	if _, err := os.Stat(filepath.Join(runtimeDir, "41")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("runtime directory still exists or unexpected error: %v", err)
+	}
+}
+
+func TestDeleteRejectsRunningScanTask(t *testing.T) {
+	t.Parallel()
+
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{
+			51: {
+				ID:        51,
+				TaskNo:    "task-51",
+				Name:      "running-task",
+				Status:    "running",
+				CreatedBy: "tester",
+			},
+			52: {
+				ID:        52,
+				TaskNo:    "task-52",
+				Name:      "finished-task",
+				Status:    "success",
+				CreatedBy: "tester",
+			},
+		},
+	}
+	svc := &scanTaskService{
+		repository: repo,
+		runtimeDir: t.TempDir(),
+		states:     map[int64]*scanTaskRuntime{},
+	}
+
+	_, err := svc.Delete(context.Background(), dto.DeleteScanTaskRequest{
+		IDs: []int64{51, 52},
+	})
+	if !errors.Is(err, ErrScanTaskNotDeletable) {
+		t.Fatalf("Delete() error = %v, want %v", err, ErrScanTaskNotDeletable)
+	}
+	if len(repo.deleteCalls) != 0 {
+		t.Fatalf("deleteCalls = %d, want 0", len(repo.deleteCalls))
+	}
+	if _, ok := repo.tasks[51]; !ok {
+		t.Fatalf("task 51 should not be deleted")
+	}
+	if _, ok := repo.tasks[52]; !ok {
+		t.Fatalf("task 52 should not be deleted")
+	}
+}
+
 func TestRescanCreatesNewTaskFromExistingConfiguration(t *testing.T) {
 	t.Parallel()
 
@@ -1364,11 +1480,14 @@ type scanTaskRepositoryStub struct {
 	statsResult           *dto.ScanTaskStats
 	tasks                 map[int64]*entity.ScanTask
 	createdTasks          []*entity.ScanTask
+	deleteCalls           [][]int64
 	nextCreateID          int64
 	createErr             error
 	findByIDErr           error
+	findByIDsErr          error
 	prepareForResumeCalls []int64
 	prepareForResumeErr   error
+	deleteErr             error
 	updateStatusErr       error
 	updateStatusCalls     []statusUpdateCall
 }
@@ -1416,6 +1535,27 @@ func (s *scanTaskRepositoryStub) FindByID(_ context.Context, taskID int64) (*ent
 	return &copyTask, nil
 }
 
+func (s *scanTaskRepositoryStub) FindByIDs(_ context.Context, taskIDs []int64) ([]entity.ScanTask, error) {
+	if s.findByIDsErr != nil {
+		return nil, s.findByIDsErr
+	}
+	if s.tasks == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	tasks := make([]entity.ScanTask, 0, len(taskIDs))
+	for _, taskID := range taskIDs {
+		task, ok := s.tasks[taskID]
+		if !ok {
+			return nil, gorm.ErrRecordNotFound
+		}
+
+		copyTask := *task
+		tasks = append(tasks, copyTask)
+	}
+	return tasks, nil
+}
+
 func (s *scanTaskRepositoryStub) List(_ context.Context, _ dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error) {
 	if s.listResult != nil {
 		return s.listResult, nil
@@ -1443,6 +1583,19 @@ func (s *scanTaskRepositoryStub) Stats(_ context.Context) (*dto.ScanTaskStats, e
 
 func (s *scanTaskRepositoryStub) FindResultByTaskID(_ context.Context, _ int64) (*entity.ScanTaskResult, error) {
 	return nil, nil
+}
+
+func (s *scanTaskRepositoryStub) Delete(_ context.Context, taskIDs []int64) (int64, error) {
+	if s.deleteErr != nil {
+		return 0, s.deleteErr
+	}
+
+	copied := append([]int64(nil), taskIDs...)
+	s.deleteCalls = append(s.deleteCalls, copied)
+	for _, taskID := range taskIDs {
+		delete(s.tasks, taskID)
+	}
+	return int64(len(taskIDs)), nil
 }
 
 func (s *scanTaskRepositoryStub) PrepareForResume(_ context.Context, taskID int64) error {
@@ -1568,6 +1721,10 @@ func (s *templateRepositoryStub) Stats() (*dto.TemplateStats, error) {
 }
 
 func ptr(value string) *string {
+	return &value
+}
+
+func ptrInt64(value int64) *int64 {
 	return &value
 }
 

@@ -1130,3 +1130,65 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
 ```bash
 curl "http://127.0.0.1:8686/api/v1/vulnerabilities/1"
 ```
+
+## 22. 批量删除扫描任务
+
+- 请求方法和路径：`DELETE /api/v1/scans`
+
+- 请求参数：
+
+请求体为 JSON，支持以下字段：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 否 | 单个扫描任务 ID |
+| `ids` | `int64[]` | 否 | 批量扫描任务 ID 列表，支持一次删除多个任务 |
+
+单个删除：
+
+```json
+{
+  "id": 1
+}
+```
+
+批量删除：
+
+```json
+{
+  "ids": [1, 2, 3]
+}
+```
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "ids": [1, 2, 3],
+    "deleted_count": 3
+  }
+}
+```
+
+- 说明：
+  - 该接口会同时删除 `manscan_scan_tasks` 中的任务记录和 `manscan_task_results` 中对应的结果记录。
+  - `id` 与 `ids` 可二选一，也可以同时传入；后端会合并后按首次出现顺序去重。
+  - 删除前会先校验合并后的任务 ID 是否全部存在；只要有任一 ID 不存在，整批返回 `40401`，不会删除任何任务。
+  - 仅支持删除 `success`、`failed`、`cancelled`、`paused` 状态的扫描任务，`pending` 和 `running` 任务需要先取消后再删除。
+  - 删除时会清理对应的运行期目录和内存态数据，不再保留日志、进度和恢复文件。
+
+- 错误码说明：
+  - `40001`：请求体非法，或 `id` / `ids` 为空、超过 `1000` 个、包含非法 ID，或任务状态不支持删除
+  - `40401`：`id` / `ids` 中至少有一个扫描任务不存在
+  - `50001`：删除扫描任务失败
+
+- 使用示例：
+
+```bash
+curl -X DELETE "http://127.0.0.1:8686/api/v1/scans" \
+  -H "Content-Type: application/json" \
+  -d '{"ids":[1,2,3]}'
+```

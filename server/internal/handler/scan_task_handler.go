@@ -21,6 +21,7 @@ import (
 type ScanTaskHandler interface {
 	Create(c *gin.Context)
 	Rescan(c *gin.Context)
+	Delete(c *gin.Context)
 	Pause(c *gin.Context)
 	Resume(c *gin.Context)
 	Cancel(c *gin.Context)
@@ -88,6 +89,34 @@ func (h *scanTaskHandler) Rescan(c *gin.Context) {
 		"stream":   fmt.Sprintf("/api/v1/scans/%d/stream", task.ID),
 		"task_api": fmt.Sprintf("/api/v1/scans/%d", task.ID),
 	})
+}
+
+func (h *scanTaskHandler) Delete(c *gin.Context) {
+	var request dto.DeleteScanTaskRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.Fail(c, errcode.InvalidParams, "请求体解析失败")
+		return
+	}
+
+	data, serviceErr := h.service.Delete(c.Request.Context(), request)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
+			response.Fail(c, errcode.NotFound, "任务不存在")
+			return
+		}
+		if errors.Is(serviceErr, service.ErrInvalidScanTaskIDs) {
+			response.Fail(c, errcode.InvalidParams, "id 或 ids 必须包含 1-1000 个大于 0 的扫描任务 id")
+			return
+		}
+		if errors.Is(serviceErr, service.ErrScanTaskNotDeletable) {
+			response.Fail(c, errcode.InvalidParams, "仅支持删除已结束或已暂停的扫描任务，请先取消仍在执行的任务")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "删除扫描任务失败")
+		return
+	}
+
+	response.Success(c, data)
 }
 
 func (h *scanTaskHandler) Cancel(c *gin.Context) {

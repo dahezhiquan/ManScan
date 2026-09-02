@@ -16,11 +16,13 @@ import (
 type ScanTaskRepository interface {
 	Create(ctx context.Context, task *entity.ScanTask) error
 	FindByID(ctx context.Context, taskID int64) (*entity.ScanTask, error)
+	FindByIDs(ctx context.Context, taskIDs []int64) ([]entity.ScanTask, error)
 	List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error)
 	ListNameOptions(ctx context.Context, query dto.ListScanTaskNameOptionsQuery) (*dto.PageResult[dto.ScanTaskNameOption], error)
 	ListAll(ctx context.Context, query dto.ListScanTasksQuery) ([]dto.ScanTaskListItem, error)
 	Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	FindResultByTaskID(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error)
+	Delete(ctx context.Context, taskIDs []int64) (int64, error)
 	PrepareForResume(ctx context.Context, taskID int64) error
 	UpdateStatus(ctx context.Context, taskID int64, status string, startedAt, finishedAt *time.Time) error
 	UpsertResult(ctx context.Context, result *entity.ScanTaskResult) error
@@ -47,6 +49,23 @@ func (r *scanTaskRepository) FindByID(ctx context.Context, taskID int64) (*entit
 		return nil, err
 	}
 	return &task, nil
+}
+
+func (r *scanTaskRepository) FindByIDs(ctx context.Context, taskIDs []int64) ([]entity.ScanTask, error) {
+	tasks := make([]entity.ScanTask, 0, len(taskIDs))
+	if len(taskIDs) == 0 {
+		return tasks, nil
+	}
+	if err := r.db.WithContext(ctx).
+		Where("id IN ?", taskIDs).
+		Order("id ASC").
+		Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	if len(tasks) != len(taskIDs) {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return tasks, nil
 }
 
 func (r *scanTaskRepository) List(ctx context.Context, query dto.ListScanTasksQuery) (*dto.PageResult[dto.ScanTaskListItem], error) {
@@ -156,6 +175,40 @@ func (r *scanTaskRepository) FindResultByTaskID(ctx context.Context, taskID int6
 		return nil, err
 	}
 	return &result, nil
+}
+
+func (r *scanTaskRepository) Delete(ctx context.Context, taskIDs []int64) (int64, error) {
+	if len(taskIDs) == 0 {
+		return 0, nil
+	}
+
+	var deletedCount int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existingCount int64
+		if err := tx.Model(&entity.ScanTask{}).
+			Where("id IN ?", taskIDs).
+			Count(&existingCount).Error; err != nil {
+			return err
+		}
+		if existingCount != int64(len(taskIDs)) {
+			return gorm.ErrRecordNotFound
+		}
+
+		if err := tx.Where("task_id IN ?", taskIDs).Delete(&entity.ScanTaskResult{}).Error; err != nil {
+			return err
+		}
+
+		result := tx.Where("id IN ?", taskIDs).Delete(&entity.ScanTask{})
+		if result.Error != nil {
+			return result.Error
+		}
+		deletedCount = existingCount
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return deletedCount, nil
 }
 
 func (r *scanTaskRepository) PrepareForResume(ctx context.Context, taskID int64) error {

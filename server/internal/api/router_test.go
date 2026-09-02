@@ -15,6 +15,7 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/vulnerabilities")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
+	assertRouteRegistered(t, routes, "DELETE", "/api/v1/scans")
 }
 
 func assertRouteRegistered(t *testing.T, routes gin.RoutesInfo, method, path string) {
@@ -40,6 +41,7 @@ type noopScanTaskHandler struct{}
 
 func (noopScanTaskHandler) Create(*gin.Context)      {}
 func (noopScanTaskHandler) Rescan(*gin.Context)      {}
+func (noopScanTaskHandler) Delete(*gin.Context)      {}
 func (noopScanTaskHandler) Pause(*gin.Context)       {}
 func (noopScanTaskHandler) Resume(*gin.Context)      {}
 func (noopScanTaskHandler) Cancel(*gin.Context)      {}

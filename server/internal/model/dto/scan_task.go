@@ -161,6 +161,16 @@ type ResumeScanTaskResponse struct {
 	ResumeRequested bool   `json:"resume_requested"`
 }
 
+type DeleteScanTaskRequest struct {
+	ID  *int64  `json:"id,omitempty"`
+	IDs []int64 `json:"ids,omitempty"`
+}
+
+type DeleteScanTaskResponse struct {
+	IDs          []int64 `json:"ids"`
+	DeletedCount int64   `json:"deleted_count"`
+}
+
 type GetScanTaskResponse struct {
 	Task     ScanTaskSummary                  `json:"task"`
 	Progress scanruntime.TaskProgressSnapshot `json:"progress"`

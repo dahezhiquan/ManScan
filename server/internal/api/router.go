@@ -35,6 +35,7 @@ func NewRouter(
 	v1.GET("/scans", scanTaskHandler.List)
 	v1.GET("/scans/stats", scanTaskHandler.Stats)
 	v1.GET("/scans/options/names", scanTaskHandler.NameOptions)
+	v1.DELETE("/scans", scanTaskHandler.Delete)
 	v1.POST("/scans", scanTaskHandler.Create)
 	v1.POST("/scans/:id/rescan", scanTaskHandler.Rescan)
 	v1.POST("/scans/:id/pause", scanTaskHandler.Pause)

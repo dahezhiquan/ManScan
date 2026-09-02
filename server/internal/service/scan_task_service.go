@@ -28,6 +28,7 @@ import (
 type ScanTaskService interface {
 	Create(ctx context.Context, request dto.CreateScanTaskRequest) (*dto.ScanTaskSummary, error)
 	Rescan(ctx context.Context, taskID int64) (*dto.ScanTaskSummary, error)
+	Delete(ctx context.Context, request dto.DeleteScanTaskRequest) (*dto.DeleteScanTaskResponse, error)
 	Pause(ctx context.Context, taskID int64) (*dto.PauseScanTaskResponse, error)
 	Resume(ctx context.Context, taskID int64) (*dto.ResumeScanTaskResponse, error)
 	Cancel(ctx context.Context, taskID int64) (*dto.CancelScanTaskResponse, error)
@@ -42,7 +43,11 @@ type ScanTaskService interface {
 var ErrScanTaskNotPausable = errors.New("当前任务状态不支持暂停")
 var ErrScanTaskNotCancelable = errors.New("当前任务状态不支持取消")
 var ErrScanTaskNotResumable = errors.New("当前任务状态不支持恢复")
+var ErrScanTaskNotDeletable = errors.New("当前任务状态不支持删除")
 var ErrScanTaskInvalidConfiguration = errors.New("原任务配置不完整，无法重新扫描")
+var ErrInvalidScanTaskIDs = errors.New("扫描任务 id 列表不合法")
+
+const maxBatchScanTaskIDs = 1000
 
 const (
 	logDirectionForward = "forward"
@@ -125,6 +130,41 @@ func (s *scanTaskService) Rescan(ctx context.Context, taskID int64) (*dto.ScanTa
 	}
 
 	return s.createFromNormalizedPlan(ctx, plan)
+}
+
+func (s *scanTaskService) Delete(ctx context.Context, request dto.DeleteScanTaskRequest) (*dto.DeleteScanTaskResponse, error) {
+	rawIDs := make([]int64, 0, len(request.IDs)+1)
+	if request.ID != nil {
+		rawIDs = append(rawIDs, *request.ID)
+	}
+	rawIDs = append(rawIDs, request.IDs...)
+
+	ids, err := normalizeScanTaskIDs(rawIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	tasks, err := s.repository.FindByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, task := range tasks {
+		if !isDeletableScanTaskStatus(task.Status) {
+			return nil, ErrScanTaskNotDeletable
+		}
+	}
+
+	deletedCount, err := s.repository.Delete(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	s.cleanupDeletedTaskArtifacts(ids)
+
+	return &dto.DeleteScanTaskResponse{
+		IDs:          ids,
+		DeletedCount: deletedCount,
+	}, nil
 }
 
 func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *normalizedTaskRequest) (*dto.ScanTaskSummary, error) {
@@ -889,6 +929,36 @@ func (s *scanTaskService) cleanupResumeFile(taskID int64) {
 	}
 }
 
+func (s *scanTaskService) cleanupDeletedTaskArtifacts(taskIDs []int64) {
+	for _, taskID := range taskIDs {
+		s.releaseDeletedRuntime(taskID)
+
+		runtimeDir := filepath.Join(s.runtimeDir, fmt.Sprintf("%d", taskID))
+		if err := os.RemoveAll(runtimeDir); err != nil && s.logger != nil {
+			s.logger.Error("remove deleted scan task runtime files failed", "task_id", taskID, "runtime_dir", runtimeDir, "error", err)
+		}
+	}
+}
+
+func (s *scanTaskService) releaseDeletedRuntime(taskID int64) {
+	s.mu.Lock()
+	runtime := s.states[taskID]
+	delete(s.states, taskID)
+	s.mu.Unlock()
+
+	if runtime == nil {
+		return
+	}
+
+	runtime.TryFinalize()
+	runtime.closeVulnerabilityQueue()
+	if runtime.state != nil {
+		finishedAt := time.Now()
+		runtime.state.MarkFinished("cancelled", finishedAt, "扫描任务已删除")
+		runtime.state.Close()
+	}
+}
+
 func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedTaskRequest, error) {
 	collectedTargets := collectTargets(request.Targets, request.InlineTargetsList)
 	if len(collectedTargets) == 0 {
@@ -1397,6 +1467,38 @@ func isFinishedTaskStatus(status string) bool {
 
 func normalizeTaskStatus(status string) string {
 	return strings.ToLower(strings.TrimSpace(status))
+}
+
+func normalizeScanTaskIDs(ids []int64) ([]int64, error) {
+	if len(ids) == 0 || len(ids) > maxBatchScanTaskIDs {
+		return nil, ErrInvalidScanTaskIDs
+	}
+
+	result := make([]int64, 0, len(ids))
+	seen := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return nil, ErrInvalidScanTaskIDs
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	if len(result) == 0 {
+		return nil, ErrInvalidScanTaskIDs
+	}
+	return result, nil
+}
+
+func isDeletableScanTaskStatus(status string) bool {
+	switch normalizeTaskStatus(status) {
+	case "success", "failed", "cancelled", "paused":
+		return true
+	default:
+		return false
+	}
 }
 
 func nullableString(value string) *string {
