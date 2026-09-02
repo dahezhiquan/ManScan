@@ -160,8 +160,8 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 		"port":          "8443",
 		"type":          "http",
 		"matcher-name":  "cross-origin-embedder-policy",
-		"request":       "GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
-		"response":      "HTTP/1.1 200 OK\r\n\r\n",
+		"request":       `{"1":"GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n","2":"POST /login HTTP/1.1\r\nHost: app.example.com\r\nContent-Length: 7\r\n\r\npayload"}`,
+		"response":      `{"1":"HTTP/1.1 200 OK\r\n\r\nfirst","2":"HTTP/1.1 500 Internal Server Error\r\n\r\nsecond"}`,
 		"curl-command":  "curl -k https://app.example.com:8443/login",
 		"template-path": "/tmp/template.yaml",
 		"timestamp":     foundAt.Format(time.RFC3339Nano),
@@ -213,8 +213,25 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	if err := json.Unmarshal([]byte(*got.Detail), &detail); err != nil {
 		t.Fatalf("unmarshal Detail failed: %v", err)
 	}
-	if len(detail) != 3 {
-		t.Fatalf("Detail keys = %v, want exactly 3 keys", detail)
+	requestHistory, ok := detail["request"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Detail request = %#v, want object", detail["request"])
+	}
+	if _, ok := requestHistory["1"]; !ok {
+		t.Fatal("Detail request missing 1")
+	}
+	if _, ok := requestHistory["2"]; !ok {
+		t.Fatal("Detail request missing 2")
+	}
+	responseHistory, ok := detail["response"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("Detail response = %#v, want object", detail["response"])
+	}
+	if _, ok := responseHistory["1"]; !ok {
+		t.Fatal("Detail response missing 1")
+	}
+	if _, ok := responseHistory["2"]; !ok {
+		t.Fatal("Detail response missing 2")
 	}
 	if _, ok := detail["request"]; !ok {
 		t.Fatal("Detail missing request")
@@ -224,6 +241,18 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 	if _, ok := detail["curl-command"]; !ok {
 		t.Fatal("Detail missing curl-command")
+	}
+	if _, ok := detail["request1"]; ok {
+		t.Fatal("Detail unexpectedly contains request1")
+	}
+	if _, ok := detail["request2"]; ok {
+		t.Fatal("Detail unexpectedly contains request2")
+	}
+	if _, ok := detail["response1"]; ok {
+		t.Fatal("Detail unexpectedly contains response1")
+	}
+	if _, ok := detail["response2"]; ok {
+		t.Fatal("Detail unexpectedly contains response2")
 	}
 	if _, ok := detail["template-path"]; ok {
 		t.Fatal("Detail unexpectedly contains template-path")

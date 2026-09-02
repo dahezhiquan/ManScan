@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"maps"
 	"net/http"
 	"sort"
@@ -200,7 +201,7 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 		IP:               fields.Ip,
 		GlobalMatchers:   isGlobalMatchers,
 		Request:          formatHTTPRequestHistory(wrapped.InternalEvent),
-		Response:         request.truncateResponse(formatHTTPResponseHistory(wrapped.InternalEvent, request)),
+		Response:         formatHTTPResponseHistory(wrapped.InternalEvent, request),
 		CURLCommand:      types.ToString(wrapped.InternalEvent["curl-command"]),
 		TemplateEncoded:  request.options.EncodeTemplate(),
 		Error:            types.ToString(wrapped.InternalEvent["error"]),
@@ -219,52 +220,42 @@ func (request *Request) truncateResponse(response interface{}) string {
 }
 
 func formatHTTPRequestHistory(event map[string]interface{}) string {
-	return formatHTTPHistory(event, "request", "Request")
-}
-
-func formatHTTPResponseHistory(event map[string]interface{}, request *Request) string {
-	return requestHistoryFormatter(event, "response", "Response", func(value interface{}) string {
-		return request.truncateResponse(value)
-	})
-}
-
-func formatHTTPHistory(event map[string]interface{}, keyPrefix, title string) string {
-	return requestHistoryFormatter(event, keyPrefix, title, func(value interface{}) string {
+	return requestHistoryJSON(event, "request", func(value interface{}) string {
 		return types.ToString(value)
 	})
 }
 
-func requestHistoryFormatter(event map[string]interface{}, keyPrefix, title string, valueFormatter func(interface{}) string) string {
-	history := collectSequentialValues(event, keyPrefix, valueFormatter)
-	switch len(history) {
-	case 0:
-		return ""
-	case 1:
-		return history[0]
-	}
-
-	var builder strings.Builder
-	for index, value := range history {
-		if index > 0 {
-			builder.WriteString("\n\n")
-		}
-		builder.WriteString("----- ")
-		builder.WriteString(title)
-		builder.WriteString(" ")
-		builder.WriteString(strconv.Itoa(index + 1))
-		builder.WriteString(" -----\n")
-		builder.WriteString(value)
-	}
-	return builder.String()
+func formatHTTPResponseHistory(event map[string]interface{}, request *Request) string {
+	return requestHistoryJSON(event, "response", func(value interface{}) string {
+		return request.truncateResponse(value)
+	})
 }
 
-func collectSequentialValues(event map[string]interface{}, keyPrefix string, valueFormatter func(interface{}) string) []string {
-	type indexedValue struct {
-		index int
-		value string
+func requestHistoryJSON(event map[string]interface{}, keyPrefix string, valueFormatter func(interface{}) string) string {
+	history := collectSequentialValues(event, keyPrefix, valueFormatter)
+	if len(history) == 0 {
+		return ""
 	}
 
-	values := make([]indexedValue, 0)
+	payload := make(map[string]string, len(history))
+	for _, item := range history {
+		payload[strconv.Itoa(item.index)] = item.value
+	}
+
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+type historyValue struct {
+	index int
+	value string
+}
+
+func collectSequentialValues(event map[string]interface{}, keyPrefix string, valueFormatter func(interface{}) string) []historyValue {
+	values := make([]historyValue, 0)
 	prefix := keyPrefix + "_"
 	for key, rawValue := range event {
 		if !strings.HasPrefix(key, prefix) {
@@ -278,7 +269,7 @@ func collectSequentialValues(event map[string]interface{}, keyPrefix string, val
 		if strings.TrimSpace(value) == "" {
 			continue
 		}
-		values = append(values, indexedValue{index: index, value: value})
+		values = append(values, historyValue{index: index, value: value})
 	}
 
 	if len(values) == 0 {
@@ -286,16 +277,12 @@ func collectSequentialValues(event map[string]interface{}, keyPrefix string, val
 		if strings.TrimSpace(fallback) == "" {
 			return nil
 		}
-		return []string{fallback}
+		return []historyValue{{index: 1, value: fallback}}
 	}
 
 	sort.Slice(values, func(i, j int) bool {
 		return values[i].index < values[j].index
 	})
 
-	history := make([]string, 0, len(values))
-	for _, item := range values {
-		history = append(history, item.value)
-	}
-	return history
+	return values
 }

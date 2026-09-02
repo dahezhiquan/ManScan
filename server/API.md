@@ -1098,7 +1098,15 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
     "remediation": "修复建议",
     "reference_links": ["https://example.com/ref"],
     "detail": {
-      "matched-at": "https://app.example.com/login"
+      "request": {
+        "1": "GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
+        "2": "POST /login HTTP/1.1\r\nHost: app.example.com\r\nContent-Length: 7\r\n\r\npayload"
+      },
+      "response": {
+        "1": "HTTP/1.1 200 OK\r\n\r\nfirst",
+        "2": "HTTP/1.1 500 Internal Server Error\r\n\r\nsecond"
+      },
+      "curl-command": "curl -k https://app.example.com/login"
     },
     "vuln_fingerprint": "sha256-fingerprint"
   }
@@ -1109,6 +1117,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
   - 详情接口按漏洞 ID 查询 `manscan_vulnerabilities` 中的单条记录，并返回漏洞表当前保存的完整业务字段。
   - `first_found_at` 表示首次发现时间，`last_found_at` 表示最近发现时间，列表页中的发现时间对应 `last_found_at`。
   - `tags`、`reference_links` 返回数组；`detail` 会在内容为合法 JSON 时返回解析后的对象或数组，否则返回原始字符串。
+  - 当漏洞来自多步 HTTP POC 时，`detail.request` 和 `detail.response` 会保存为 JSON 对象，对象内部按 `1`、`2` 这样的编号键保存每一步请求/响应，便于前端按步骤展示完整请求链。
   - `protocol` 返回值会按模板顶层执行块白名单归一化，例如 `requests` 会返回为 `http`。
 
 - 错误码说明：

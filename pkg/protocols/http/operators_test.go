@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -349,12 +350,21 @@ func TestHTTPMakeResultIncludesRequestHistory(t *testing.T) {
 	}
 
 	result := request.MakeResultEventItem(finalEvent)
-	require.Contains(t, result.Request, "Request 1")
-	require.Contains(t, result.Request, "GET /first HTTP/1.1")
-	require.Contains(t, result.Request, "POST /second HTTP/1.1")
-	require.Contains(t, result.Response, "Response 1")
-	require.Contains(t, result.Response, "first")
-	require.Contains(t, result.Response, "second")
+	var requestHistory map[string]string
+	require.NoError(t, json.Unmarshal([]byte(result.Request), &requestHistory))
+	require.Equal(t, 2, len(requestHistory))
+	require.Contains(t, requestHistory, "1")
+	require.Contains(t, requestHistory, "2")
+	require.Contains(t, requestHistory["1"], "GET /first HTTP/1.1")
+	require.Contains(t, requestHistory["2"], "POST /second HTTP/1.1")
+
+	var responseHistory map[string]string
+	require.NoError(t, json.Unmarshal([]byte(result.Response), &responseHistory))
+	require.Equal(t, 2, len(responseHistory))
+	require.Contains(t, responseHistory, "1")
+	require.Contains(t, responseHistory, "2")
+	require.Contains(t, responseHistory["1"], "first")
+	require.Contains(t, responseHistory["2"], "second")
 }
 
 const exampleRawRequest = `GET / HTTP/1.1
