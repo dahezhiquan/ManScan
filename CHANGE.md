@@ -1,3 +1,15 @@
+## 2026-09-02 10:43 记录漏洞详情中的完整 POC 请求链
+
+- 变动目录：`pkg/protocols/http/`
+- 变动文件：`pkg/protocols/http/operators.go`、`pkg/protocols/http/operators_test.go`
+- 具体修改内容：
+  - 在 `pkg/protocols/http/operators.go` 中新增 POC 历史请求/响应的汇总逻辑，优先收集 `request_1`、`request_2`、`response_1`、`response_2` 这类带序号的历史字段，再按顺序拼接成完整文本输出到 `ResultEvent.Request` 和 `ResultEvent.Response`。
+  - 为多请求结果增加清晰的分段标识，保留原始请求/响应内容的顺序，避免后续漏洞详情页只看到最后一次 POC 请求。
+  - 在 `pkg/protocols/http/operators_test.go` 中新增回归测试，覆盖多请求 POC 场景下结果事件会同时包含第一段和最后一段请求/响应内容，确保历史链路不会再次被覆盖。
+- 修改目的或影响：
+  - 修复漏洞详情页中的 `detail.request` 和 `detail.response` 只保存最后一个请求/响应的问题，让多步骤 POC 的完整交互链都能落到后端存储和前端展示中。
+  - 这次调整只影响 HTTP 结果事件的历史拼接方式，不改变普通单请求模板的输出内容和现有接口结构。
+
 ## 2026-08-27 13:16 修复暂停恢复后断点与状态切换失真
 
 - 变动目录：`cmd/nuclei/`、`internal/runner/`

@@ -304,6 +304,59 @@ func TestHTTPMakeResult(t *testing.T) {
 	require.Equal(t, "1.1.1.1", finalEvent.Results[0].ExtractedResults[0], "could not get correct extracted results")
 }
 
+func TestHTTPMakeResultIncludesRequestHistory(t *testing.T) {
+	options := testutils.DefaultOptions
+	options.ResponseSaveSize = 1024 * 1024
+
+	testutils.Init(options)
+	templateID := "testing-http-history"
+	request := &Request{
+		ID:     templateID,
+		Name:   "testing",
+		Path:   []string{"{{BaseURL}}?test=1"},
+		Method: HTTPMethodTypeHolder{MethodType: HTTPGet},
+	}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{
+		ID:   templateID,
+		Info: model.Info{SeverityHolder: severity.Holder{Severity: severity.Low}, Name: "test"},
+	})
+	err := request.Compile(executerOpts)
+	require.Nil(t, err, "could not compile file request")
+
+	resp := &http.Response{}
+	resp.Header = make(http.Header)
+	resp.Header.Set("Test", "Test-Response")
+	host := "http://example.com/test/"
+	matched := "http://example.com/test/?test=1"
+
+	event := request.responseToDSLMap(resp, host, matched, exampleRawRequest, exampleRawResponse, exampleResponseBody, exampleResponseHeader, 1*time.Second, map[string]interface{}{})
+	event["ip"] = "192.169.1.1"
+	event["request_1"] = "GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n"
+	event["request_2"] = "POST /second HTTP/1.1\r\nHost: example.com\r\nContent-Length: 7\r\n\r\npayload"
+	event["response_1"] = "HTTP/1.1 200 OK\r\n\r\nfirst"
+	event["response_2"] = "HTTP/1.1 500 Internal Server Error\r\n\r\nsecond"
+
+	finalEvent := &output.InternalWrappedEvent{
+		InternalEvent: event,
+		OperatorsResult: &operators.Result{
+			Matched:        true,
+			Extracts:       map[string][]string{},
+			Matches:        map[string][]string{},
+			DynamicValues:  map[string][]string{},
+			PayloadValues:  map[string]interface{}{},
+			OutputExtracts: []string{},
+		},
+	}
+
+	result := request.MakeResultEventItem(finalEvent)
+	require.Contains(t, result.Request, "Request 1")
+	require.Contains(t, result.Request, "GET /first HTTP/1.1")
+	require.Contains(t, result.Request, "POST /second HTTP/1.1")
+	require.Contains(t, result.Response, "Response 1")
+	require.Contains(t, result.Response, "first")
+	require.Contains(t, result.Response, "second")
+}
+
 const exampleRawRequest = `GET / HTTP/1.1
 Host: example.com
 Upgrade-Insecure-Requests: 1

@@ -3,6 +3,8 @@ package http
 import (
 	"maps"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -197,8 +199,8 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 		MatcherStatus:    true,
 		IP:               fields.Ip,
 		GlobalMatchers:   isGlobalMatchers,
-		Request:          types.ToString(wrapped.InternalEvent["request"]),
-		Response:         request.truncateResponse(wrapped.InternalEvent["response"]),
+		Request:          formatHTTPRequestHistory(wrapped.InternalEvent),
+		Response:         request.truncateResponse(formatHTTPResponseHistory(wrapped.InternalEvent, request)),
 		CURLCommand:      types.ToString(wrapped.InternalEvent["curl-command"]),
 		TemplateEncoded:  request.options.EncodeTemplate(),
 		Error:            types.ToString(wrapped.InternalEvent["error"]),
@@ -214,4 +216,86 @@ func (request *Request) truncateResponse(response interface{}) string {
 		return responseString[:request.options.Options.ResponseSaveSize]
 	}
 	return responseString
+}
+
+func formatHTTPRequestHistory(event map[string]interface{}) string {
+	return formatHTTPHistory(event, "request", "Request")
+}
+
+func formatHTTPResponseHistory(event map[string]interface{}, request *Request) string {
+	return requestHistoryFormatter(event, "response", "Response", func(value interface{}) string {
+		return request.truncateResponse(value)
+	})
+}
+
+func formatHTTPHistory(event map[string]interface{}, keyPrefix, title string) string {
+	return requestHistoryFormatter(event, keyPrefix, title, func(value interface{}) string {
+		return types.ToString(value)
+	})
+}
+
+func requestHistoryFormatter(event map[string]interface{}, keyPrefix, title string, valueFormatter func(interface{}) string) string {
+	history := collectSequentialValues(event, keyPrefix, valueFormatter)
+	switch len(history) {
+	case 0:
+		return ""
+	case 1:
+		return history[0]
+	}
+
+	var builder strings.Builder
+	for index, value := range history {
+		if index > 0 {
+			builder.WriteString("\n\n")
+		}
+		builder.WriteString("----- ")
+		builder.WriteString(title)
+		builder.WriteString(" ")
+		builder.WriteString(strconv.Itoa(index + 1))
+		builder.WriteString(" -----\n")
+		builder.WriteString(value)
+	}
+	return builder.String()
+}
+
+func collectSequentialValues(event map[string]interface{}, keyPrefix string, valueFormatter func(interface{}) string) []string {
+	type indexedValue struct {
+		index int
+		value string
+	}
+
+	values := make([]indexedValue, 0)
+	prefix := keyPrefix + "_"
+	for key, rawValue := range event {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		index, err := strconv.Atoi(strings.TrimPrefix(key, prefix))
+		if err != nil || index <= 0 {
+			continue
+		}
+		value := valueFormatter(rawValue)
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		values = append(values, indexedValue{index: index, value: value})
+	}
+
+	if len(values) == 0 {
+		fallback := valueFormatter(event[keyPrefix])
+		if strings.TrimSpace(fallback) == "" {
+			return nil
+		}
+		return []string{fallback}
+	}
+
+	sort.Slice(values, func(i, j int) bool {
+		return values[i].index < values[j].index
+	})
+
+	history := make([]string, 0, len(values))
+	for _, item := range values {
+		history = append(history, item.value)
+	}
+	return history
 }
