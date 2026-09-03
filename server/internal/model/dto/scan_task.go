@@ -183,3 +183,9 @@ type ScanTaskLogsResponse struct {
 	NextOffset int64                            `json:"next_offset"`
 	HasMore    bool                             `json:"has_more"`
 }
+
+type ScanTaskResponseArchive struct {
+	Path     string `json:"-"`
+	FileName string `json:"file_name"`
+	Size     int64  `json:"size"`
+}

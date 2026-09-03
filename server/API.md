@@ -1192,3 +1192,34 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/scans" \
   -H "Content-Type: application/json" \
   -d '{"ids":[1,2,3]}'
 ```
+
+## 23. 下载扫描任务请求/响应压缩包
+
+- 请求方法和路径：`GET /api/v1/scans/:id/responses/archive`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 扫描任务 ID，路径参数 |
+
+- 响应格式：
+  - 成功时直接返回 zip 文件流，不使用统一 JSON 包裹。
+  - 响应头包含 `Content-Type: application/zip`。
+  - 响应头包含 `Content-Disposition: attachment; filename="<任务ID>.zip"`。
+
+- 说明：
+  - 该接口会先校验 `manscan_scan_tasks` 中是否存在对应任务，再下载 `data/responses/<任务ID>.zip`。
+  - 只有任务已生成请求/响应压缩包时才能下载；未开启“保存请求/响应”、任务尚未完成压缩、或压缩包已被清理时会返回 `40401`。
+  - 下载内容为任务结束后由服务端归档生成的 zip，zip 内部保留 `<任务ID>/http/`、`<任务ID>/dns/`、`<任务ID>/tcp/`、`<任务ID>/ssl/`、`<任务ID>/javascript/` 等协议目录结构。
+
+- 错误码说明：
+  - `40001`：任务 ID 非法
+  - `40401`：任务不存在，或请求/响应压缩包不存在
+  - `50001`：读取或下载请求/响应压缩包失败
+
+- 使用示例：
+
+```bash
+curl -OJ "http://127.0.0.1:8686/api/v1/scans/1/responses/archive"
+```

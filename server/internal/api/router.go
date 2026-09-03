@@ -43,6 +43,7 @@ func NewRouter(
 	v1.POST("/scans/:id/cancel", scanTaskHandler.Cancel)
 	v1.GET("/scans/:id", scanTaskHandler.Get)
 	v1.GET("/scans/:id/logs", scanTaskHandler.Logs)
+	v1.GET("/scans/:id/responses/archive", scanTaskHandler.DownloadResponsesArchive)
 	v1.GET("/scans/:id/stream", scanTaskHandler.Stream)
 
 	return router

@@ -1,9 +1,11 @@
 package service
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -43,6 +45,225 @@ func TestCollectTargetsNormalizesTrailingSlash(t *testing.T) {
 			t.Fatalf("targets[%d] = %q, want %q (all=%v)", index, targets[index], want, targets)
 		}
 	}
+}
+
+func TestBuildScanCLIArgsUsesTaskScopedStoreResponseDir(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	storeResponseDir := filepath.Join(rootDir, "data", "responses", "42")
+	args := buildScanCLIArgs(
+		dto.CreateScanTaskRequest{StoreResponse: true},
+		filepath.Join(rootDir, "data", "runtime", "42"),
+		filepath.Join(rootDir, "data", "runtime", "42", "targets.txt"),
+		filepath.Join(rootDir, "data", "runtime", "42", "resume.cfg"),
+		storeResponseDir,
+	)
+
+	if !hasArg(args, "-sresp") {
+		t.Fatalf("args missing -sresp: %v", args)
+	}
+	if got := flagValue(args, "-srd"); got != storeResponseDir {
+		t.Fatalf("-srd = %q, want %q (args=%v)", got, storeResponseDir, args)
+	}
+
+	args = buildScanCLIArgs(
+		dto.CreateScanTaskRequest{},
+		filepath.Join(rootDir, "data", "runtime", "43"),
+		filepath.Join(rootDir, "data", "runtime", "43", "targets.txt"),
+		filepath.Join(rootDir, "data", "runtime", "43", "resume.cfg"),
+		filepath.Join(rootDir, "data", "responses", "43"),
+	)
+	if hasArg(args, "-sresp") || flagValue(args, "-srd") != "" {
+		t.Fatalf("store response flags should be absent when disabled: %v", args)
+	}
+}
+
+func TestArchiveStoredResponsesCreatesZipAndRemovesTaskDirectory(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	svc := &scanTaskService{rootDir: rootDir}
+	responseFile := filepath.Join(svc.storeResponseDir(42), "http", "example.com_template-id.txt")
+	if err := os.MkdirAll(filepath.Dir(responseFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(responseFile, []byte("request\n\nresponse"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	archived, err := svc.archiveStoredResponsesToZip(42)
+	if err != nil {
+		t.Fatalf("archiveStoredResponsesToZip() error = %v", err)
+	}
+	if !archived {
+		t.Fatalf("archived = false, want true")
+	}
+	if _, err := os.Stat(svc.storeResponseDir(42)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("response directory still exists or unexpected error: %v", err)
+	}
+	if _, err := os.Stat(svc.storeResponseZipPath(42)); err != nil {
+		t.Fatalf("zip file missing: %v", err)
+	}
+
+	content := readZipEntry(t, svc.storeResponseZipPath(42), "42/http/example.com_template-id.txt")
+	if content != "request\n\nresponse" {
+		t.Fatalf("zip entry content = %q, want request/response content", content)
+	}
+}
+
+func TestArchiveStoredResponsesIgnoresMissingTaskDirectory(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	svc := &scanTaskService{rootDir: rootDir}
+
+	archived, err := svc.archiveStoredResponsesToZip(43)
+	if err != nil {
+		t.Fatalf("archiveStoredResponsesToZip() error = %v", err)
+	}
+	if archived {
+		t.Fatalf("archived = true, want false for missing response directory")
+	}
+	if _, err := os.Stat(svc.storeResponseZipPath(43)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("zip file should not exist, got error: %v", err)
+	}
+}
+
+func TestArchiveStoredResponsesAppendsFrontendInfoEvents(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	runtimeDir := filepath.Join(rootDir, "data", "runtime")
+	state, err := scanruntime.NewState(44, "task-44", "archive-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	svc := &scanTaskService{rootDir: rootDir}
+	responseFile := filepath.Join(svc.storeResponseDir(44), "http", "example.com_template-id.txt")
+	if err := os.MkdirAll(filepath.Dir(responseFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(responseFile, []byte("response"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	svc.archiveStoredResponses(44, state)
+
+	events := state.EventsSince(0, 10).Events
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want 2 archive events", events)
+	}
+	if events[0].Level != "info" || events[0].Type != "stored_responses_archive_started" {
+		t.Fatalf("first event = %+v, want archive started info", events[0])
+	}
+	if events[1].Level != "info" || events[1].Type != "stored_responses_archived" {
+		t.Fatalf("second event = %+v, want archive completed info", events[1])
+	}
+}
+
+func TestGetResponseArchiveReturnsTaskZip(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				45: {ID: 45, TaskNo: "task-45", Name: "archive-task", Status: "success", CreatedBy: "tester"},
+			},
+		},
+		rootDir: rootDir,
+	}
+	zipPath := svc.storeResponseZipPath(45)
+	if err := os.MkdirAll(filepath.Dir(zipPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(zipPath, []byte("zip-data"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	archive, err := svc.GetResponseArchive(context.Background(), 45)
+	if err != nil {
+		t.Fatalf("GetResponseArchive() error = %v", err)
+	}
+	if archive.Path != zipPath {
+		t.Fatalf("Path = %q, want %q", archive.Path, zipPath)
+	}
+	if archive.FileName != "45.zip" {
+		t.Fatalf("FileName = %q, want 45.zip", archive.FileName)
+	}
+	if archive.Size != int64(len("zip-data")) {
+		t.Fatalf("Size = %d, want %d", archive.Size, len("zip-data"))
+	}
+}
+
+func TestGetResponseArchiveReturnsNotFoundWhenZipMissing(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				46: {ID: 46, TaskNo: "task-46", Name: "archive-task", Status: "success", CreatedBy: "tester"},
+			},
+		},
+		rootDir: t.TempDir(),
+	}
+
+	_, err := svc.GetResponseArchive(context.Background(), 46)
+	if !errors.Is(err, ErrScanTaskResponseArchiveNotFound) {
+		t.Fatalf("GetResponseArchive() error = %v, want ErrScanTaskResponseArchiveNotFound", err)
+	}
+}
+
+func readZipEntry(t *testing.T, zipPath, entryName string) string {
+	t.Helper()
+
+	reader, err := zip.OpenReader(zipPath)
+	if err != nil {
+		t.Fatalf("OpenReader() error = %v", err)
+	}
+	defer reader.Close()
+
+	for _, file := range reader.File {
+		if file.Name != entryName {
+			continue
+		}
+		entry, err := file.Open()
+		if err != nil {
+			t.Fatalf("Open() zip entry error = %v", err)
+		}
+		content, readErr := io.ReadAll(entry)
+		closeErr := entry.Close()
+		if readErr != nil {
+			t.Fatalf("ReadAll() zip entry error = %v", readErr)
+		}
+		if closeErr != nil {
+			t.Fatalf("Close() zip entry error = %v", closeErr)
+		}
+		return string(content)
+	}
+	t.Fatalf("zip entry %q not found in %s", entryName, zipPath)
+	return ""
+}
+
+func hasArg(args []string, expected string) bool {
+	for _, arg := range args {
+		if arg == expected {
+			return true
+		}
+	}
+	return false
+}
+
+func flagValue(args []string, flag string) string {
+	for i, arg := range args {
+		if arg == flag && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func TestToScanTaskSummaryIncludesResultStats(t *testing.T) {
@@ -724,12 +945,25 @@ func TestFinishPausedTaskKeepsResumeFile(t *testing.T) {
 	if err := os.WriteFile(resumeFile, []byte("resume-data"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
+	responseFile := filepath.Join(svc.storeResponseDir(19), "http", "example.com_template-id.txt")
+	if err := os.MkdirAll(filepath.Dir(responseFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(responseFile, []byte("paused-response"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 
 	startedAt := time.Date(2026, 8, 26, 11, 5, 0, 0, time.FixedZone("CST", 8*3600))
 	svc.finishPausedTask(19, svc.getRuntime(19), &startedAt)
 
 	if _, err := os.Stat(resumeFile); err != nil {
 		t.Fatalf("resume file should remain after pause, got error: %v", err)
+	}
+	if _, err := os.Stat(responseFile); err != nil {
+		t.Fatalf("response file should remain after pause, got error: %v", err)
+	}
+	if _, err := os.Stat(svc.storeResponseZipPath(19)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("zip file should not be created for pause, got error: %v", err)
 	}
 }
 
@@ -909,7 +1143,8 @@ func TestCancelRejectsFinishedTask(t *testing.T) {
 func TestCancelPausedTaskMarksCancelledImmediately(t *testing.T) {
 	t.Parallel()
 
-	runtimeDir := t.TempDir()
+	rootDir := t.TempDir()
+	runtimeDir := filepath.Join(rootDir, "data", "runtime")
 	pausedState, err := scanruntime.NewState(17, "task-17", "paused-task", 1, runtimeDir)
 	if err != nil {
 		t.Fatalf("NewState() error = %v", err)
@@ -933,9 +1168,18 @@ func TestCancelPausedTaskMarksCancelledImmediately(t *testing.T) {
 	}
 	svc := &scanTaskService{
 		repository: repo,
+		rootDir:    rootDir,
+		runtimeDir: runtimeDir,
 		states: map[int64]*scanTaskRuntime{
 			17: newScanTaskRuntime(pausedState),
 		},
+	}
+	responseFile := filepath.Join(svc.storeResponseDir(17), "http", "example.com_template-id.txt")
+	if err := os.MkdirAll(filepath.Dir(responseFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(responseFile, []byte("cancelled-response"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 
 	resp, err := svc.Cancel(context.Background(), 17)
@@ -958,6 +1202,15 @@ func TestCancelPausedTaskMarksCancelledImmediately(t *testing.T) {
 	progress := pausedState.SnapshotProgress()
 	if !progress.Finished || progress.FinishedStatus != "cancelled" {
 		t.Fatalf("progress = %+v, want finished cancelled", progress)
+	}
+	if _, err := os.Stat(svc.storeResponseDir(17)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("response directory still exists or unexpected error: %v", err)
+	}
+	if _, err := os.Stat(svc.storeResponseZipPath(17)); err != nil {
+		t.Fatalf("zip file missing: %v", err)
+	}
+	if content := readZipEntry(t, svc.storeResponseZipPath(17), "17/http/example.com_template-id.txt"); content != "cancelled-response" {
+		t.Fatalf("zip entry content = %q, want cancelled-response", content)
 	}
 }
 

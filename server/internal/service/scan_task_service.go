@@ -1,10 +1,12 @@
 package service
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -37,6 +39,7 @@ type ScanTaskService interface {
 	Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int, direction string) (*dto.ScanTaskLogsResponse, error)
+	GetResponseArchive(ctx context.Context, taskID int64) (*dto.ScanTaskResponseArchive, error)
 	Subscribe(ctx context.Context, taskID, offset int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() dto.ScanTaskSummary, func() scanruntime.TaskProgressSnapshot, func(), error)
 }
 
@@ -46,6 +49,7 @@ var ErrScanTaskNotResumable = errors.New("当前任务状态不支持恢复")
 var ErrScanTaskNotDeletable = errors.New("当前任务状态不支持删除")
 var ErrScanTaskInvalidConfiguration = errors.New("原任务配置不完整，无法重新扫描")
 var ErrInvalidScanTaskIDs = errors.New("扫描任务 id 列表不合法")
+var ErrScanTaskResponseArchiveNotFound = errors.New("请求/响应压缩包不存在")
 
 const maxBatchScanTaskIDs = 1000
 
@@ -325,9 +329,14 @@ func (s *scanTaskService) Cancel(ctx context.Context, taskID int64) (*dto.Cancel
 		if err := s.repository.UpdateStatus(ctx, taskID, "cancelled", nil, &finishedAt); err != nil {
 			return nil, err
 		}
-		if runtime := s.getRuntime(taskID); runtime != nil && runtime.state != nil {
-			runtime.state.Append("info", "task_cancelled", "扫描任务已取消")
-			runtime.state.MarkFinished("cancelled", finishedAt, "扫描任务已取消")
+		var state *scanruntime.State
+		if runtime := s.getRuntime(taskID); runtime != nil {
+			state = runtime.state
+		}
+		s.archiveStoredResponses(taskID, state)
+		if state != nil {
+			state.Append("info", "task_cancelled", "扫描任务已取消")
+			state.MarkFinished("cancelled", finishedAt, "扫描任务已取消")
 		}
 		s.cleanupResumeFile(taskID)
 		return &dto.CancelScanTaskResponse{
@@ -597,6 +606,30 @@ func (s *scanTaskService) GetLogs(ctx context.Context, taskID, offset int64, lim
 	}, nil
 }
 
+func (s *scanTaskService) GetResponseArchive(ctx context.Context, taskID int64) (*dto.ScanTaskResponseArchive, error) {
+	if _, err := s.repository.FindByID(ctx, taskID); err != nil {
+		return nil, err
+	}
+
+	zipPath := s.storeResponseZipPath(taskID)
+	info, err := os.Lstat(zipPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrScanTaskResponseArchiveNotFound
+		}
+		return nil, err
+	}
+	if info.IsDir() || !info.Mode().IsRegular() {
+		return nil, ErrScanTaskResponseArchiveNotFound
+	}
+
+	return &dto.ScanTaskResponseArchive{
+		Path:     zipPath,
+		FileName: filepath.Base(zipPath),
+		Size:     info.Size(),
+	}, nil
+}
+
 func (s *scanTaskService) Subscribe(
 	ctx context.Context,
 	taskID int64,
@@ -710,9 +743,10 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 		return err
 	}
 	resumeFile := s.resumeFilePath(state.ID)
+	storeResponseDir := s.storeResponseDir(state.ID)
 
 	executable, baseArgs := resolveManScanCommand(s.rootDir)
-	args := append(baseArgs, buildScanCLIArgs(plan.Raw, taskDir, targetsFile, resumeFile)...)
+	args := append(baseArgs, buildScanCLIArgs(plan.Raw, taskDir, targetsFile, resumeFile, storeResponseDir)...)
 
 	cmdCtx, cancel := context.WithCancel(context.Background())
 	if !runtime.AttachCancel(cancel) {
@@ -783,6 +817,7 @@ func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntim
 		return
 	}
 	runtime.closeVulnerabilityQueue()
+	s.archiveStoredResponses(taskID, runtime.state)
 
 	state := runtime.state
 	finishedAt := time.Now()
@@ -799,6 +834,7 @@ func (s *scanTaskService) finishSuccessTask(taskID int64, runtime *scanTaskRunti
 		return
 	}
 	runtime.closeVulnerabilityQueue()
+	s.archiveStoredResponses(taskID, runtime.state)
 
 	state := runtime.state
 	finishedAt := time.Now()
@@ -815,6 +851,7 @@ func (s *scanTaskService) finishCancelledTask(taskID int64, runtime *scanTaskRun
 		return
 	}
 	runtime.closeVulnerabilityQueue()
+	s.archiveStoredResponses(taskID, runtime.state)
 
 	state := runtime.state
 	finishedAt := time.Now()
@@ -922,11 +959,176 @@ func (s *scanTaskService) resumeFilePath(taskID int64) string {
 	return filepath.Join(s.runtimeDir, fmt.Sprintf("%d", taskID), "resume.cfg")
 }
 
+func (s *scanTaskService) storeResponseDir(taskID int64) string {
+	taskName := strconv.FormatInt(taskID, 10)
+	if s.rootDir != "" {
+		return filepath.Join(s.rootDir, "data", "responses", taskName)
+	}
+	if s.runtimeDir != "" {
+		return filepath.Join(filepath.Dir(s.runtimeDir), "responses", taskName)
+	}
+	return filepath.Join("data", "responses", taskName)
+}
+
+func (s *scanTaskService) storeResponseZipPath(taskID int64) string {
+	return s.storeResponseDir(taskID) + ".zip"
+}
+
 func (s *scanTaskService) cleanupResumeFile(taskID int64) {
 	resumeFile := s.resumeFilePath(taskID)
 	if err := os.Remove(resumeFile); err != nil && !errors.Is(err, os.ErrNotExist) && s.logger != nil {
 		s.logger.Error("remove resume file failed", "task_id", taskID, "resume_file", resumeFile, "error", err)
 	}
+}
+
+func (s *scanTaskService) archiveStoredResponses(taskID int64, state *scanruntime.State) {
+	sourceDir := s.storeResponseDir(taskID)
+	info, err := os.Stat(sourceDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		s.logStoredResponsesArchiveError(taskID, state, err)
+		return
+	}
+	if !info.IsDir() {
+		s.logStoredResponsesArchiveError(taskID, state, fmt.Errorf("stored response path is not a directory: %s", sourceDir))
+		return
+	}
+
+	if state != nil {
+		state.Append("info", "stored_responses_archive_started", "请求/响应文件开始压缩归档")
+	}
+	archived, err := s.archiveStoredResponsesToZip(taskID)
+	if err != nil {
+		s.logStoredResponsesArchiveError(taskID, state, err)
+		return
+	}
+	if archived && state != nil {
+		state.Append("info", "stored_responses_archived", "请求/响应文件压缩归档完成")
+	}
+}
+
+func (s *scanTaskService) logStoredResponsesArchiveError(taskID int64, state *scanruntime.State, err error) {
+	if state != nil {
+		state.Append("warn", "stored_responses_archive_failed", "请求/响应文件压缩归档失败")
+	}
+	if s.logger != nil {
+		s.logger.Error("archive stored responses failed", "task_id", taskID, "response_dir", s.storeResponseDir(taskID), "zip_file", s.storeResponseZipPath(taskID), "error", err)
+	}
+}
+
+func (s *scanTaskService) archiveStoredResponsesToZip(taskID int64) (bool, error) {
+	sourceDir := s.storeResponseDir(taskID)
+	info, err := os.Stat(sourceDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("stored response path is not a directory: %s", sourceDir)
+	}
+
+	zipPath := s.storeResponseZipPath(taskID)
+	tmpZipPath := zipPath + ".tmp"
+	if err := os.MkdirAll(filepath.Dir(zipPath), 0o755); err != nil {
+		return false, err
+	}
+	if err := os.Remove(tmpZipPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	if err := writeZipDirectory(sourceDir, tmpZipPath, strconv.FormatInt(taskID, 10)); err != nil {
+		_ = os.Remove(tmpZipPath)
+		return false, err
+	}
+	if err := os.Remove(zipPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = os.Remove(tmpZipPath)
+		return false, err
+	}
+	if err := os.Rename(tmpZipPath, zipPath); err != nil {
+		_ = os.Remove(tmpZipPath)
+		return false, err
+	}
+	if err := os.RemoveAll(sourceDir); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func writeZipDirectory(sourceDir, zipPath, rootName string) error {
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		return err
+	}
+
+	zipWriter := zip.NewWriter(zipFile)
+	walkErr := filepath.WalkDir(sourceDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(sourceDir, path)
+		if err != nil {
+			return err
+		}
+		if relPath == "." {
+			header, err := zip.FileInfoHeader(info)
+			if err != nil {
+				return err
+			}
+			header.Name = filepath.ToSlash(rootName) + "/"
+			_, err = zipWriter.CreateHeader(header)
+			return err
+		}
+
+		entryName := filepath.ToSlash(filepath.Join(rootName, relPath))
+		header, err := zip.FileInfoHeader(info)
+		if err != nil {
+			return err
+		}
+		header.Name = entryName
+
+		if entry.IsDir() {
+			header.Name += "/"
+			_, err = zipWriter.CreateHeader(header)
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		header.Method = zip.Deflate
+
+		writer, err := zipWriter.CreateHeader(header)
+		if err != nil {
+			return err
+		}
+		sourceFile, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, sourceFile)
+		closeErr := sourceFile.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+
+	closeZipErr := zipWriter.Close()
+	closeFileErr := zipFile.Close()
+	if walkErr != nil {
+		return walkErr
+	}
+	if closeZipErr != nil {
+		return closeZipErr
+	}
+	return closeFileErr
 }
 
 func (s *scanTaskService) cleanupDeletedTaskArtifacts(taskIDs []int64) {
@@ -1112,7 +1314,7 @@ func resolveManScanCommand(rootDir string) (string, []string) {
 	return "go", []string{"run", "./cmd/nuclei"}
 }
 
-func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, resumeFile string) []string {
+func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, resumeFile, storeResponseDir string) []string {
 	args := []string{
 		"-l", targetsFile,
 		"-j",
@@ -1148,6 +1350,9 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 	appendBool(request.AutomaticScan, "-as")
 	appendBool(request.EnableGlobalMatchersTemplates, "-egm")
 	appendBool(request.StoreResponse, "-sresp")
+	if request.StoreResponse {
+		appendFlag("-srd", storeResponseDir)
+	}
 	appendBool(request.Timestamp, "-ts")
 	appendBool(request.MatcherStatus, "-ms")
 	appendBool(request.FollowRedirects, "-fr")

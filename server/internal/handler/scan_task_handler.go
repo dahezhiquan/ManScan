@@ -30,6 +30,7 @@ type ScanTaskHandler interface {
 	Stats(c *gin.Context)
 	Get(c *gin.Context)
 	Logs(c *gin.Context)
+	DownloadResponsesArchive(c *gin.Context)
 	Stream(c *gin.Context)
 }
 
@@ -325,6 +326,31 @@ func (h *scanTaskHandler) Logs(c *gin.Context) {
 	}
 
 	response.Success(c, data)
+}
+
+func (h *scanTaskHandler) DownloadResponsesArchive(c *gin.Context) {
+	taskID, err := parseTaskID(c.Param("id"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+
+	archive, serviceErr := h.service.GetResponseArchive(c.Request.Context(), taskID)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
+			response.Fail(c, errcode.NotFound, "任务不存在")
+			return
+		}
+		if errors.Is(serviceErr, service.ErrScanTaskResponseArchiveNotFound) {
+			response.Fail(c, errcode.NotFound, "请求/响应压缩包不存在")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "下载请求/响应压缩包失败")
+		return
+	}
+
+	c.Header("Content-Type", "application/zip")
+	c.FileAttachment(archive.Path, archive.FileName)
 }
 
 func (h *scanTaskHandler) Stream(c *gin.Context) {
