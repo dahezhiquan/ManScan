@@ -476,6 +476,9 @@ func (s *scanTaskService) Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	}
 
 	copyStats := *stats
+	if copyStats.SavedRequests < 0 {
+		copyStats.SavedRequests = 0
+	}
 	return &copyStats, nil
 }
 

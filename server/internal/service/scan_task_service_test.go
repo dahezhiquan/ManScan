@@ -771,6 +771,29 @@ func TestStatsSavedRequestsOnlyUsesPersistedSuccessfulTasks(t *testing.T) {
 	}
 }
 
+func TestStatsClampsNegativeSavedRequests(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			statsResult: &dto.ScanTaskStats{
+				Total:         18,
+				Running:       1,
+				SavedRequests: -94,
+			},
+		},
+	}
+
+	stats, err := svc.Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+
+	if stats.SavedRequests != 0 {
+		t.Fatalf("SavedRequests = %d, want 0", stats.SavedRequests)
+	}
+}
+
 func TestGetLogsSupportsRunningForwardAndBeforeDirections(t *testing.T) {
 	t.Parallel()
 

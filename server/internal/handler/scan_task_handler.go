@@ -252,6 +252,7 @@ func (h *scanTaskHandler) NameOptions(c *gin.Context) {
 }
 
 func (h *scanTaskHandler) Stats(c *gin.Context) {
+	c.Writer.Header().Set("Cache-Control", "no-store")
 	data, serviceErr := h.service.Stats(c.Request.Context())
 	if serviceErr != nil {
 		response.Fail(c, errcode.InternalServerError, "获取扫描任务统计失败")

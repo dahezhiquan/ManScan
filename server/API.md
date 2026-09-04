@@ -239,7 +239,7 @@ curl "http://127.0.0.1:8686/api/v1/templates/stats"
 - 说明：
   - `total` 表示扫描任务总数。
   - `running` 表示当前状态为 `running` 的任务数。
-  - `saved_requests` 仅统计最终状态为 `success` 的扫描任务，统计口径为 `SUM(total_requests - real_requests)`。
+  - `saved_requests` 仅统计最终状态为 `success` 的扫描任务，统计口径为 `SUM(total_requests - real_requests)`，并且不会小于 `0`。
   - `failed`、`cancelled`、`paused` 以及仍在 `running` 的任务都不会计入该字段。
 
 - 错误码说明：
