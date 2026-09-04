@@ -480,40 +480,54 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 }
 
-func TestBuildVulnerabilitySkipsTechTagResult(t *testing.T) {
+func TestBuildVulnerabilitySkipsFingerprintTagResult(t *testing.T) {
 	t.Parallel()
 
-	svc := &scanTaskService{
-		templateRepository: &templateRepositoryStub{
-			details: map[string]*dto.TemplateDetail{
-				"nginx-detect": {
-					ID:       "nginx-detect",
-					Name:     "Nginx Detect",
-					Tags:     []string{"web", "tech"},
-					Severity: "info",
-				},
-			},
-		},
-	}
+	for _, tc := range []struct {
+		name string
+		tag  string
+	}{
+		{name: "tech", tag: "tech"},
+		{name: "detect", tag: "detect"},
+		{name: "favicon", tag: "favicon"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	vulnerability, err := svc.buildVulnerabilityFromPayload(context.Background(), 42, "即时扫描任务", map[string]interface{}{
-		"template-id": "nginx-detect",
-		"matched-at":  "https://app.example.com/",
-		"info": map[string]interface{}{
-			"name":     "Nginx Detect",
-			"severity": "info",
-			"tags":     []interface{}{"web", "tech"},
-		},
-	})
-	if err != nil {
-		t.Fatalf("buildVulnerabilityFromPayload() error = %v", err)
-	}
-	if vulnerability != nil {
-		t.Fatalf("vulnerability = %+v, want nil for tech tag result", vulnerability)
+			svc := &scanTaskService{
+				templateRepository: &templateRepositoryStub{
+					details: map[string]*dto.TemplateDetail{
+						"nginx-detect": {
+							ID:       "nginx-detect",
+							Name:     "Nginx Detect",
+							Tags:     []string{"web", tc.tag},
+							Severity: "info",
+						},
+					},
+				},
+			}
+
+			vulnerability, err := svc.buildVulnerabilityFromPayload(context.Background(), 42, "即时扫描任务", map[string]interface{}{
+				"template-id": "nginx-detect",
+				"matched-at":  "https://app.example.com/",
+				"info": map[string]interface{}{
+					"name":     "Nginx Detect",
+					"severity": "info",
+					"tags":     []interface{}{"web", tc.tag},
+				},
+			})
+			if err != nil {
+				t.Fatalf("buildVulnerabilityFromPayload() error = %v", err)
+			}
+			if vulnerability != nil {
+				t.Fatalf("vulnerability = %+v, want nil for fingerprint tag result", vulnerability)
+			}
+		})
 	}
 }
 
-func TestBuildVulnerabilityDoesNotSkipFingerprintNameWithoutTechTag(t *testing.T) {
+func TestBuildVulnerabilityDoesNotSkipFingerprintNameWithoutFingerprintTags(t *testing.T) {
 	t.Parallel()
 
 	svc := &scanTaskService{
@@ -542,7 +556,7 @@ func TestBuildVulnerabilityDoesNotSkipFingerprintNameWithoutTechTag(t *testing.T
 		t.Fatalf("buildVulnerabilityFromPayload() error = %v", err)
 	}
 	if vulnerability == nil {
-		t.Fatal("vulnerability = nil, want item when tech tag is absent")
+		t.Fatal("vulnerability = nil, want item when fingerprint tags are absent")
 	}
 	if vulnerability.VulnerabilityName != "Nginx 指纹识别" {
 		t.Fatalf("VulnerabilityName = %q, want Nginx 指纹识别", vulnerability.VulnerabilityName)

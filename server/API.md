@@ -22,7 +22,7 @@
 
 统计口径说明：
 
-- 扫描任务响应中的 `tech_count` 表示命中结果中 `info.tags` 包含 `tech` 标签的数量，不再根据模板名称或结果名称是否包含“指纹识别”判断。
+- 扫描任务响应中的 `tech_count` 表示指纹命中数量，即命中结果中 `info.tags` 包含 `tech`、`detect` 或 `favicon` 任一标签的数量，不再根据模板名称或结果名称是否包含“指纹识别”判断。
 
 ## 1. 获取模板列表
 
@@ -203,7 +203,7 @@ curl "http://127.0.0.1:8686/api/v1/templates/options/protocols"
 ```
 
 - 说明：
-  - `fingerprintTemplateCount` 表示 `info.tags` 中包含 `tech` 标签的模板数量，其他标签不计入该字段。
+  - `fingerprintTemplateCount` 表示 `info.tags` 中包含 `tech`、`detect` 或 `favicon` 任一标签的模板数量，同一个模板只统计一次。
 
 - 错误码说明：
   - `50001`：模板目录读取或解析失败
@@ -768,7 +768,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=
   - 首个事件为 `snapshot`
   - 后续事件为 `event`
   - `progress` 与 `result` 类型事件会额外携带最新的 `task` 统计快照，便于前端实时刷新漏洞数、指纹数、目标数和插件数
-  - `result` 类型事件中的 `event.tags` 为该命中结果的模板标签，包含 `tech` 时计入 `tech_count`
+  - `result` 类型事件中的 `event.tags` 为该命中结果的模板标签，包含 `tech`、`detect` 或 `favicon` 任一标签时计入 `tech_count`
   - 开启 `matcher_status` 后产生的 `match_failure` 事件只用于展示匹配失败调试信息，不会触发漏洞命中统计刷新
   - 任务结束后发送 `complete`
 

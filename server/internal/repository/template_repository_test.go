@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 )
@@ -65,5 +67,62 @@ workflows:
 	want := []string{"http", "tcp", "workflows"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("collectTemplateProtocols() = %v, want %v", got, want)
+	}
+}
+
+func TestTemplateRepositoryStatsCountsFingerprintTagsFromTechDetectAndFavicon(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	templates := map[string]string{
+		"tech.yaml": `id: tech-only
+info:
+  name: Tech Only
+  severity: info
+  tags: tech,platform
+`,
+		"detect.yaml": `id: detect-only
+info:
+  name: Detect Only
+  severity: info
+  tags: detect,platform
+`,
+		"favicon.yaml": `id: favicon-only
+info:
+  name: Favicon Only
+  severity: info
+  tags: favicon,platform
+`,
+		"mixed.yaml": `id: mixed-tech-detect
+info:
+  name: Mixed Tech Detect
+  severity: info
+  tags: tech,detect,platform
+`,
+		"plain.yaml": `id: plain-template
+info:
+  name: Plain Template
+  severity: info
+  tags: platform
+`,
+	}
+
+	for fileName, content := range templates {
+		path := filepath.Join(rootDir, fileName)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s) error = %v", fileName, err)
+		}
+	}
+
+	repo := NewTemplateRepository(rootDir)
+	stats, err := repo.Stats()
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	if stats.TemplateCount != len(templates) {
+		t.Fatalf("TemplateCount = %d, want %d", stats.TemplateCount, len(templates))
+	}
+	if stats.FingerprintTemplateCount != 4 {
+		t.Fatalf("FingerprintTemplateCount = %d, want 4", stats.FingerprintTemplateCount)
 	}
 }

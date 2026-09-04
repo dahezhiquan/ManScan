@@ -211,7 +211,7 @@ func (r *templateRepository) loadIndex() ([]templateListRecord, map[string]strin
 		if hasAnyTemplateTag(doc, newTemplateTagSet("cve")) {
 			stats.CVETemplateCount++
 		}
-		if hasAnyTemplateTag(doc, newTemplateTagSet("tech")) {
+		if hasAnyTemplateTag(doc, newTemplateTagSet("tech", "detect", "favicon")) {
 			stats.FingerprintTemplateCount++
 		}
 

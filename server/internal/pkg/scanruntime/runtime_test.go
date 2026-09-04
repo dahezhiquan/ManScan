@@ -593,39 +593,53 @@ func TestHandleJSONResultLineSkipsMatcherStatusFailures(t *testing.T) {
 	}
 }
 
-func TestHandleJSONResultLineCountsTechTagAsTech(t *testing.T) {
+func TestHandleJSONResultLineCountsFingerprintTagsAsFingerprint(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	state, err := NewState(37, "task-37", "demo", 1, dir)
-	if err != nil {
-		t.Fatalf("NewState() error = %v", err)
-	}
-	defer state.Close()
+	for _, tc := range []struct {
+		name string
+		tag  string
+	}{
+		{name: "tech", tag: "tech"},
+		{name: "detect", tag: "detect"},
+		{name: "favicon", tag: "favicon"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	line := `{"template-id":"nginx-detect","matched-at":"http://example.com/","info":{"name":"Nginx Detect","severity":"info","tags":["web","tech"]}}`
-	if !HandleJSONResultLine(line, state) {
-		t.Fatalf("HandleJSONResultLine() = false, want true")
-	}
+			dir := t.TempDir()
+			state, err := NewState(37, "task-37", "demo", 1, dir)
+			if err != nil {
+				t.Fatalf("NewState() error = %v", err)
+			}
+			defer state.Close()
 
-	summary := state.SnapshotResultSummary()
-	if summary.TechCount != 1 {
-		t.Fatalf("TechCount = %d, want 1", summary.TechCount)
-	}
-	if summary.InfoCount != 0 {
-		t.Fatalf("InfoCount = %d, want 0", summary.InfoCount)
-	}
+			line := `{"template-id":"nginx-detect","matched-at":"http://example.com/","info":{"name":"Nginx Detect","severity":"info","tags":["web","` + tc.tag + `"]}}`
+			if !HandleJSONResultLine(line, state) {
+				t.Fatalf("HandleJSONResultLine() = false, want true")
+			}
 
-	state.Close()
-	summary, ok, err := ReadResultSummaryFromMatchLog(filepath.Join(dir, "37", "match.log"), 1)
-	if err != nil {
-		t.Fatalf("ReadResultSummaryFromMatchLog() error = %v", err)
-	}
-	if !ok {
-		t.Fatalf("ReadResultSummaryFromMatchLog() ok = false, want true")
-	}
-	if summary.TechCount != 1 || summary.InfoCount != 0 {
-		t.Fatalf("unexpected match log summary: %+v", summary)
+			summary := state.SnapshotResultSummary()
+			if summary.TechCount != 1 {
+				t.Fatalf("TechCount = %d, want 1", summary.TechCount)
+			}
+			if summary.InfoCount != 0 {
+				t.Fatalf("InfoCount = %d, want 0", summary.InfoCount)
+			}
+
+			state.Close()
+			summary, ok, err := ReadResultSummaryFromMatchLog(filepath.Join(dir, "37", "match.log"), 1)
+			if err != nil {
+				t.Fatalf("ReadResultSummaryFromMatchLog() error = %v", err)
+			}
+			if !ok {
+				t.Fatalf("ReadResultSummaryFromMatchLog() ok = false, want true")
+			}
+			if summary.TechCount != 1 || summary.InfoCount != 0 {
+				t.Fatalf("unexpected match log summary: %+v", summary)
+			}
+		})
 	}
 }
 
@@ -669,7 +683,7 @@ func TestReadResultSummaryFromMatchLogDeduplicatesMatches(t *testing.T) {
 		{Seq: 1, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/"},
 		{Seq: 2, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/"},
 		{Seq: 3, Time: now, Level: "match", Type: "result", Message: "[任意文件读取][high] 命中 http://example.com/"},
-		{Seq: 4, Time: now, Level: "match", Type: "result", Message: "[Nginx Detect][info] 命中 http://example.com/", Tags: []string{"tech"}},
+		{Seq: 4, Time: now, Level: "match", Type: "result", Message: "[Nginx Detect][info] 命中 http://example.com/", Tags: []string{"detect"}},
 	}
 	writeTaskLogEvents(t, path, events)
 

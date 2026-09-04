@@ -294,7 +294,7 @@ func (s *State) RecordResult(templateID, templateName, severity string, tags []s
 	if templateID != "" {
 		s.matchedTemplate[templateID] = struct{}{}
 	}
-	if HasTechTag(tags) {
+	if HasFingerprintTag(tags) {
 		s.resultSummary.TechCount++
 		s.progress.Matched++
 		s.writeProgressSnapshotLocked()
@@ -318,11 +318,12 @@ func (s *State) RecordResult(templateID, templateName, severity string, tags []s
 	return true
 }
 
-// HasTechTag reports whether a template tag list contains the tech tag.
-func HasTechTag(tags []string) bool {
+// HasFingerprintTag reports whether a template tag list contains a fingerprint tag.
+func HasFingerprintTag(tags []string) bool {
 	for _, tag := range tags {
 		for _, item := range strings.Split(tag, ",") {
-			if strings.EqualFold(strings.TrimSpace(item), "tech") {
+			switch strings.ToLower(strings.TrimSpace(item)) {
+			case "tech", "detect", "favicon":
 				return true
 			}
 		}
@@ -721,7 +722,7 @@ func ReadResultSummaryFromMatchLog(path string, targetCount int) (ResultSummary,
 		seenResults[key] = struct{}{}
 
 		_, severity := parseResultMessageLabels(key)
-		if HasTechTag(event.Tags) {
+		if HasFingerprintTag(event.Tags) {
 			summary.TechCount++
 			continue
 		}
