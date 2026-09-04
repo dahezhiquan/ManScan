@@ -106,37 +106,50 @@ func (t *Tracker) DisplayTopStats(noColor bool) {
 	stats := t.GetStats()
 
 	if len(stats.StatusCodeStats) > 0 {
-		fmt.Printf("\n%s\n", aurora.Bold(aurora.Blue("Top Status Codes:")))
+		// Prefix with [INF] so the task runtime can surface this summary in frontend logs.
+		if noColor {
+			fmt.Printf("\n[INF] Top Status Codes:\n")
+		} else {
+			fmt.Printf("\n[INF] %s\n", aurora.Bold(aurora.Blue("Top Status Codes:")))
+		}
 		topStatusCodes := getTopN(stats.StatusCodeStats, 6)
 		for _, item := range topStatusCodes {
 			if noColor {
-				fmt.Printf("  %s: %d\n", item.Key, item.Value)
+				fmt.Printf("[INF]   %s: %d\n", item.Key, item.Value)
 			} else {
 				color := getStatusCodeColor(item.Key)
-				fmt.Printf("  %s: %d\n", aurora.Colorize(item.Key, color), item.Value)
+				fmt.Printf("[INF]   %s: %d\n", aurora.Colorize(item.Key, color), item.Value)
 			}
 		}
 	}
 
 	if len(stats.ErrorStats) > 0 {
-		fmt.Printf("\n%s\n", aurora.Bold(aurora.Red("Top Errors:")))
+		if noColor {
+			fmt.Printf("\n[INF] Top Errors:\n")
+		} else {
+			fmt.Printf("\n[INF] %s\n", aurora.Bold(aurora.Red("Top Errors:")))
+		}
 		topErrors := getTopN(stats.ErrorStats, 5)
 		for _, item := range topErrors {
 			if noColor {
-				fmt.Printf("  %s: %d\n", item.Key, item.Value)
+				fmt.Printf("[INF]   %s: %d\n", item.Key, item.Value)
 			} else {
-				fmt.Printf("  %s: %d\n", aurora.Red(item.Key), item.Value)
+				fmt.Printf("[INF]   %s: %d\n", aurora.Red(item.Key), item.Value)
 			}
 		}
 	}
 
 	if len(stats.WAFStats) > 0 {
-		fmt.Printf("\n%s\n", aurora.Bold(aurora.Yellow("WAF Detections:")))
+		if noColor {
+			fmt.Printf("\n[INF] WAF Detections:\n")
+		} else {
+			fmt.Printf("\n[INF] %s\n", aurora.Bold(aurora.Yellow("WAF Detections:")))
+		}
 		for name, count := range stats.WAFStats {
 			if noColor {
-				fmt.Printf("  %s: %d\n", name, count)
+				fmt.Printf("[INF]   %s: %d\n", name, count)
 			} else {
-				fmt.Printf("  %s: %d\n", aurora.Yellow(name), count)
+				fmt.Printf("[INF]   %s: %d\n", aurora.Yellow(name), count)
 			}
 		}
 	}

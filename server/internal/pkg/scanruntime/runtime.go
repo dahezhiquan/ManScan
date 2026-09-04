@@ -120,6 +120,7 @@ type State struct {
 	completedRequests   int64
 	lastLogicalRequests int64
 	mirroredErrors      int64
+	httpStatsBase       map[string]int
 	subscribers         map[chan TaskLogEvent]struct{}
 }
 
@@ -166,12 +167,31 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 		subscribers:      make(map[chan TaskLogEvent]struct{}),
 		events:           events,
 		nextSeq:          nextSeq,
+		httpStatsBase:    loadHTTPStatsBase(events),
 		resultSummary: ResultSummary{
 			TargetCount: targetCount,
 		},
 		progress:          progress,
 		completedRequests: estimateCompletedRequests(progress),
 	}, nil
+}
+
+func (s *State) AppendHTTPStats(current map[string]int) {
+	if len(current) == 0 {
+		return
+	}
+
+	s.mu.RLock()
+	base := cloneHTTPStatsCounts(s.httpStatsBase)
+	s.mu.RUnlock()
+
+	merged := mergeHTTPStatsCounts(base, current)
+	s.AppendEvent(TaskLogEvent{
+		Time:    time.Now(),
+		Level:   "info",
+		Type:    "http_stats",
+		Message: formatHTTPStatsMessage(merged),
+	})
 }
 
 func (s *State) Append(level, eventType, message string) {
@@ -615,6 +635,19 @@ func loadExistingEvents(path string, limit int) ([]TaskLogEvent, int64) {
 	return events, maxSeq
 }
 
+func loadHTTPStatsBase(events []TaskLogEvent) map[string]int {
+	for index := len(events) - 1; index >= 0; index-- {
+		event := events[index]
+		if !strings.EqualFold(event.Level, "info") || !strings.EqualFold(event.Type, "http_stats") {
+			continue
+		}
+		if counts := parseHTTPStatsMessage(event.Message); len(counts) > 0 {
+			return counts
+		}
+	}
+	return nil
+}
+
 func loadProgressSnapshot(path string) TaskProgressSnapshot {
 	snapshot := TaskProgressSnapshot{
 		LastUpdatedAt: time.Now(),
@@ -761,10 +794,31 @@ func StreamCommandOutput(reader io.Reader, state *State, stream string, parseRes
 func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream string, parseResultJSON bool, resultHandler ResultHandler) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	httpStatsCapture := false
+	httpStatsLines := make([]string, 0, 8)
+	trimHTTPStatsHeader := func(message string) string {
+		return strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(message, "[INF]"), "[INFO]"))
+	}
+	trimHTTPStatsDetail := func(message string) string {
+		return strings.TrimPrefix(strings.TrimPrefix(message, "[INF]"), "[INFO]")
+	}
+	flushHTTPStats := func() {
+		if len(httpStatsLines) == 0 {
+			httpStatsCapture = false
+			return
+		}
+		snapshot := parseHTTPStatsBlock(httpStatsLines)
+		state.AppendHTTPStats(snapshot)
+		httpStatsLines = httpStatsLines[:0]
+		httpStatsCapture = false
+	}
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
+			if httpStatsCapture {
+				flushHTTPStats()
+			}
 			continue
 		}
 
@@ -780,6 +834,18 @@ func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream
 		}
 
 		if level, message, ok := ClassifyScannerLogLine(line); ok {
+			if httpStatsCapture {
+				if strings.HasPrefix(message, "[INF]   ") || strings.HasPrefix(message, "[INFO]   ") {
+					httpStatsLines = append(httpStatsLines, trimHTTPStatsDetail(message))
+					continue
+				}
+				flushHTTPStats()
+			}
+			if strings.EqualFold(level, "info") && (message == "[INF] Top Status Codes:" || message == "[INFO] Top Status Codes:") {
+				httpStatsCapture = true
+				httpStatsLines = append(httpStatsLines, trimHTTPStatsHeader(message))
+				continue
+			}
 			if level == "warn" || level == "error" {
 				state.Append(level, stream, message)
 			}
@@ -790,6 +856,9 @@ func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream
 		}
 	}
 
+	if httpStatsCapture {
+		flushHTTPStats()
+	}
 	if !parseResultJSON {
 		state.SyncScannerErrors()
 	}
@@ -1076,17 +1145,13 @@ func FilterFrontendLogEvents(events []TaskLogEvent) []TaskLogEvent {
 
 	filtered := make([]TaskLogEvent, 0, len(events))
 	seenResults := make(map[string]struct{})
+	indexedResults := make(map[string]int)
+	matched := 0
 	for _, event := range events {
 		if ShouldHideFrontendLogEvent(event) {
 			continue
 		}
-		if key := frontendResultEventKey(event); key != "" {
-			if _, ok := seenResults[key]; ok {
-				continue
-			}
-			seenResults[key] = struct{}{}
-		}
-		filtered = append(filtered, event)
+		filtered, matched = appendLatestFrontendEvent(filtered, seenResults, indexedResults, matched, len(events), event)
 	}
 	return filtered
 }
@@ -1125,6 +1190,9 @@ func buildFrontendEventsBefore(events []TaskLogEvent, offset int64, limit int) T
 
 func frontendResultEventKey(event TaskLogEvent) string {
 	if !strings.EqualFold(event.Level, "match") || !strings.EqualFold(event.Type, "result") {
+		if strings.EqualFold(event.Level, "info") && strings.EqualFold(event.Type, "http_stats") {
+			return "http_stats"
+		}
 		return ""
 	}
 	return strings.TrimSpace(event.Message)
@@ -1441,6 +1509,120 @@ func ParseFloat64(value string) float64 {
 	var parsed float64
 	_, _ = fmt.Sscan(value, &parsed)
 	return parsed
+}
+
+func parseHTTPStatsBlock(lines []string) map[string]int {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	counts := make(map[string]int)
+	for _, line := range lines {
+		code, value, ok := parseHTTPStatsLine(line)
+		if !ok {
+			continue
+		}
+		counts[code] += value
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+func parseHTTPStatsMessage(message string) map[string]int {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return nil
+	}
+	return parseHTTPStatsBlock(strings.Split(message, "\n"))
+}
+
+func parseHTTPStatsLine(line string) (string, int, bool) {
+	line = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "[INF]"), "[INFO]"))
+	if line == "" || strings.EqualFold(line, "Top Status Codes:") {
+		return "", 0, false
+	}
+
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
+		return "", 0, false
+	}
+
+	code := strings.TrimSpace(parts[0])
+	if code == "" {
+		return "", 0, false
+	}
+
+	value := strings.TrimSpace(parts[1])
+	if value == "" {
+		return "", 0, false
+	}
+
+	var parsed int
+	if _, err := fmt.Sscan(value, &parsed); err != nil {
+		return "", 0, false
+	}
+	return code, parsed, true
+}
+
+func mergeHTTPStatsCounts(base, current map[string]int) map[string]int {
+	if len(base) == 0 && len(current) == 0 {
+		return nil
+	}
+
+	merged := make(map[string]int, len(base)+len(current))
+	for code, value := range base {
+		merged[code] = value
+	}
+	for code, value := range current {
+		merged[code] += value
+	}
+	return merged
+}
+
+func cloneHTTPStatsCounts(source map[string]int) map[string]int {
+	if len(source) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]int, len(source))
+	for code, value := range source {
+		cloned[code] = value
+	}
+	return cloned
+}
+
+func formatHTTPStatsMessage(counts map[string]int) string {
+	if len(counts) == 0 {
+		return ""
+	}
+
+	type httpStatItem struct {
+		Key   string
+		Value int
+	}
+
+	items := make([]httpStatItem, 0, len(counts))
+	for code, value := range counts {
+		items = append(items, httpStatItem{Key: code, Value: value})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Value == items[j].Value {
+			return items[i].Key < items[j].Key
+		}
+		return items[i].Value > items[j].Value
+	})
+
+	var builder strings.Builder
+	builder.WriteString("Top Status Codes:")
+	for _, item := range items {
+		builder.WriteString("\n  ")
+		builder.WriteString(item.Key)
+		builder.WriteString(": ")
+		builder.WriteString(fmt.Sprintf("%d", item.Value))
+	}
+	return builder.String()
 }
 
 func NormalizeProgressPercent(percent float64, requests, total int64) float64 {

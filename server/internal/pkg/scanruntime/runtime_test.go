@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -85,6 +86,27 @@ func TestFilterFrontendLogEvents(t *testing.T) {
 
 	if filtered[0].Seq != 1 {
 		t.Fatalf("FilterFrontendLogEvents() kept unexpected events: %+v", filtered)
+	}
+}
+
+func TestFilterFrontendLogEventsKeepsLatestHTTPStatsBlock(t *testing.T) {
+	t.Parallel()
+
+	events := []TaskLogEvent{
+		{Seq: 1, Level: "info", Type: "task_started", Message: "扫描任务开始执行"},
+		{Seq: 2, Level: "info", Type: "http_stats", Message: "Top Status Codes:\n  200: 1"},
+		{Seq: 3, Level: "info", Type: "http_stats", Message: "Top Status Codes:\n  200: 2"},
+	}
+
+	filtered := FilterFrontendLogEvents(events)
+	if len(filtered) != 2 {
+		t.Fatalf("FilterFrontendLogEvents() len = %d, want 2", len(filtered))
+	}
+	if filtered[0].Seq != 1 {
+		t.Fatalf("FilterFrontendLogEvents() first event = %+v, want seq 1", filtered[0])
+	}
+	if filtered[1].Seq != 3 {
+		t.Fatalf("FilterFrontendLogEvents() second event = %+v, want latest http_stats", filtered[1])
 	}
 }
 
@@ -304,6 +326,68 @@ func TestReadLogEventsFromFileNextOffsetMatchesLastReturnedSeq(t *testing.T) {
 	}
 	if nextHasMore {
 		t.Fatalf("ReadLogEventsFromFile() next page HasMore = true, want false")
+	}
+}
+
+func TestStreamCommandOutputWithResultHandlerCapturesHTTPStatsBlock(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewState(102, "task-102", "runtime-task", 1, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	input := strings.NewReader("{\"template-id\":\"demo\"}\n[INF] Top Status Codes:\n[INF]   404: 1\n[INF]   200: 2\n[INF] Top Errors:\n")
+	StreamCommandOutputWithResultHandler(input, state, "stdout", true, nil)
+
+	events := state.EventsSince(0, 10).Events
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want 2 events including http stats", events)
+	}
+	if events[1].Level != "info" || events[1].Type != "http_stats" {
+		t.Fatalf("event = %+v, want info http_stats", events[1])
+	}
+	if got := events[1].Message; got != "Top Status Codes:\n  200: 2\n  404: 1" {
+		t.Fatalf("event message = %q, want multiline http stats block", got)
+	}
+}
+
+func TestAppendHTTPStatsMergesWithPreviousRunTotals(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	runtimeDir := filepath.Join(rootDir, "data", "runtime")
+	taskDir := filepath.Join(runtimeDir, "103")
+	if err := os.MkdirAll(taskDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	events := []TaskLogEvent{
+		{Seq: 1, Level: "info", Type: "task_started", Message: "扫描任务开始执行"},
+		{Seq: 2, Level: "info", Type: "http_stats", Message: "Top Status Codes:\n  200: 185\n  405: 76\n  307: 1"},
+		{Seq: 3, Level: "info", Type: "task_resume_requested", Message: "扫描任务恢复执行"},
+	}
+	writeTaskLogEvents(t, filepath.Join(taskDir, "events.jsonl"), events)
+
+	state, err := NewState(103, "task-103", "runtime-task", 1, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	state.AppendHTTPStats(map[string]int{
+		"200": 176,
+		"405": 91,
+		"400": 1,
+	})
+
+	logs := state.EventsSince(0, 10).Events
+	if len(logs) != 4 {
+		t.Fatalf("events = %+v, want 4", logs)
+	}
+	if got := logs[3].Message; got != "Top Status Codes:\n  200: 361\n  405: 167\n  307: 1\n  400: 1" {
+		t.Fatalf("merged http stats = %q, want cumulative total", got)
 	}
 }
 

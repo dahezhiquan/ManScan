@@ -1,3 +1,15 @@
+## 2026-09-03 15:48 将 HTTP 状态码统计改为可被前端日志捕获
+
+- 变动目录：`pkg/output/stats/`
+- 变动文件：`pkg/output/stats/stats.go`、`pkg/output/stats/stats_test.go`
+- 具体修改内容：
+  - 在 `pkg/output/stats/stats.go` 的 `DisplayTopStats` 中，将 `Top Status Codes`、`Top Errors`、`WAF Detections` 三段统计输出统一改为以 `[INF]` 前缀打印，保留原有统计内容和颜色展示方式。
+  - 这样扫描任务在结束时输出的统计摘要会被 `server/internal/pkg/scanruntime` 的日志解析器识别为普通 info 日志，从而进入前端的扫描日志事件流。
+  - 在 `pkg/output/stats/stats_test.go` 中新增回归测试，验证状态码统计输出确实包含 `[INF]` 前缀和状态码计数，避免后续再次改回普通 `fmt.Printf` 后前端日志看不到这段摘要。
+- 修改目的或影响：
+  - 让开启 `HTTPStats` 后的统计摘要不再只停留在终端，而是能够进入扫描任务前端日志。
+  - 这次修改只改变统计摘要的输出格式，不影响状态码统计、WAF 统计和错误统计本身的计数逻辑。
+
 ## 2026-09-02 10:43 记录漏洞详情中的完整 POC 请求链
 
 - 变动目录：`pkg/protocols/http/`
