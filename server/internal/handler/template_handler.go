@@ -134,9 +134,6 @@ func parseMultiValueQuery(c *gin.Context, key string) []string {
 	for _, value := range c.QueryArray(key) {
 		appendValue(value)
 	}
-	if value := strings.TrimSpace(c.Query(key)); value != "" {
-		appendValue(value)
-	}
 	return result
 }
 

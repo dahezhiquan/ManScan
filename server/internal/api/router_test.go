@@ -9,12 +9,13 @@ import (
 func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(nil, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{})
+	router := NewRouter(nil, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetConfigCenterHandler{})
 	routes := router.Routes()
 
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/vulnerabilities")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/asset-config-centers")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/scans")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/scans/:id/responses/archive")
 }
@@ -62,3 +63,7 @@ func (noopVulnerabilityHandler) Detail(*gin.Context)            {}
 func (noopVulnerabilityHandler) UpdateStatus(*gin.Context)      {}
 func (noopVulnerabilityHandler) BatchUpdateStatus(*gin.Context) {}
 func (noopVulnerabilityHandler) Delete(*gin.Context)            {}
+
+type noopAssetConfigCenterHandler struct{}
+
+func (noopAssetConfigCenterHandler) List(*gin.Context) {}

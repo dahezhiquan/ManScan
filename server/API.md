@@ -1223,3 +1223,53 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/scans" \
 ```bash
 curl -OJ "http://127.0.0.1:8686/api/v1/scans/1/responses/archive"
 ```
+
+## 24. 获取资产配置中心列表
+
+- 请求方法和路径：`GET /api/v1/asset-config-centers`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | `int` | 否 | 页码，最小为 `1`，默认 `1` |
+| `page_size` | `int` | 否 | 每页条数，最小为 `1`，最大为 `100`，默认 `10` |
+| `item_name` | `string` / `string[]` | 否 | 按项名称模糊过滤，支持逗号分隔和多参数 |
+| `big_category` | `string` / `string[]` | 否 | 按大分类模糊过滤，支持逗号分隔和多参数 |
+| `small_category` | `string` / `string[]` | 否 | 按小分类模糊过滤，支持逗号分隔和多参数 |
+| `status` | `string` / `string[]` | 否 | 按状态过滤，支持 `enabled` 和 `disabled`，支持逗号分隔和多参数 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 2,
+    "totalPages": 1,
+    "items": [
+      {
+        "id": 1,
+        "item_name": "登录页配置",
+        "big_category": "前端",
+        "small_category": "页面",
+        "status": "enabled",
+        "description": "登录页相关配置"
+      }
+    ]
+  }
+}
+```
+
+- 错误码说明：
+  - `40001`：请求参数格式不正确，例如 `page` 或 `page_size` 非整数，或 `page_size` 超出 `1-100`
+  - `50001`：查询资产配置中心列表失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/asset-config-centers?page=1&page_size=10&item_name=登录&status=enabled"
+```
