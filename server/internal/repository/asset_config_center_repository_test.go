@@ -73,3 +73,40 @@ func TestAssetConfigCenterRepositoryListFiltersAndPaginates(t *testing.T) {
 		t.Fatalf("paged item name = %q, want Gamma Policy", paged.Items[0].ItemName)
 	}
 }
+
+func TestAssetConfigCenterRepositoryListSmallCategoriesByBigCategories(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+
+	if err := db.AutoMigrate(&entity.AssetConfigCenter{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	items := []entity.AssetConfigCenter{
+		{ID: 1, ItemName: "Alpha Config", BigCategory: "app", SmallCategory: "web", Status: "enabled"},
+		{ID: 2, ItemName: "Beta Config", BigCategory: "app", SmallCategory: "api", Status: "disabled"},
+		{ID: 3, ItemName: "Gamma Policy", BigCategory: "security", SmallCategory: "web", Status: "enabled"},
+		{ID: 4, ItemName: "Delta Policy", BigCategory: "app", SmallCategory: "api", Status: "enabled"},
+	}
+	for i := range items {
+		if err := db.Create(&items[i]).Error; err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+
+	repo := NewAssetConfigCenterRepository(db)
+	smallCategories, err := repo.ListSmallCategoriesByBigCategories(context.Background(), []string{"app", "app", "security"})
+	if err != nil {
+		t.Fatalf("ListSmallCategoriesByBigCategories() error = %v", err)
+	}
+	if len(smallCategories) != 2 || smallCategories[0] != "api" || smallCategories[1] != "web" {
+		t.Fatalf("smallCategories = %+v, want [api web]", smallCategories)
+	}
+}

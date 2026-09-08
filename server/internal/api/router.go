@@ -34,6 +34,10 @@ func NewRouter(
 	v1.GET("/vulnerabilities/:id", vulnerabilityHandler.Detail)
 
 	v1.GET("/asset-config-centers", assetConfigCenterHandler.List)
+	v1.GET("/asset-config-centers/options/small-categories", assetConfigCenterHandler.SmallCategoryOptions)
+	v1.POST("/asset-config-centers", assetConfigCenterHandler.Create)
+	v1.PUT("/asset-config-centers/:id", assetConfigCenterHandler.Update)
+	v1.DELETE("/asset-config-centers/:id", assetConfigCenterHandler.Delete)
 
 	v1.GET("/scans", scanTaskHandler.List)
 	v1.GET("/scans/stats", scanTaskHandler.Stats)

@@ -16,6 +16,10 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/asset-config-centers")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/asset-config-centers/options/small-categories")
+	assertRouteRegistered(t, routes, "POST", "/api/v1/asset-config-centers")
+	assertRouteRegistered(t, routes, "PUT", "/api/v1/asset-config-centers/:id")
+	assertRouteRegistered(t, routes, "DELETE", "/api/v1/asset-config-centers/:id")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/scans")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/scans/:id/responses/archive")
 }
@@ -66,4 +70,8 @@ func (noopVulnerabilityHandler) Delete(*gin.Context)            {}
 
 type noopAssetConfigCenterHandler struct{}
 
-func (noopAssetConfigCenterHandler) List(*gin.Context) {}
+func (noopAssetConfigCenterHandler) Create(*gin.Context)               {}
+func (noopAssetConfigCenterHandler) List(*gin.Context)                 {}
+func (noopAssetConfigCenterHandler) SmallCategoryOptions(*gin.Context) {}
+func (noopAssetConfigCenterHandler) Update(*gin.Context)               {}
+func (noopAssetConfigCenterHandler) Delete(*gin.Context)               {}
