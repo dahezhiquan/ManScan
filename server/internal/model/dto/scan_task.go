@@ -18,6 +18,9 @@ type CreateScanTaskRequest struct {
 	InputFileMode                 string   `json:"input_file_mode"`
 	NewTemplates                  bool     `json:"new_templates"`
 	AutomaticScan                 bool     `json:"automatic_scan"`
+	DAST                          bool     `json:"dast"`
+	EnableCodeTemplates           bool     `json:"enable_code_templates"`
+	EnableFileTemplates           bool     `json:"enable_file_templates"`
 	EnableGlobalMatchersTemplates bool     `json:"enable_global_matchers_templates"`
 	Tags                          []string `json:"tags"`
 	IncludeIDs                    []string `json:"include_ids"`

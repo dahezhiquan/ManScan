@@ -19,6 +19,9 @@ type ScanTask struct {
 	InputFileMode                 string     `gorm:"column:input_file_mode"`
 	NewTemplates                  bool       `gorm:"column:new_templates"`
 	AutomaticScan                 bool       `gorm:"column:automatic_scan"`
+	DAST                          bool       `gorm:"column:dast"`
+	EnableCodeTemplates           bool       `gorm:"column:enable_code_templates"`
+	EnableFileTemplates           bool       `gorm:"column:enable_file_templates"`
 	EnableGlobalMatchersTemplates bool       `gorm:"column:enable_global_matchers_templates"`
 	Tags                          string     `gorm:"column:tags"`
 	IncludeIDs                    string     `gorm:"column:include_ids"`

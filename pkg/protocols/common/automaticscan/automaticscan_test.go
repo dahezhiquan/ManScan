@@ -13,3 +13,8 @@ func TestNormalizeAppName(t *testing.T) {
 	appName = normalizeAppName("JBoss:2.3.5")
 	require.Equal(t, "jboss", appName, "could not get normalized name")
 }
+
+func TestFilterAutomaticScanExecutionTags(t *testing.T) {
+	tags := filterAutomaticScanExecutionTags([]string{"python", "detect", "DETECT", "uvicorn"})
+	require.Equal(t, []string{"python", "uvicorn"}, tags)
+}

@@ -353,6 +353,38 @@ func TestStreamCommandOutputWithResultHandlerCapturesHTTPStatsBlock(t *testing.T
 	}
 }
 
+func TestStreamCommandOutputCapturesAutomaticFingerprintInfo(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewState(104, "task-104", "runtime-task", 1, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	input := strings.NewReader("[INF] https://example.com 已完成自动指纹识别：nginx, php\n")
+	StreamCommandOutputWithResultHandler(input, state, "stdout", true, nil)
+
+	events := state.EventsSince(0, 10).Events
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want one automatic fingerprint info event", events)
+	}
+	if events[0].Level != "info" || events[0].Type != "stdout" {
+		t.Fatalf("event = %+v, want info stdout event", events[0])
+	}
+	if events[0].Message != "https://example.com 已完成自动指纹识别：nginx, php" {
+		t.Fatalf("event message = %q, want automatic fingerprint tags message", events[0].Message)
+	}
+}
+
+func TestTrimAutomaticFingerprintMessageRequiresTarget(t *testing.T) {
+	t.Parallel()
+
+	if got := trimAutomaticFingerprintMessage("[INF] 已完成自动指纹识别：nginx"); got != "" {
+		t.Fatalf("trimAutomaticFingerprintMessage() = %q, want empty message without target", got)
+	}
+}
+
 func TestAppendHTTPStatsMergesWithPreviousRunTotals(t *testing.T) {
 	t.Parallel()
 

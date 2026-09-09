@@ -192,6 +192,9 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 		InputFileMode:                 firstNonEmpty(strings.TrimSpace(request.InputFileMode), "list"),
 		NewTemplates:                  request.NewTemplates,
 		AutomaticScan:                 request.AutomaticScan,
+		DAST:                          request.DAST,
+		EnableCodeTemplates:           request.EnableCodeTemplates,
+		EnableFileTemplates:           request.EnableFileTemplates,
 		EnableGlobalMatchersTemplates: request.EnableGlobalMatchersTemplates,
 		Tags:                          mustJSON(cleanStringSlice(request.Tags)),
 		IncludeIDs:                    mustJSON(cleanStringSlice(request.IncludeIDs)),
@@ -1206,6 +1209,9 @@ func normalizedTaskRequestFromTask(task *entity.ScanTask) (*normalizedTaskReques
 		InputFileMode:                 task.InputFileMode,
 		NewTemplates:                  task.NewTemplates,
 		AutomaticScan:                 task.AutomaticScan,
+		DAST:                          task.DAST,
+		EnableCodeTemplates:           task.EnableCodeTemplates,
+		EnableFileTemplates:           task.EnableFileTemplates,
 		EnableGlobalMatchersTemplates: task.EnableGlobalMatchersTemplates,
 		Tags:                          decodeJSONStringSlice(task.Tags),
 		IncludeIDs:                    decodeJSONStringSlice(task.IncludeIDs),
@@ -1351,6 +1357,9 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 	appendBool(request.ScanAllIPs, "-sa")
 	appendBool(request.NewTemplates, "-nt")
 	appendBool(request.AutomaticScan, "-as")
+	appendBool(request.DAST, "-dast")
+	appendBool(request.EnableCodeTemplates, "-code")
+	appendBool(request.EnableFileTemplates, "-file")
 	appendBool(request.EnableGlobalMatchersTemplates, "-egm")
 	appendBool(request.StoreResponse, "-sresp")
 	if request.StoreResponse {

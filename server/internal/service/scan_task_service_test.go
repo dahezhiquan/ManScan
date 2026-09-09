@@ -79,6 +79,43 @@ func TestBuildScanCLIArgsUsesTaskScopedStoreResponseDir(t *testing.T) {
 	}
 }
 
+func TestBuildScanCLIArgsIncludesTemplateCapabilities(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	args := buildScanCLIArgs(
+		dto.CreateScanTaskRequest{
+			DAST:                true,
+			EnableCodeTemplates: true,
+			EnableFileTemplates: true,
+			Headless:            true,
+		},
+		filepath.Join(rootDir, "runtime"),
+		filepath.Join(rootDir, "runtime", "targets.txt"),
+		filepath.Join(rootDir, "runtime", "resume.cfg"),
+		filepath.Join(rootDir, "responses"),
+	)
+
+	for _, flag := range []string{"-dast", "-code", "-file", "--headless"} {
+		if !hasArg(args, flag) {
+			t.Fatalf("args missing %s: %v", flag, args)
+		}
+	}
+
+	args = buildScanCLIArgs(
+		dto.CreateScanTaskRequest{},
+		filepath.Join(rootDir, "runtime"),
+		filepath.Join(rootDir, "runtime", "targets.txt"),
+		filepath.Join(rootDir, "runtime", "resume.cfg"),
+		filepath.Join(rootDir, "responses"),
+	)
+	for _, flag := range []string{"-dast", "-code", "-file", "--headless"} {
+		if hasArg(args, flag) {
+			t.Fatalf("args unexpectedly include %s when capability is disabled: %v", flag, args)
+		}
+	}
+}
+
 func TestArchiveStoredResponsesCreatesZipAndRemovesTaskDirectory(t *testing.T) {
 	t.Parallel()
 

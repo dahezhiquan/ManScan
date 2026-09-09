@@ -19,6 +19,8 @@ const (
 	DefaultLogPageSize = 200
 	MaxLogPageSize     = 1000
 	MaxSubscribers     = 32
+
+	automaticFingerprintCompletedMessage = "已完成自动指纹识别："
 )
 
 var ansiLogPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -847,6 +849,11 @@ func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream
 				httpStatsLines = append(httpStatsLines, trimHTTPStatsHeader(message))
 				continue
 			}
+			if strings.EqualFold(level, "info") {
+				if infoMessage := trimAutomaticFingerprintMessage(message); infoMessage != "" {
+					state.Append("info", stream, infoMessage)
+				}
+			}
 			if level == "warn" || level == "error" {
 				state.Append(level, stream, message)
 			}
@@ -867,6 +874,15 @@ func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream
 	if err := scanner.Err(); err != nil {
 		state.Append("error", stream+"_scan_error", "读取扫描输出失败")
 	}
+}
+
+func trimAutomaticFingerprintMessage(message string) string {
+	message = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(message, "[INF]"), "[INFO]"))
+	markerIndex := strings.Index(message, automaticFingerprintCompletedMessage)
+	if markerIndex <= 0 || strings.TrimSpace(message[:markerIndex]) == "" {
+		return ""
+	}
+	return message
 }
 
 func HandleJSONResultLine(line string, state *State) bool {

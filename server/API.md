@@ -389,10 +389,13 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `include_ids`         | `string[]` | 否  | 模板 ID 过滤           |
 | `severities`          | `string[]` | 否  | 严重级别过滤             |
 | `protocols`           | `string[]` | 否  | 协议类型过滤，口径与模板协议选项一致 |
+| `dast`                | `bool`     | 否  | 启用 DAST/fuzzable 模板，对应 `-dast` |
+| `enable_code_templates` | `bool`   | 否  | 启用 Code 协议模板，对应 `-code` |
+| `enable_file_templates` | `bool`   | 否  | 启用 File 协议模板，对应 `-file` |
 | `rate_limit`          | `int`      | 否  | 速率限制               |
 | `template_threads`    | `int`      | 否  | 模板并发数              |
 | `timeout`             | `int`      | 否  | 请求超时，单位秒           |
-| `headless`            | `bool`     | 否  | 是否启用 headless      |
+| `headless`            | `bool`     | 否  | 是否启用 headless，对应 `--headless` |
 | `proxy`               | `string[]` | 否  | 代理列表               |
 
 至少需要提供 `targets` 或 `inline_targets_list` 之一，当前不再限制单次任务的目标数量上限。
@@ -422,6 +425,8 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 - 错误码说明：
   - `40001`：目标为空或请求体非法
   - `50001`：任务入库失败或运行时目录创建失败
+
+模板能力开关默认均为关闭。`allow_local_file_access`（对应 `-lfa`）只控制本地文件访问权限，不等同于 `enable_file_templates`；需要执行 File 模板时必须显式开启后者。Headless DAST 模板需要同时开启 `headless` 和 `dast`。
 
 - 使用示例：
 

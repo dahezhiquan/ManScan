@@ -1,3 +1,38 @@
+## 2026-09-09 18:46 过滤自动识别阶段的 detect 标签
+
+- 变动目录：`pkg/protocols/common/automaticscan/`
+- 变动文件：`pkg/protocols/common/automaticscan/automaticscan.go`、`pkg/protocols/common/automaticscan/automaticscan_test.go`
+- 具体修改内容：
+  - 在自动指纹识别结果输出和最终漏洞模版加载前统一移除 `detect` 标签，避免前端展示内部识别标签，也避免将其作为模版选择条件。
+  - 当过滤后没有可执行的漏洞标签时直接跳过后续漏洞模版加载，并新增大小写不敏感的过滤回归测试。
+- 修改目的或影响：
+  - 防止 `detect` 标签出现在前端自动识别日志中或扩大最终漏洞模版选择范围。
+
+## 2026-09-09 18:46 当前目标写入自动指纹识别 tags 日志
+
+- 变动目录：`pkg/protocols/common/automaticscan/`、`server/internal/pkg/scanruntime/`
+- 变动文件：`pkg/protocols/common/automaticscan/automaticscan.go`、`server/internal/pkg/scanruntime/runtime.go`、`server/internal/pkg/scanruntime/runtime_test.go`
+- 具体修改内容：
+  - 将自动指纹识别完成日志中的固定文案“目标”替换为当前扫描目标，输出格式调整为 `<target> 已完成自动指纹识别：<tags>`。
+  - 更新服务端日志解析逻辑，识别带实际目标前缀的自动指纹识别消息，并拒绝缺少目标的无效消息。
+  - 更新回归测试，验证前端事件保留实际目标和 tags 内容。
+- 修改目的或影响：
+  - 修复前端自动模版映射 tags 结果无法区分具体扫描目标的问题，让多目标扫描时每条 tags 结果都能准确对应到本次扫描目标。
+
+## 2026-09-09 14:28 自动扫描完成指纹识别后向前端输出 tags
+
+- 变动目录：`pkg/protocols/common/automaticscan/`、`server/internal/pkg/scanruntime/`
+- 变动文件：`pkg/protocols/common/automaticscan/automaticscan.go`、`server/internal/pkg/scanruntime/runtime.go`、`server/internal/pkg/scanruntime/runtime_test.go`
+- 具体修改内容：
+  - 在自动扫描完成 Wappalyzer 和指纹探测模版执行、合并并去重最终 tags 后，新增一条 info 日志，输出格式为 `目标已完成自动指纹识别：<tags>`。
+  - 使用执行器配置中的 `Info()` logger 输出，并将日志放在最终模版加载前且不受 `VerboseVerbose` 开关限制，确保服务端扫描运行时能够解析并推送到前端。
+  - 当目标未识别到任何 tags 时也输出空 tags 日志，然后继续执行原有的跳过自动扫描逻辑。
+  - 在 `server/internal/pkg/scanruntime/runtime.go` 中仅将该指定 info 日志转成前端 `info` 事件，并去除 `[INF]`/`[INFO]` 前缀；其它普通 info 日志继续保持原有过滤行为。
+  - 在 `server/internal/pkg/scanruntime/runtime_test.go` 中新增回归测试，验证自动指纹识别 info 日志能够被捕获并保留完整 tags 内容。
+- 修改目的或影响：
+  - 让前端能够在自动指纹识别结束后及时看到当前目标最终用于模版匹配的 tags。
+  - 不改变 tags 的识别、过滤、去重和最终模版加载行为，也不增加其它引擎 info 日志的前端噪音。
+
 ## 2026-09-03 15:48 将 HTTP 状态码统计改为可被前端日志捕获
 
 - 变动目录：`pkg/output/stats/`

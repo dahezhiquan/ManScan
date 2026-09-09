@@ -168,13 +168,13 @@ func (s *Service) executeAutomaticScanOnTarget(input *contextargs.MetaInput) {
 	// also include any extra tags passed by user
 	finalTags = append(finalTags, s.opts.Options.Tags...)
 	finalTags = sliceutil.Dedupe(finalTags)
+	finalTags = filterAutomaticScanExecutionTags(finalTags)
+
+	s.opts.Logger.Info().Msgf("%s 已完成自动指纹识别：%s", input.Input, strings.Join(finalTags, ", "))
 
 	if len(finalTags) == 0 {
-		gologger.Warning().Msgf("Skipping automatic scan since no tags were found on %v\n", input.Input)
+		gologger.Warning().Msgf("Skipping automatic scan since no vulnerability tags were found on %v\n", input.Input)
 		return
-	}
-	if s.opts.Options.VerboseVerbose {
-		gologger.Print().Msgf("Final tags identified for %v: %+v\n", input.Input, finalTags)
 	}
 
 	finalTemplates, err := LoadTemplatesWithTags(s.ServiceOpts, s.templateDirs, finalTags, false)
@@ -190,6 +190,17 @@ func (s *Service) executeAutomaticScanOnTarget(input *contextargs.MetaInput) {
 
 	tmp := eng.ExecuteScanWithOpts(context.Background(), finalTemplates, provider.NewSimpleInputProviderWithUrls(s.opts.Options.ExecutionId, input.Input), true)
 	s.hasResults.Store(tmp.Load())
+}
+
+func filterAutomaticScanExecutionTags(tags []string) []string {
+	filtered := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if strings.EqualFold(tag, "detect") {
+			continue
+		}
+		filtered = append(filtered, tag)
+	}
+	return filtered
 }
 
 // getTagsUsingWappalyzer returns tags using wappalyzer by fingerprinting target
