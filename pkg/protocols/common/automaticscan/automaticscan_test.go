@@ -3,6 +3,7 @@ package automaticscan
 import (
 	"testing"
 
+	"ManScan/pkg/templates"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,4 +18,20 @@ func TestNormalizeAppName(t *testing.T) {
 func TestFilterAutomaticScanExecutionTags(t *testing.T) {
 	tags := filterAutomaticScanExecutionTags([]string{"python", "detect", "DETECT", "uvicorn"})
 	require.Equal(t, []string{"python", "uvicorn"}, tags)
+}
+
+func TestMappedTemplateCountDeduplicatesAcrossTargets(t *testing.T) {
+	targets := []mappedTarget{
+		{finalTemplates: []*templates.Template{
+			{ID: "http-misconfig"},
+			{ID: "xss"},
+		}},
+		{finalTemplates: []*templates.Template{
+			{ID: "http-misconfig"},
+			{Path: "/custom/ssrf.yaml"},
+			nil,
+		}},
+	}
+
+	require.EqualValues(t, 3, mappedTemplateCount(targets))
 }

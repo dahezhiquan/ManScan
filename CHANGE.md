@@ -1,3 +1,15 @@
+## 2026-09-10 修复自动模版映射实际漏洞插件数量不展示
+
+- 变动目录：`pkg/progress/`、`pkg/protocols/common/automaticscan/`
+- 变动文件：`pkg/progress/progress.go`、`pkg/protocols/common/automaticscan/automaticscan.go`
+- 具体修改内容：
+  - 在 `pkg/progress/progress.go` 中将模板数量从不可变静态字段改为原子计数器，并新增可选的 `SetTemplateCount` 能力，使扫描运行期间可以安全更新实际漏洞模板数量。
+  - 在 `pkg/progress/progress.go` 的普通进度和 `stats-json` 输出中兼容读取模板计数器及旧静态字段，保证已有自定义进度实现不受影响。
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中汇总所有目标映射出的漏洞模板 ID 并去重，在指纹映射全部完成、预估总请求数发布后同步写入实际漏洞插件数量。
+- 修改目的或影响：
+  - 开启自动模板映射时，前端详情页的“实际漏洞插件数量”不再固定显示为空或 `0`，多目标扫描也不会因同一模板命中多个目标而重复计数。
+  - 仅增加一次映射结果汇总和原子计数更新，不增加漏洞模板执行请求，不改变扫描并发、限速和扫描速度。
+
 ## 2026-09-10 修复自动模版映射分阶段进度统计
 
 - 变动目录：`pkg/progress/`、`pkg/protocols/common/automaticscan/`、`internal/tests/testutils/`、`server/internal/pkg/scanruntime/`、`server/internal/service/`、`server/`

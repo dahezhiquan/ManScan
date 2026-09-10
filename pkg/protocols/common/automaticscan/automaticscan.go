@@ -347,6 +347,28 @@ func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
 		}
 	}
 	s.totalGate.Publish(total)
+	if setter, ok := s.opts.Progress.(interface{ SetTemplateCount(int64) }); ok {
+		setter.SetTemplateCount(mappedTemplateCount(targets))
+	}
+}
+
+func mappedTemplateCount(targets []mappedTarget) int64 {
+	templateIDs := make(map[string]struct{})
+	for _, target := range targets {
+		for _, template := range target.finalTemplates {
+			if template == nil {
+				continue
+			}
+			templateID := strings.TrimSpace(template.ID)
+			if templateID == "" {
+				templateID = strings.TrimSpace(template.Path)
+			}
+			if templateID != "" {
+				templateIDs[templateID] = struct{}{}
+			}
+		}
+	}
+	return int64(len(templateIDs))
 }
 
 func (s *Service) executeMappedTemplates(target mappedTarget) {

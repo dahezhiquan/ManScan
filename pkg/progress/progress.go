@@ -82,7 +82,14 @@ func NewStatsTicker(duration int, active, outputJSON, cloud bool, port int) (Pro
 
 // Init initializes the progress display mechanism by setting counters, etc.
 func (p *StatsTicker) Init(hostCount int64, rulesCount int, requestCount int64) {
-	p.stats.AddStatic("templates", rulesCount)
+	if rulesCount < 0 {
+		rulesCount = 0
+	}
+	// Keep templates as a counter so the automatic-scan mapping phase can
+	// publish the actual vulnerability template count after initialization.
+	// Counters are backed by atomic values in clistats and remain safe to
+	// update while the ticker is running.
+	p.stats.AddCounter("templates", uint64(rulesCount))
 	p.stats.AddStatic("hosts", hostCount)
 	p.stats.AddStatic("startedAt", time.Now())
 	p.stats.AddCounter("requests", uint64(0))
@@ -120,6 +127,24 @@ func (p *StatsTicker) Init(hostCount int64, rulesCount int, requestCount int64) 
 			}
 			return nil
 		})
+	}
+}
+
+// SetTemplateCount publishes the number of vulnerability templates selected
+// for the current scan. The value is monotonic because clistats counters only
+// support increments after the statistics ticker starts.
+func (p *StatsTicker) SetTemplateCount(count int64) {
+	if count < 0 {
+		count = 0
+	}
+
+	current, ok := p.stats.GetCounter("templates")
+	if !ok || count <= int64(current) {
+		return
+	}
+	p.stats.IncrementCounter("templates", int(count-int64(current)))
+	if p.active {
+		p.emitCurrentSummary()
 	}
 }
 
@@ -196,9 +221,14 @@ func (p *StatsTicker) makePrintCallback() func(stats clistats.StatisticsClient) 
 			}
 		}
 
-		if templates, ok := stats.GetStatic("templates"); ok {
+		templateCount, ok := stats.GetCounter("templates")
+		var templateValue interface{} = templateCount
+		if !ok {
+			templateValue, ok = stats.GetStatic("templates")
+		}
+		if ok {
 			builder.WriteString(" | Templates: ")
-			builder.WriteString(clistats.String(templates))
+			builder.WriteString(clistats.String(templateValue))
 		}
 
 		if hosts, ok := stats.GetStatic("hosts"); ok {
@@ -275,7 +305,11 @@ func metricsMap(stats clistats.StatisticsClient) map[string]interface{} {
 
 	results["startedAt"] = startedAt
 	results["duration"] = fmtDuration(duration)
-	templates, _ := stats.GetStatic("templates")
+	templateCount, ok := stats.GetCounter("templates")
+	var templates interface{} = templateCount
+	if !ok {
+		templates, _ = stats.GetStatic("templates")
+	}
 	results["templates"] = clistats.String(templates)
 	hosts, _ := stats.GetStatic("hosts")
 	results["hosts"] = clistats.String(hosts)
