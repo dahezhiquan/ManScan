@@ -84,8 +84,9 @@ CREATE TABLE `manscan_scan_tasks` (
     -- =========================
     -- Interactsh 组
     -- =========================
-                                      `interactsh_url` VARCHAR(500) DEFAULT NULL COMMENT 'Interactsh服务地址，对应 -iserver/--interactsh-server',
+                                      `interactsh_server` VARCHAR(500) DEFAULT NULL COMMENT 'Interactsh服务地址，对应 -iserver/--interactsh-server',
                                       `interactsh_token` VARCHAR(255) DEFAULT NULL COMMENT 'Interactsh令牌，对应 -itoken/--interactsh-token',
+                                      `no_interactsh` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '禁用Interactsh，对应 -ni/--no-interactsh',
                                       `interactions_cache_size` INT NOT NULL DEFAULT 5000 COMMENT '交互缓存大小，对应 --interactions-cache-size',
                                       `interactions_eviction` INT NOT NULL DEFAULT 60 COMMENT '交互缓存淘汰时间(秒)，对应 --interactions-eviction',
                                       `interactions_poll_duration` INT NOT NULL DEFAULT 5 COMMENT '交互轮询间隔(秒)，对应 --interactions-poll-duration',

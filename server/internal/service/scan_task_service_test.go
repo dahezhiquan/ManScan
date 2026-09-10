@@ -116,6 +116,83 @@ func TestBuildScanCLIArgsIncludesTemplateCapabilities(t *testing.T) {
 	}
 }
 
+func TestBuildScanCLIArgsIncludesInteractshConfiguration(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	args := buildScanCLIArgs(
+		dto.CreateScanTaskRequest{
+			InteractshServer: "https://oast.example.internal",
+			InteractshToken:  "task-token",
+		},
+		filepath.Join(rootDir, "runtime"),
+		filepath.Join(rootDir, "runtime", "targets.txt"),
+		filepath.Join(rootDir, "runtime", "resume.cfg"),
+		filepath.Join(rootDir, "responses"),
+	)
+
+	if got := flagValue(args, "-interactsh-server"); got != "https://oast.example.internal" {
+		t.Fatalf("-interactsh-server = %q, want custom server (args=%v)", got, args)
+	}
+	if got := flagValue(args, "-interactsh-token"); got != "task-token" {
+		t.Fatalf("-interactsh-token = %q, want task token (args=%v)", got, args)
+	}
+	if hasArg(args, "-no-interactsh") {
+		t.Fatalf("args unexpectedly include -no-interactsh: %v", args)
+	}
+
+	args = buildScanCLIArgs(
+		dto.CreateScanTaskRequest{NoInteractsh: true},
+		filepath.Join(rootDir, "runtime"),
+		filepath.Join(rootDir, "runtime", "targets.txt"),
+		filepath.Join(rootDir, "runtime", "resume.cfg"),
+		filepath.Join(rootDir, "responses"),
+	)
+	if !hasArg(args, "-no-interactsh") {
+		t.Fatalf("args missing -no-interactsh: %v", args)
+	}
+	if flagValue(args, "-interactsh-server") != "" || flagValue(args, "-interactsh-token") != "" {
+		t.Fatalf("disabled Interactsh should not include server or token flags: %v", args)
+	}
+}
+
+func TestNormalizeCreateTaskRequestValidatesInteractshConfiguration(t *testing.T) {
+	t.Parallel()
+
+	plan, err := normalizeCreateTaskRequest(dto.CreateScanTaskRequest{
+		Targets:          []string{"https://example.com"},
+		InteractshServer: "  https://oast.example.internal/  ",
+		InteractshToken:  "  task-token  ",
+	})
+	if err != nil {
+		t.Fatalf("normalizeCreateTaskRequest() error = %v", err)
+	}
+	if plan.Raw.InteractshServer != "https://oast.example.internal" {
+		t.Fatalf("InteractshServer = %q", plan.Raw.InteractshServer)
+	}
+	if plan.Raw.InteractshToken != "task-token" {
+		t.Fatalf("InteractshToken = %q", plan.Raw.InteractshToken)
+	}
+
+	invalidRequests := []dto.CreateScanTaskRequest{
+		{Targets: []string{"https://example.com"}, InteractshServer: "ftp://oast.example.internal"},
+		{Targets: []string{"https://example.com"}, InteractshServer: "https://user:pass@oast.example.internal"},
+		{Targets: []string{"https://example.com"}, InteractshServer: "https://oast.example.internal/api"},
+		{Targets: []string{"https://example.com"}, InteractshServer: "https://oast.example.internal?tenant=1"},
+		{Targets: []string{"https://example.com"}, InteractshServer: "bad_host.example.com"},
+		{
+			Targets:          []string{"https://example.com"},
+			InteractshServer: "oast.example.internal",
+			NoInteractsh:     true,
+		},
+	}
+	for _, request := range invalidRequests {
+		if _, err := normalizeCreateTaskRequest(request); err == nil {
+			t.Fatalf("normalizeCreateTaskRequest(%q) unexpectedly succeeded", request.InteractshServer)
+		}
+	}
+}
+
 func TestArchiveStoredResponsesCreatesZipAndRemovesTaskDirectory(t *testing.T) {
 	t.Parallel()
 
@@ -1432,6 +1509,8 @@ func TestRescanCreatesNewTaskFromExistingConfiguration(t *testing.T) {
 		Protocols:                     `["http","tcp"]`,
 		StoreResponse:                 true,
 		CustomHeaders:                 `["X-Test: 1"]`,
+		InteractshServer:              ptr("https://oast.example.internal"),
+		InteractshToken:               ptr("task-token"),
 		FollowRedirects:               true,
 		MaxRedirects:                  3,
 		RateLimit:                     20,
@@ -1507,6 +1586,9 @@ func TestRescanCreatesNewTaskFromExistingConfiguration(t *testing.T) {
 	}
 	if created.ExcludeTargets != sourceTask.ExcludeTargets || created.Tags != sourceTask.Tags || created.Severities != sourceTask.Severities {
 		t.Fatalf("created task did not copy filters: %+v", created)
+	}
+	if derefString(created.InteractshServer) != "https://oast.example.internal" || derefString(created.InteractshToken) != "task-token" {
+		t.Fatalf("created task did not copy Interactsh configuration: %+v", created)
 	}
 	if !created.ScanAllIPs || !created.NewTemplates || !created.AutomaticScan || !created.Headless {
 		t.Fatalf("created task did not copy boolean options: %+v", created)

@@ -32,6 +32,9 @@ type ScanTask struct {
 	MatcherStatus                 bool       `gorm:"column:matcher_status"`
 	CustomHeaders                 string     `gorm:"column:custom_headers"`
 	Vars                          string     `gorm:"column:vars"`
+	InteractshServer              *string    `gorm:"column:interactsh_server"`
+	InteractshToken               *string    `gorm:"column:interactsh_token"`
+	NoInteractsh                  bool       `gorm:"column:no_interactsh"`
 	FollowRedirects               bool       `gorm:"column:follow_redirects"`
 	FollowHostRedirects           bool       `gorm:"column:follow_host_redirects"`
 	MaxRedirects                  int        `gorm:"column:max_redirects"`

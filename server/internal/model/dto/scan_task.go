@@ -31,6 +31,9 @@ type CreateScanTaskRequest struct {
 	MatcherStatus                 bool     `json:"matcher_status"`
 	CustomHeaders                 []string `json:"custom_headers"`
 	Vars                          []string `json:"vars"`
+	InteractshServer              string   `json:"interactsh_server"`
+	InteractshToken               string   `json:"interactsh_token"`
+	NoInteractsh                  bool     `json:"no_interactsh"`
 	FollowRedirects               bool     `json:"follow_redirects"`
 	FollowHostRedirects           bool     `json:"follow_host_redirects"`
 	MaxRedirects                  int      `json:"max_redirects"`

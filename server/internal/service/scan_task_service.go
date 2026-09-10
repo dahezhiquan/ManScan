@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -205,6 +206,9 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 		MatcherStatus:                 request.MatcherStatus,
 		CustomHeaders:                 mustJSON(cleanStringSlice(request.CustomHeaders)),
 		Vars:                          mustJSON(cleanStringSlice(request.Vars)),
+		InteractshServer:              nullableString(request.InteractshServer),
+		InteractshToken:               nullableString(request.InteractshToken),
+		NoInteractsh:                  request.NoInteractsh,
 		FollowRedirects:               request.FollowRedirects,
 		FollowHostRedirects:           request.FollowHostRedirects,
 		MaxRedirects:                  defaultInt(request.MaxRedirects, 10),
@@ -1183,6 +1187,20 @@ func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedT
 		createdBy = "anonymous"
 	}
 
+	interactshServer, err := normalizeInteractshServer(request.InteractshServer)
+	if err != nil {
+		return nil, err
+	}
+	interactshToken := strings.TrimSpace(request.InteractshToken)
+	if len(interactshToken) > 255 {
+		return nil, fmt.Errorf("interactsh_token 长度不能超过 255 个字符")
+	}
+	if request.NoInteractsh && (interactshServer != "" || interactshToken != "") {
+		return nil, fmt.Errorf("no_interactsh 不能与 interactsh_server 或 interactsh_token 同时配置")
+	}
+	request.InteractshServer = interactshServer
+	request.InteractshToken = interactshToken
+
 	return &normalizedTaskRequest{
 		Raw:              request,
 		Name:             name,
@@ -1190,6 +1208,70 @@ func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedT
 		CreatedBy:        createdBy,
 		CollectedTargets: collectedTargets,
 	}, nil
+}
+
+func normalizeInteractshServer(raw string) (string, error) {
+	server := strings.TrimSpace(raw)
+	if server == "" {
+		return "", nil
+	}
+	if len(server) > 500 {
+		return "", fmt.Errorf("interactsh_server 长度不能超过 500 个字符")
+	}
+
+	hasScheme := strings.Contains(server, "://")
+	parseTarget := server
+	if !hasScheme {
+		parseTarget = "//" + server
+	}
+	parsed, err := url.Parse(parseTarget)
+	if err != nil {
+		return "", fmt.Errorf("interactsh_server 格式不合法")
+	}
+	if hasScheme && parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("interactsh_server 仅支持 http 或 https 协议")
+	}
+	if parsed.User != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("interactsh_server 必须是无认证信息、查询参数和片段的服务根地址")
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", fmt.Errorf("interactsh_server 不能包含路径")
+	}
+	if _, err := strconv.Atoi(parsed.Port()); parsed.Port() != "" && err != nil {
+		return "", fmt.Errorf("interactsh_server 端口不合法")
+	}
+	if port := parsed.Port(); port != "" {
+		value, _ := strconv.Atoi(port)
+		if value < 1 || value > 65535 {
+			return "", fmt.Errorf("interactsh_server 端口必须在 1 到 65535 之间")
+		}
+	}
+	if !validInteractshHostname(parsed.Hostname()) {
+		return "", fmt.Errorf("interactsh_server 主机名不合法")
+	}
+
+	return strings.TrimSuffix(server, "/"), nil
+}
+
+func validInteractshHostname(hostname string) bool {
+	if net.ParseIP(hostname) != nil || hostname == "localhost" {
+		return true
+	}
+	if len(hostname) == 0 || len(hostname) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(hostname, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, character := range label {
+			if (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') &&
+				(character < '0' || character > '9') && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func normalizedTaskRequestFromTask(task *entity.ScanTask) (*normalizedTaskRequest, error) {
@@ -1222,6 +1304,9 @@ func normalizedTaskRequestFromTask(task *entity.ScanTask) (*normalizedTaskReques
 		MatcherStatus:                 task.MatcherStatus,
 		CustomHeaders:                 decodeJSONStringSlice(task.CustomHeaders),
 		Vars:                          decodeJSONStringSlice(task.Vars),
+		InteractshServer:              derefString(task.InteractshServer),
+		InteractshToken:               derefString(task.InteractshToken),
+		NoInteractsh:                  task.NoInteractsh,
 		FollowRedirects:               task.FollowRedirects,
 		FollowHostRedirects:           task.FollowHostRedirects,
 		MaxRedirects:                  task.MaxRedirects,
@@ -1367,6 +1452,7 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 	}
 	appendBool(request.Timestamp, "-ts")
 	appendBool(request.MatcherStatus, "-ms")
+	appendBool(request.NoInteractsh, "-no-interactsh")
 	appendBool(request.FollowRedirects, "-fr")
 	appendBool(request.FollowHostRedirects, "-fhr")
 	appendBool(request.DisableRedirects, "-dr")
@@ -1430,6 +1516,8 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 	for _, variable := range cleanStringSlice(request.Vars) {
 		args = append(args, "-V", variable)
 	}
+	appendFlag("-interactsh-server", request.InteractshServer)
+	appendFlag("-interactsh-token", request.InteractshToken)
 	appendFlag("--sni", request.SNI)
 	appendFlag("-at", request.AttackType)
 	appendFlag("-sip", request.SourceIP)

@@ -392,6 +392,9 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `dast`                | `bool`     | 否  | 启用 DAST/fuzzable 模板，对应 `-dast` |
 | `enable_code_templates` | `bool`   | 否  | 启用 Code 协议模板，对应 `-code` |
 | `enable_file_templates` | `bool`   | 否  | 启用 File 协议模板，对应 `-file` |
+| `interactsh_server`   | `string`   | 否  | 当前任务使用的 Interactsh 服务根地址，可填写主机名或 `http://`/`https://` 根地址，对应 `-interactsh-server` |
+| `interactsh_token`    | `string`   | 否  | 当前任务使用的 Interactsh 鉴权 Token，最长 255 个字符，对应 `-interactsh-token`；不会出现在任务查询响应中 |
+| `no_interactsh`       | `bool`     | 否  | 禁用当前任务的 Interactsh/OOB 请求，对应 `-no-interactsh`，不能与上述两个字段同时配置 |
 | `rate_limit`          | `int`      | 否  | 速率限制               |
 | `template_threads`    | `int`      | 否  | 模板并发数              |
 | `timeout`             | `int`      | 否  | 请求超时，单位秒           |
@@ -423,7 +426,7 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 ```
 
 - 错误码说明：
-  - `40001`：目标为空或请求体非法
+  - `40001`：目标为空、请求体非法或 Interactsh 配置不合法
   - `50001`：任务入库失败或运行时目录创建失败
 
 模板能力开关默认均为关闭。`allow_local_file_access`（对应 `-lfa`）只控制本地文件访问权限，不等同于 `enable_file_templates`；需要执行 File 模板时必须显式开启后者。Headless DAST 模板需要同时开启 `headless` 和 `dast`。
@@ -437,7 +440,9 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
     "name": "demo-scan",
     "targets": ["https://example.com"],
     "tags": ["cve"],
-    "severities": ["high"]
+    "severities": ["high"],
+    "interactsh_server": "https://oast.example.internal",
+    "interactsh_token": "YOUR_TASK_TOKEN"
   }'
 ```
 
@@ -475,6 +480,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 
 - 说明：
   - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的扫描配置，并创建一条新的扫描任务记录。
+  - 自定义 Interactsh 服务地址、Token 或禁用开关会随原任务配置继承；Token 不会通过接口响应返回。
   - 新任务会生成新的 `id` 和 `task_no`，初始状态为 `pending`，不会继承原任务的 `started_at`、`finished_at`、运行日志、进度快照或结果统计。
   - 新任务的名称、描述、创建人、目标、模板筛选、协议筛选、并发、限速、代理、headless 等扫描配置与原任务保持一致。
   - 该接口不同于 `/api/v1/scans/:id/resume`；`resume` 只恢复暂停任务并继续使用原任务 ID，`rescan` 始终创建新任务并重新发起完整扫描。
