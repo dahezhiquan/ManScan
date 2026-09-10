@@ -28,16 +28,65 @@ var ansiLogPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 type TaskProgressSnapshot struct {
 	Hosts          int64     `json:"hosts"`
 	Templates      int64     `json:"templates"`
-	TotalRequests  int64     `json:"total_requests"`
+	TotalRequests  int64     `json:"total_requests,omitempty"`
 	Requests       int64     `json:"requests"`
 	Matched        int64     `json:"matched"`
 	Errors         int64     `json:"errors"`
-	Percent        float64   `json:"percent"`
+	Percent        float64   `json:"percent,omitempty"`
+	ProgressStatus string    `json:"progress_status"`
 	LastUpdatedAt  time.Time `json:"last_updated_at"`
 	LastMessage    string    `json:"last_message,omitempty"`
 	LastEventSeq   int64     `json:"last_event_seq"`
 	Finished       bool      `json:"finished"`
 	FinishedStatus string    `json:"finished_status,omitempty"`
+}
+
+// MarshalJSON omits total and percent while the automatic fingerprint
+// mapping phase is still calculating, but preserves an explicit zero percent
+// once the total has become known.
+func (p TaskProgressSnapshot) MarshalJSON() ([]byte, error) {
+	type progressSnapshotJSON struct {
+		Hosts          int64     `json:"hosts"`
+		Templates      int64     `json:"templates"`
+		TotalRequests  *int64    `json:"total_requests,omitempty"`
+		Requests       int64     `json:"requests"`
+		Matched        int64     `json:"matched"`
+		Errors         int64     `json:"errors"`
+		Percent        *float64  `json:"percent,omitempty"`
+		ProgressStatus string    `json:"progress_status"`
+		LastUpdatedAt  time.Time `json:"last_updated_at"`
+		LastMessage    string    `json:"last_message,omitempty"`
+		LastEventSeq   int64     `json:"last_event_seq"`
+		Finished       bool      `json:"finished"`
+		FinishedStatus string    `json:"finished_status,omitempty"`
+	}
+
+	known := p.Finished || p.ProgressStatus == "running" || p.ProgressStatus == "finished" ||
+		(p.ProgressStatus == "" && p.TotalRequests > 0)
+	var totalRequests *int64
+	var percent *float64
+	if known {
+		total := p.TotalRequests
+		value := p.Percent
+		totalRequests = &total
+		percent = &value
+	}
+
+	return json.Marshal(progressSnapshotJSON{
+		Hosts:          p.Hosts,
+		Templates:      p.Templates,
+		TotalRequests:  totalRequests,
+		Requests:       p.Requests,
+		Matched:        p.Matched,
+		Errors:         p.Errors,
+		Percent:        percent,
+		ProgressStatus: p.ProgressStatus,
+		LastUpdatedAt:  p.LastUpdatedAt,
+		LastMessage:    p.LastMessage,
+		LastEventSeq:   p.LastEventSeq,
+		Finished:       p.Finished,
+		FinishedStatus: p.FinishedStatus,
+	})
 }
 
 type TaskLogEvent struct {
@@ -82,6 +131,7 @@ type cliStatsPayload struct {
 	Requests       string `json:"requests"`
 	ActualRequests string `json:"actual_requests"`
 	Total          string `json:"total"`
+	TotalKnown     string `json:"total_known"`
 	Errors         string `json:"errors"`
 	Percent        string `json:"percent"`
 }
@@ -135,6 +185,19 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 	logFilePath := filepath.Join(taskDir, "events.jsonl")
 	events, nextSeq := loadExistingEvents(logFilePath, 5000)
 	progress := loadProgressSnapshot(filepath.Join(taskDir, "progress.json"))
+	if progress.ProgressStatus == "" {
+		switch {
+		case progress.Finished:
+			progress.ProgressStatus = "finished"
+		case progress.TotalRequests > 0:
+			progress.ProgressStatus = "running"
+		default:
+			progress.ProgressStatus = "calculating"
+		}
+	}
+	if progress.LastMessage == "" && progress.ProgressStatus == "calculating" {
+		progress.LastMessage = "扫描进度更新"
+	}
 	matchedResults := make(map[string]struct{})
 	logFile, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
@@ -425,6 +488,7 @@ func (s *State) MarkFinished(status string, finishedAt time.Time, message string
 	s.mu.Lock()
 	s.progress.Finished = true
 	s.progress.FinishedStatus = status
+	s.progress.ProgressStatus = "finished"
 	s.progress.LastUpdatedAt = finishedAt
 	s.progress.LastMessage = message
 	s.progress.Errors = logErrors
@@ -1102,13 +1166,23 @@ func HandleStatsJSONLine(line string, state *State) bool {
 		actualRequests = requests
 	}
 	total := ParseInt64(payload.Total)
+	totalKnown := parseStatsBool(payload.TotalKnown)
+	if payload.TotalKnown == "" {
+		totalKnown = payload.Total != ""
+	}
 	errorsCount := state.SyncScannerErrors()
 	hosts := ParseInt64(payload.Hosts)
 	templates := ParseInt64(payload.Templates)
 	percent := ParseFloat64(payload.Percent)
 	matched := int64(0)
+	progressMessage := "扫描进度更新"
+	if !totalKnown {
+		progressMessage = "扫描进度更新"
+	}
+	statusChanged := false
 
 	state.UpdateProgress(func(snapshot *TaskProgressSnapshot) {
+		previousStatus := snapshot.ProgressStatus
 		logicalDelta := requests - state.lastLogicalRequests
 		if logicalDelta < 0 {
 			logicalDelta = requests
@@ -1120,8 +1194,15 @@ func HandleStatsJSONLine(line string, state *State) bool {
 			requestDelta = actualRequests
 		}
 		snapshot.Requests += requestDelta
-		if total > snapshot.TotalRequests {
-			snapshot.TotalRequests = total
+		if totalKnown {
+			if total > snapshot.TotalRequests {
+				snapshot.TotalRequests = total
+			}
+			snapshot.ProgressStatus = "running"
+			snapshot.LastMessage = "扫描进度更新"
+		} else {
+			snapshot.ProgressStatus = "calculating"
+			snapshot.LastMessage = "扫描进度更新"
 		}
 		if hosts > snapshot.Hosts {
 			snapshot.Hosts = hosts
@@ -1130,14 +1211,17 @@ func HandleStatsJSONLine(line string, state *State) bool {
 			snapshot.Templates = templates
 		}
 		snapshot.Errors = errorsCount
-		snapshot.Percent = NormalizeProgressPercent(
-			progressPercentFromCounts(state.completedRequests, snapshot.TotalRequests, percent),
-			state.completedRequests,
-			snapshot.TotalRequests,
-		)
+		if totalKnown {
+			snapshot.Percent = NormalizeProgressPercent(
+				progressPercentFromCounts(state.completedRequests, snapshot.TotalRequests, percent),
+				state.completedRequests,
+				snapshot.TotalRequests,
+			)
+		} else {
+			snapshot.Percent = 0
+		}
 		percent = snapshot.Percent
 		snapshot.LastUpdatedAt = time.Now()
-		snapshot.LastMessage = "扫描进度更新"
 		snapshot.FinishedStatus = "running"
 		state.lastLogicalRequests = requests
 		state.lastStats.Requests = actualRequests
@@ -1147,10 +1231,11 @@ func HandleStatsJSONLine(line string, state *State) bool {
 		state.lastStats.Templates = templates
 		state.lastStats.Percent = snapshot.Percent
 		matched = snapshot.Matched
+		statusChanged = previousStatus != snapshot.ProgressStatus
 	})
 
-	if state.ShouldLogProgress(percent, matched, errorsCount) {
-		state.Append("info", "progress", "扫描进度更新")
+	if statusChanged || state.ShouldLogProgress(percent, matched, errorsCount) {
+		state.Append("info", "progress", progressMessage)
 	}
 	return true
 }
@@ -1528,6 +1613,15 @@ func ParseFloat64(value string) float64 {
 	return parsed
 }
 
+func parseStatsBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
 func parseHTTPStatsBlock(lines []string) map[string]int {
 	if len(lines) == 0 {
 		return nil
@@ -1644,10 +1738,7 @@ func formatHTTPStatsMessage(counts map[string]int) string {
 
 func NormalizeProgressPercent(percent float64, requests, total int64) float64 {
 	if total <= 0 {
-		if requests > 0 {
-			return 100
-		}
-		return ClampProgressPercent(percent)
+		return 0
 	}
 	if requests >= total {
 		return 100

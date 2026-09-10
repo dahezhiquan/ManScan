@@ -929,6 +929,19 @@ func (s *scanTaskService) getProgress(ctx context.Context, taskID int64, status 
 	if err == nil {
 		var snapshot scanruntime.TaskProgressSnapshot
 		if json.Unmarshal(data, &snapshot) == nil {
+			if snapshot.ProgressStatus == "" {
+				switch {
+				case snapshot.Finished:
+					snapshot.ProgressStatus = "finished"
+				case snapshot.TotalRequests > 0:
+					snapshot.ProgressStatus = "running"
+				default:
+					snapshot.ProgressStatus = "calculating"
+				}
+			}
+			if snapshot.LastMessage == "" && snapshot.ProgressStatus == "calculating" {
+				snapshot.LastMessage = "扫描进度更新"
+			}
 			return snapshot
 		}
 	}
@@ -937,6 +950,8 @@ func (s *scanTaskService) getProgress(ctx context.Context, taskID int64, status 
 	snapshot := scanruntime.TaskProgressSnapshot{
 		Finished:       finished,
 		FinishedStatus: status,
+		ProgressStatus: "calculating",
+		LastMessage:    "扫描进度更新",
 	}
 	if finished && status == "success" {
 		snapshot.Percent = 100
@@ -947,6 +962,12 @@ func (s *scanTaskService) getProgress(ctx context.Context, taskID int64, status 
 		if findErr == nil {
 			snapshot.Finished = isFinishedTaskStatus(task.Status)
 			snapshot.FinishedStatus = task.Status
+			if snapshot.Finished {
+				snapshot.ProgressStatus = "finished"
+				if task.Status == "success" {
+					snapshot.Percent = 100
+				}
+			}
 		}
 	}
 

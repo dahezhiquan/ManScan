@@ -1,3 +1,21 @@
+## 2026-09-10 修复自动模版映射分阶段进度统计
+
+- 变动目录：`pkg/progress/`、`pkg/protocols/common/automaticscan/`、`internal/tests/testutils/`、`server/internal/pkg/scanruntime/`、`server/internal/service/`、`server/`
+- 变动文件：`pkg/progress/progress.go`、`pkg/progress/progress_test.go`、`pkg/protocols/common/automaticscan/automaticscan.go`、`internal/tests/testutils/testutils.go`、`server/internal/pkg/scanruntime/runtime.go`、`server/internal/pkg/scanruntime/runtime_test.go`、`server/internal/service/scan_task_service.go`、`server/API.md`
+- 具体修改内容：
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中将自动扫描改为按目标流水线执行：单个目标完成指纹识别与模版映射后立即启动漏洞模版，其他目标继续并行指纹识别；全部目标完成映射后再汇总指纹请求和映射模版请求得到预估总量。
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中让漏洞识别阶段复用外层真实进度对象，并屏蔽 inner engine 的重复初始化，避免请求统计被覆盖或重复初始化。
+  - 在 `pkg/progress/progress.go` 中增加“总请求数已确定”状态，去除 `total=0` 时将当前 requests 伪装成 total 的兜底；总量未知时 stats-json 不再输出 total 和 percent。
+  - 在 `pkg/progress/progress.go` 中补充自动指纹 Wappalyzer 请求的逻辑请求和实际请求计数，使预估总量与已完成请求使用同一统计口径。
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中为漏洞阶段的动态 `AddToTotal` 增加汇总闸门，先缓存目标级动态增量，待全部目标映射完成后随全局预估值一次性发布，避免单个目标提前把状态切换为已计算。
+  - 在 `server/internal/pkg/scanruntime/runtime.go` 中自定义进度快照序列化：总量未知时省略总量和完成度，已确定总量后即使完成度为 `0` 也保留字段。
+  - 在 `server/internal/pkg/scanruntime/runtime.go` 中让 `calculating` 到 `running` 的状态切换绕过进度节流，确保总量刚确定时 SSE 能立即通知前端。
+  - 在 `internal/tests/testutils/testutils.go` 中同步补齐进度桩的总量设置方法；总量设置采用可选能力探测，未实现该方法的外部进度实现仍兼容并回退到增量统计。
+  - 在 `pkg/progress/progress_test.go`、`server/internal/pkg/scanruntime/runtime_test.go` 中新增总量未知、总量切换和已知零完成度的回归测试。
+  - 修改目的或影响：
+  - 指纹识别阶段前端不再被错误地推进到 100%，而是保持 `calculating` 状态并继续输出“扫描进度更新”；全部指纹映射完成后才展示稳定的预估总请求数和漏洞识别完成度。
+  - 保留指纹识别与漏洞识别的流水线并行能力，不额外执行探测请求；漏洞模版请求仍按原有并发和限速配置执行。
+
 ## 2026-09-09 18:46 过滤自动识别阶段的 detect 标签
 
 - 变动目录：`pkg/protocols/common/automaticscan/`

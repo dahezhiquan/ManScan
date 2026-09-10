@@ -775,6 +775,73 @@ func TestHandleStatsJSONLineAccumulatesResumeSessionRequests(t *testing.T) {
 	}
 }
 
+func TestHandleStatsJSONLineDoesNotInferTotalBeforeItIsKnown(t *testing.T) {
+	t.Parallel()
+
+	state := &State{}
+
+	if !HandleStatsJSONLine(`{"requests":"7","actual_requests":"6","total_known":"0","percent":"0"}`, state) {
+		t.Fatalf("HandleStatsJSONLine() = false, want true")
+	}
+
+	progress := state.SnapshotProgress()
+	if progress.TotalRequests != 0 {
+		t.Fatalf("TotalRequests = %d, want 0 while total is unknown", progress.TotalRequests)
+	}
+	if progress.Percent != 0 {
+		t.Fatalf("Percent = %v, want 0 while total is unknown", progress.Percent)
+	}
+	if progress.ProgressStatus != "calculating" {
+		t.Fatalf("ProgressStatus = %q, want calculating", progress.ProgressStatus)
+	}
+	if progress.LastMessage != "扫描进度更新" {
+		t.Fatalf("LastMessage = %q, want 扫描进度更新", progress.LastMessage)
+	}
+
+	if !HandleStatsJSONLine(`{"requests":"10","actual_requests":"9","total_known":"1","total":"20","percent":"50"}`, state) {
+		t.Fatalf("HandleStatsJSONLine() known total = false, want true")
+	}
+
+	progress = state.SnapshotProgress()
+	if progress.TotalRequests != 20 {
+		t.Fatalf("TotalRequests after total became known = %d, want 20", progress.TotalRequests)
+	}
+	if progress.ProgressStatus != "running" {
+		t.Fatalf("ProgressStatus after total became known = %q, want running", progress.ProgressStatus)
+	}
+	if len(state.events) != 2 {
+		t.Fatalf("progress status transitions should emit two progress events, got %d", len(state.events))
+	}
+}
+
+func TestTaskProgressSnapshotMarshalKeepsKnownZeroPercent(t *testing.T) {
+	t.Parallel()
+
+	calculating, err := json.Marshal(TaskProgressSnapshot{
+		Requests:       7,
+		ProgressStatus: "calculating",
+		LastMessage:    "扫描进度更新",
+	})
+	if err != nil {
+		t.Fatalf("marshal calculating progress: %v", err)
+	}
+	if strings.Contains(string(calculating), `"percent"`) || strings.Contains(string(calculating), `"total_requests"`) {
+		t.Fatalf("calculating progress should omit total and percent: %s", calculating)
+	}
+
+	running, err := json.Marshal(TaskProgressSnapshot{
+		TotalRequests:  20,
+		ProgressStatus: "running",
+		Percent:        0,
+	})
+	if err != nil {
+		t.Fatalf("marshal running progress: %v", err)
+	}
+	if !strings.Contains(string(running), `"total_requests":20`) || !strings.Contains(string(running), `"percent":0`) {
+		t.Fatalf("running progress should retain known zero values: %s", running)
+	}
+}
+
 func TestAppendEventWritesMatchLog(t *testing.T) {
 	t.Parallel()
 

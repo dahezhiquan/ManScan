@@ -10,12 +10,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"ManScan/internal/tests/testutils"
 	"ManScan/pkg/catalog/config"
 	"ManScan/pkg/catalog/loader"
 	"ManScan/pkg/core"
 	"ManScan/pkg/input/provider"
 	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/helpers/writer"
@@ -61,8 +61,121 @@ type Service struct {
 	templateDirs       []string // root Template Directories
 	technologyMappings map[string]string
 	techTemplates      []*templates.Template
+	totalGate          *totalGate
 	ServiceOpts        Options
 	hasResults         *atomic.Bool
+}
+
+type mappedTarget struct {
+	input          *contextargs.MetaInput
+	finalTemplates []*templates.Template
+}
+
+type totalGate struct {
+	progress progress.Progress
+	mu       sync.Mutex
+	known    bool
+	pending  int64
+}
+
+func newTotalGate(progressClient progress.Progress) *totalGate {
+	return &totalGate{progress: progressClient}
+}
+
+func (g *totalGate) Add(delta int64) {
+	if g == nil || delta <= 0 {
+		return
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.known {
+		g.pending += delta
+		return
+	}
+	if g.progress != nil {
+		g.progress.AddToTotal(delta)
+	}
+}
+
+func (g *totalGate) Publish(total int64) {
+	if g == nil {
+		return
+	}
+
+	g.mu.Lock()
+	total += g.pending
+	g.pending = 0
+	g.known = true
+	if g.progress != nil {
+		if setter, ok := g.progress.(interface{ SetTotal(int64) }); ok {
+			setter.SetTotal(total)
+		} else {
+			g.progress.AddToTotal(total)
+		}
+	}
+	g.mu.Unlock()
+}
+
+// phaseProgress prevents an inner engine from resetting the outer scan
+// counters while still forwarding every request and match event.
+type phaseProgress struct {
+	progress.Progress
+	totalGate *totalGate
+}
+
+func (p *phaseProgress) Init(hostCount int64, rulesCount int, requestCount int64) {}
+
+func (p *phaseProgress) SetTotal(total int64) {
+	// The outer automatic-scan phase publishes one aggregate estimate after
+	// every target has completed fingerprint mapping. Inner engines must not
+	// publish a target-local estimate before that point.
+}
+
+func (p *phaseProgress) AddToTotal(delta int64) {
+	if p.totalGate != nil {
+		p.totalGate.Add(delta)
+		return
+	}
+	if p.Progress != nil {
+		p.Progress.AddToTotal(delta)
+	}
+}
+
+func (p *phaseProgress) IncrementRequests() {
+	if p.Progress != nil {
+		p.Progress.IncrementRequests()
+	}
+}
+
+func (p *phaseProgress) IncrementActualRequests() {
+	if p.Progress != nil {
+		p.Progress.IncrementActualRequests()
+	}
+}
+
+func (p *phaseProgress) SetRequests(count uint64) {
+	if p.Progress != nil {
+		p.Progress.SetRequests(count)
+	}
+}
+
+func (p *phaseProgress) IncrementMatched() {
+	if p.Progress != nil {
+		p.Progress.IncrementMatched()
+	}
+}
+
+func (p *phaseProgress) IncrementErrorsBy(count int64) {
+	if p.Progress != nil {
+		p.Progress.IncrementErrorsBy(count)
+	}
+}
+
+func (p *phaseProgress) IncrementFailedRequestsBy(count int64) {
+	if p.Progress != nil {
+		p.Progress.IncrementFailedRequestsBy(count)
+	}
 }
 
 // New takes options and returns a new automatic scan service
@@ -126,25 +239,57 @@ func (s *Service) Close() bool {
 // Execute automatic scan on each target with -bs host concurrency
 func (s *Service) Execute() error {
 	gologger.Info().Msgf("Executing Automatic scan on %d target[s]", s.target.Count())
-	// setup host concurrency
-	sg, err := syncutil.New(syncutil.WithSize(s.opts.Options.BulkSize))
+	s.totalGate = newTotalGate(s.opts.Progress)
+
+	// Run each target as a small pipeline: once its fingerprint mapping is
+	// ready, start vulnerability templates immediately while other targets
+	// continue fingerprinting. The aggregate estimate is published only after
+	// all mappings are collected.
+	mappingSG, err := syncutil.New(syncutil.WithSize(s.opts.Options.BulkSize))
 	if err != nil {
 		return err
 	}
+	scanSG, err := syncutil.New(syncutil.WithSize(s.opts.Options.BulkSize))
+	if err != nil {
+		return err
+	}
+	var scanLaunchWG sync.WaitGroup
+	mappedTargets := make(chan mappedTarget, s.target.Count())
 	s.target.Iterate(func(value *contextargs.MetaInput) bool {
-		sg.Add()
+		mappingSG.Add()
 		go func(input *contextargs.MetaInput) {
-			defer sg.Done()
-			s.executeAutomaticScanOnTarget(input)
+			defer mappingSG.Done()
+			target := s.mapTarget(input)
+			mappedTargets <- target
+			if len(target.finalTemplates) == 0 {
+				return
+			}
+
+			scanLaunchWG.Add(1)
+			go func() {
+				scanSG.Add()
+				scanLaunchWG.Done()
+				defer scanSG.Done()
+				s.executeMappedTemplates(target)
+			}()
 		}(value)
 		return true
 	})
-	sg.Wait()
+	mappingSG.Wait()
+	close(mappedTargets)
+
+	var targets []mappedTarget
+	for target := range mappedTargets {
+		targets = append(targets, target)
+	}
+
+	s.setMappedRequestTotal(targets)
+	scanLaunchWG.Wait()
+	scanSG.Wait()
 	return nil
 }
 
-// executeAutomaticScanOnTarget executes automatic scan on given target
-func (s *Service) executeAutomaticScanOnTarget(input *contextargs.MetaInput) {
+func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 	// get tags using wappalyzer
 	tagsFromWappalyzer := s.getTagsUsingWappalyzer(input)
 	// get tags using detection templates
@@ -174,22 +319,47 @@ func (s *Service) executeAutomaticScanOnTarget(input *contextargs.MetaInput) {
 
 	if len(finalTags) == 0 {
 		gologger.Warning().Msgf("Skipping automatic scan since no vulnerability tags were found on %v\n", input.Input)
-		return
+		return mappedTarget{input: input}
 	}
 
 	finalTemplates, err := LoadTemplatesWithTags(s.ServiceOpts, s.templateDirs, finalTags, false)
 	if err != nil {
 		gologger.Error().Msgf("%v Error loading templates: %s\n", input.Input, err)
+		return mappedTarget{input: input}
+	}
+	return mappedTarget{input: input, finalTemplates: finalTemplates}
+}
+
+func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
+	if s.opts.Progress == nil {
 		return
 	}
-	gologger.Info().Msgf("Executing %d templates on %v", len(finalTemplates), input.Input)
+
+	// Wappalyzer performs one direct request per target. Detection templates
+	// and mapped vulnerability templates expose their compiled request counts.
+	total := int64(s.target.Count())
+	for _, template := range s.techTemplates {
+		total += int64(template.TotalRequests) * int64(s.target.Count())
+	}
+	for _, target := range targets {
+		for _, template := range target.finalTemplates {
+			total += int64(template.TotalRequests)
+		}
+	}
+	s.totalGate.Publish(total)
+}
+
+func (s *Service) executeMappedTemplates(target mappedTarget) {
+	gologger.Info().Msgf("Executing %d templates on %v", len(target.finalTemplates), target.input.Input)
 	eng := core.New(s.opts.Options)
 	execOptions := s.opts.Copy()
-	execOptions.Progress = &testutils.MockProgressClient{} // stats are not supported yet due to centralized logic and cannot be reinitialized
+	execOptions.Progress = &phaseProgress{Progress: s.opts.Progress, totalGate: s.totalGate}
 	eng.SetExecuterOptions(execOptions)
 
-	tmp := eng.ExecuteScanWithOpts(context.Background(), finalTemplates, provider.NewSimpleInputProviderWithUrls(s.opts.Options.ExecutionId, input.Input), true)
-	s.hasResults.Store(tmp.Load())
+	tmp := eng.ExecuteScanWithOpts(context.Background(), target.finalTemplates, provider.NewSimpleInputProviderWithUrls(s.opts.Options.ExecutionId, target.input.Input), true)
+	if tmp.Load() {
+		s.hasResults.Store(true)
+	}
 }
 
 func filterAutomaticScanExecutionTags(tags []string) []string {
@@ -213,9 +383,18 @@ func (s *Service) getTagsUsingWappalyzer(input *contextargs.MetaInput) []string 
 	userAgent := useragent.PickRandom()
 	req.Header.Set("User-Agent", userAgent.Raw)
 
+	if s.opts.Progress != nil {
+		s.opts.Progress.IncrementActualRequests()
+	}
 	resp, err := s.httpclient.Do(req)
 	if err != nil {
+		if s.opts.Progress != nil {
+			s.opts.Progress.IncrementFailedRequestsBy(1)
+		}
 		return nil
+	}
+	if s.opts.Progress != nil {
+		s.opts.Progress.IncrementRequests()
 	}
 	defer func() {
 		_ = resp.Body.Close()

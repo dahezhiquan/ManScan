@@ -250,6 +250,9 @@ func (m *MockProgressClient) Stop() {}
 // Init inits the progress bar with initial details for scan.
 func (m *MockProgressClient) Init(hostCount int64, rulesCount int, requestCount int64) {}
 
+// SetTotal sets the estimated total request count.
+func (m *MockProgressClient) SetTotal(total int64) {}
+
 // AddToTotal adds a value to the total request count.
 func (m *MockProgressClient) AddToTotal(delta int64) {}
 

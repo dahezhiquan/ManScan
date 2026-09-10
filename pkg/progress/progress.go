@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"ManScan/pkg/utils/json"
@@ -45,6 +46,7 @@ type StatsTicker struct {
 	outputJSON   bool
 	stats        clistats.StatisticsClient
 	tickDuration time.Duration
+	totalKnown   atomic.Bool
 }
 
 // NewStatsTicker creates and returns a new progress tracking object.
@@ -88,6 +90,12 @@ func (p *StatsTicker) Init(hostCount int64, rulesCount int, requestCount int64) 
 	p.stats.AddCounter("errors", uint64(0))
 	p.stats.AddCounter("matched", uint64(0))
 	p.stats.AddCounter("total", uint64(requestCount))
+	totalKnown := uint64(0)
+	if requestCount > 0 {
+		totalKnown = 1
+	}
+	p.stats.AddCounter("total_known", totalKnown)
+	p.totalKnown.Store(requestCount > 0)
 
 	if p.active {
 		var printCallbackFunc clistats.DynamicCallback
@@ -115,9 +123,33 @@ func (p *StatsTicker) Init(hostCount int64, rulesCount int, requestCount int64) 
 	}
 }
 
+// SetTotal sets the estimated total request count and marks it as known.
+func (p *StatsTicker) SetTotal(total int64) {
+	if total < 0 {
+		total = 0
+	}
+
+	current, _ := p.stats.GetCounter("total")
+	if total > int64(current) {
+		p.stats.IncrementCounter("total", int(total-int64(current)))
+	}
+	if p.totalKnown.CompareAndSwap(false, true) {
+		p.stats.IncrementCounter("total_known", 1)
+	}
+	if p.active {
+		p.emitCurrentSummary()
+	}
+}
+
 // AddToTotal adds a value to the total request count
 func (p *StatsTicker) AddToTotal(delta int64) {
+	if delta <= 0 {
+		return
+	}
 	p.stats.IncrementCounter("total", int(delta))
+	if p.totalKnown.CompareAndSwap(false, true) {
+		p.stats.IncrementCounter("total_known", 1)
+	}
 }
 
 // IncrementRequests increments the requests counter by 1.
@@ -177,10 +209,7 @@ func (p *StatsTicker) makePrintCallback() func(stats clistats.StatisticsClient) 
 		requests, okRequests := stats.GetCounter("requests")
 		total, okTotal := stats.GetCounter("total")
 
-		// If input is not given, total is 0 which cause percentage overflow
-		if total == 0 {
-			total = requests
-		}
+		totalKnown, _ := stats.GetCounter("total_known")
 
 		if okRequests && okTotal && duration > 0 && !p.cloud {
 			builder.WriteString(" | RPS: ")
@@ -197,7 +226,7 @@ func (p *StatsTicker) makePrintCallback() func(stats clistats.StatisticsClient) 
 			builder.WriteString(clistats.String(errors))
 		}
 
-		if okRequests && okTotal {
+		if okRequests && okTotal && totalKnown > 0 {
 			if p.cloud {
 				builder.WriteString(" | Task: ")
 			} else {
@@ -212,6 +241,10 @@ func (p *StatsTicker) makePrintCallback() func(stats clistats.StatisticsClient) 
 			builder.WriteRune('%')
 			builder.WriteRune(')')
 			builder.WriteRune('\n')
+		} else if okRequests {
+			builder.WriteString(" | Requests: ")
+			builder.WriteString(clistats.String(requests))
+			builder.WriteString(" (扫描进度更新)\n")
 		}
 
 		_, _ = fmt.Fprintf(os.Stderr, "%s", builder.String())
@@ -253,14 +286,24 @@ func metricsMap(stats clistats.StatisticsClient) map[string]interface{} {
 	actualRequests, _ := stats.GetCounter("actual_requests")
 	results["actual_requests"] = clistats.String(actualRequests)
 	total, _ := stats.GetCounter("total")
-	if total == 0 {
-		total = requests
+	totalKnown, okTotalKnown := stats.GetCounter("total_known")
+	if !okTotalKnown {
+		// Keep compatibility with progress clients created before total_known
+		// was introduced: a populated total is considered known.
+		if total > 0 {
+			totalKnown = 1
+		}
 	}
-	results["total"] = clistats.String(total)
+	results["total_known"] = clistats.String(totalKnown)
+	if totalKnown > 0 {
+		results["total"] = clistats.String(total)
+	}
 	results["rps"] = clistats.String(calculateRPS(requests, duration))
 	errors, _ := stats.GetCounter("errors")
 	results["errors"] = clistats.String(errors)
-	results["percent"] = clistats.String(calculateProgressPercent(requests, total))
+	if totalKnown > 0 {
+		results["percent"] = clistats.String(calculateProgressPercent(requests, total))
+	}
 	return results
 }
 
@@ -274,9 +317,6 @@ func calculateRPS(requests uint64, duration time.Duration) uint64 {
 
 func calculateProgressPercent(requests, total uint64) uint64 {
 	if total == 0 {
-		if requests > 0 {
-			return 100
-		}
 		return 0
 	}
 

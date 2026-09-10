@@ -660,6 +660,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
       "matched": 1,
       "errors": 0,
       "percent": 10,
+      "progress_status": "running",
       "last_updated_at": "2026-06-09T21:01:00+08:00",
       "last_message": "扫描进度更新",
       "last_event_seq": 3,
@@ -674,6 +675,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
   - `progress.requests` 表示扫描进程实际发出的请求数，会排除项目缓存、模板聚类等没有真实出网的请求。
   - `progress.total_requests` 表示本次任务按模板和目标预估的逻辑请求总数。
   - `progress.percent` 表示逻辑扫描完成度，不直接用 `requests / total_requests` 计算，因此缓存或聚类节省大量请求时，进度仍会按扫描执行进度平滑推进。
+  - 自动模版映射的指纹识别阶段中，`progress_status` 为 `calculating`，此时 `total_requests` 和 `percent` 不返回，`last_message` 仍为“扫描进度更新”；全部目标完成指纹识别并得到映射模版后，`progress_status` 变为 `running`，再开始返回稳定的预估总请求数和完成度。单个目标完成映射后，其漏洞模版可以先行执行。
   - `progress.matched` 表示服务端保留的去重后结果数量。
 
 - 错误码说明：
@@ -794,7 +796,7 @@ data: {"task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medi
 
 ```text
 event: event
-data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"hosts":1,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":2}
+data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"hosts":1,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"progress_status":"running","last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":2}
 ```
 
 - `result` 事件示例：
