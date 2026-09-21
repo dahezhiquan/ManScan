@@ -20,7 +20,8 @@ const (
 	MaxLogPageSize     = 1000
 	MaxSubscribers     = 32
 
-	automaticFingerprintCompletedMessage = "已完成自动指纹识别："
+	automaticFingerprintCompletedMessage         = "已完成自动指纹识别："
+	automaticVulnerabilityTemplatesLoadedMessage = "已加载漏洞模版数量："
 )
 
 var ansiLogPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
@@ -914,7 +915,7 @@ func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream
 				continue
 			}
 			if strings.EqualFold(level, "info") {
-				if infoMessage := trimAutomaticFingerprintMessage(message); infoMessage != "" {
+				if infoMessage := trimAutomaticMappingMessage(message); infoMessage != "" {
 					state.Append("info", stream, infoMessage)
 				}
 			}
@@ -941,12 +942,21 @@ func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream
 }
 
 func trimAutomaticFingerprintMessage(message string) string {
+	return trimAutomaticMappingMessage(message)
+}
+
+func trimAutomaticMappingMessage(message string) string {
 	message = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(message, "[INF]"), "[INFO]"))
-	markerIndex := strings.Index(message, automaticFingerprintCompletedMessage)
-	if markerIndex <= 0 || strings.TrimSpace(message[:markerIndex]) == "" {
-		return ""
+	for _, marker := range []string{
+		automaticFingerprintCompletedMessage,
+		automaticVulnerabilityTemplatesLoadedMessage,
+	} {
+		markerIndex := strings.Index(message, marker)
+		if markerIndex > 0 && strings.TrimSpace(message[:markerIndex]) != "" {
+			return message
+		}
 	}
-	return message
+	return ""
 }
 
 func HandleJSONResultLine(line string, state *State) bool {

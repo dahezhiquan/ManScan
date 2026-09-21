@@ -327,6 +327,7 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 		gologger.Error().Msgf("%v Error loading templates: %s\n", input.Input, err)
 		return mappedTarget{input: input}
 	}
+	s.opts.Logger.Info().Msgf("%s 已加载漏洞模版数量：%d", input.Input, len(finalTemplates))
 	return mappedTarget{input: input, finalTemplates: finalTemplates}
 }
 

@@ -1,3 +1,15 @@
+## 2026-09-21 16:52 输出自动模版映射加载数量
+
+- 变动目录：`pkg/protocols/common/automaticscan/`、`server/internal/pkg/scanruntime/`
+- 变动文件：`pkg/protocols/common/automaticscan/automaticscan.go`、`server/internal/pkg/scanruntime/runtime.go`、`server/internal/pkg/scanruntime/runtime_test.go`
+- 具体修改内容：
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中，自动指纹识别 tags 日志输出后，完成漏洞模版加载时新增当前目标加载数量日志，格式为 `<target> 已加载漏洞模版数量：<count>`。
+  - 在 `server/internal/pkg/scanruntime/runtime.go` 中扩展自动模版映射 info 日志解析，使漏洞模版加载数量日志可以进入前端扫描日志事件流。
+  - 在 `server/internal/pkg/scanruntime/runtime_test.go` 中新增回归测试，验证加载数量日志会被捕获并保留完整目标和数量。
+- 修改目的或影响：
+  - 自动模版映射场景下，前端在看到“已完成自动指纹识别”之后，可以继续看到当前目标实际加载的漏洞模版数量。
+  - 这次修改只增加日志输出和日志解析，不改变指纹识别、模版选择、扫描并发和漏洞模版执行逻辑。
+
 ## 2026-09-10 修复自动模版映射实际漏洞插件数量不展示
 
 - 变动目录：`pkg/progress/`、`pkg/protocols/common/automaticscan/`
