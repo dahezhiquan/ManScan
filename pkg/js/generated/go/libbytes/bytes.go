@@ -4,7 +4,7 @@ import (
 	lib_bytes "ManScan/pkg/js/libs/bytes"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

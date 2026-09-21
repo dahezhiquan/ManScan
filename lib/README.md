@@ -7,13 +7,13 @@ Nuclei was primarily built as a CLI tool, but with increasing choice of users wa
 To add nuclei as a library to your go project, you can use the following command:
 
 ```bash
-go get -u github.com/projectdiscovery/nuclei/v3/lib
+go get -u ManScan/lib
 ```
 
 Or add below import to your go file and let IDE handle the rest:
 
 ```go
-import nuclei "github.com/projectdiscovery/nuclei/v3/lib"
+import nuclei "ManScan/lib"
 ```
 
 ## Basic Example of using Nuclei Library/SDK
@@ -75,7 +75,7 @@ For Various use cases like batching etc. you might want to run nuclei in gorouti
 
 ## More Documentation
 
-For complete documentation of nuclei library, please refer to [godoc](https://pkg.go.dev/github.com/projectdiscovery/nuclei/v3/lib) which contains all available options and methods.
+For complete documentation of nuclei library, please refer to [godoc](https://pkg.go.dev/ManScan/lib) which contains all available options and methods.
 
 
 

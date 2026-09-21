@@ -4,7 +4,7 @@ import (
 	lib_ldap "ManScan/pkg/js/libs/ldap"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

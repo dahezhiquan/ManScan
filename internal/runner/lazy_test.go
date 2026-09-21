@@ -6,6 +6,9 @@ import (
 
 	"ManScan/pkg/operators"
 	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
+	httpprotocol "ManScan/pkg/protocols/http"
+	"ManScan/pkg/templates"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,4 +139,28 @@ func TestCallbackDynamicValues(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "sess-xyz-123", data["session"], "should pick the longest value")
+}
+
+func TestSkipSecretFileOnAuthTemplate(t *testing.T) {
+	t.Run("nil template is a no-op", func(t *testing.T) {
+		restore := skipSecretFileOnAuthTemplate(nil)
+		require.NotPanics(t, restore)
+	})
+
+	t.Run("sets skip during fetch and restores previous values", func(t *testing.T) {
+		alreadySkipped := &httpprotocol.Request{SkipSecretFile: true}
+		needsSkip := &httpprotocol.Request{}
+		tmpl := &templates.Template{
+			RequestsHTTP: []*httpprotocol.Request{alreadySkipped, needsSkip},
+		}
+		tmpl.RequestsQueue = []protocols.Request{alreadySkipped, needsSkip}
+
+		restore := skipSecretFileOnAuthTemplate(tmpl)
+		require.True(t, alreadySkipped.SkipSecretFile)
+		require.True(t, needsSkip.SkipSecretFile)
+
+		restore()
+		require.True(t, alreadySkipped.SkipSecretFile, "templates that already skipped secret-file must stay skipped")
+		require.False(t, needsSkip.SkipSecretFile, "scan-time ApplyAuth must remain enabled after login fetch")
+	})
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"ManScan/pkg/protocols/common/interactsh"
+	"ManScan/pkg/protocols/common/render"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/utils"
 )
@@ -16,7 +17,7 @@ type Instance struct {
 	engine  *rod.Browser
 
 	// redundant due to dependency cycle
-	interactsh *interactsh.Client
+	interactsh render.URLSource
 	requestLog map[string]string // contains actual request that was sent
 }
 

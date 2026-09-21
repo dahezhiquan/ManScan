@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	commoninteractsh "ManScan/pkg/protocols/common/interactsh"
 	"ManScan/pkg/protocols/http/httpclientpool"
 	"ManScan/pkg/types/nucleierr"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
@@ -66,6 +67,7 @@ type annotationOverrides struct {
 	request        *retryablehttp.Request
 	cancelFunc     context.CancelFunc
 	interactshURLs []string
+	err            error
 }
 
 // parseAnnotations and override requests settings
@@ -108,10 +110,19 @@ func (r *Request) parseAnnotations(rawRequest string, request *retryablehttp.Req
 		case "request.host":
 			value = request.Host
 		case "interactsh-url":
-			if interactshURL, err := r.options.Interactsh.NewURLWithData("interactsh-url"); err == nil {
-				value = interactshURL
+			if r.options == nil || r.options.Interactsh == nil {
+				overrides.err = commoninteractsh.ErrInteractshClientNotInitialized
+				overrides.request = request
+				return overrides, true
 			}
-			overrides.interactshURLs = append(overrides.interactshURLs, value)
+			interactshURL, err := r.options.Interactsh.NewURLWithData("interactsh-url")
+			if err != nil {
+				overrides.err = err
+				overrides.request = request
+				return overrides, true
+			}
+			value = interactshURL
+			overrides.interactshURLs = append(overrides.interactshURLs, interactshURL)
 		default:
 			literal = true
 		}

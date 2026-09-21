@@ -4,7 +4,7 @@ import (
 	lib_postgres "ManScan/pkg/js/libs/postgres"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

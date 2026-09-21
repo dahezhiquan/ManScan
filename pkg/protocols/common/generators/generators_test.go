@@ -4,11 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v2"
-
 	"ManScan/pkg/catalog/disk"
 	"ManScan/pkg/types"
+	"ManScan/pkg/utils/yaml"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBatteringRamGenerator(t *testing.T) {

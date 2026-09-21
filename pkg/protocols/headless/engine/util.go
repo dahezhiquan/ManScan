@@ -3,7 +3,7 @@ package engine
 import (
 	"ManScan/pkg/protocols/common/expressions"
 	"ManScan/pkg/protocols/common/marker"
-	"github.com/valyala/fasttemplate"
+	"github.com/projectdiscovery/fasttemplate"
 )
 
 // replaceWithValues replaces the template markers with the values

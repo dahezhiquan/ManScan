@@ -9,11 +9,11 @@ import (
 	"ManScan/pkg/catalog/config"
 	"ManScan/pkg/catalog/loader"
 	"github.com/alecthomas/chroma/quick"
-	jsoniter "github.com/json-iterator/go"
 	"github.com/logrusorgru/aurora/v4"
 
 	"ManScan/pkg/templates"
 	"ManScan/pkg/types"
+	"ManScan/pkg/utils/json"
 )
 
 // log available templates for verbose (-vv)
@@ -99,7 +99,7 @@ func (r *Runner) listAvailableTags(tagsMap map[string]int) {
 
 	for _, tag := range tagsList {
 		if r.options.JSONL {
-			marshalled, _ := jsoniter.Marshal(tag)
+			marshalled, _ := json.Marshal(tag)
 			r.Logger.Print().Msgf("%s", string(marshalled))
 		} else {
 			r.Logger.Print().Msgf("%s (%d)", tag.Key, tag.Value)

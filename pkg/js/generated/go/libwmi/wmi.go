@@ -4,7 +4,7 @@ import (
 	lib_wmi "ManScan/pkg/js/libs/wmi"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

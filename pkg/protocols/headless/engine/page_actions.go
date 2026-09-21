@@ -14,6 +14,7 @@ import (
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/expressions"
 	"ManScan/pkg/protocols/common/protocolstate"
+	"ManScan/pkg/protocols/common/render"
 	filepathutil "ManScan/pkg/utils/filepath"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/input"
@@ -48,9 +49,14 @@ const (
 func (p *Page) ExecuteActions(input *contextargs.Context, actions []*Action) (outData ActionData, err error) {
 	outData = make(ActionData)
 
+	type deferredWaitFunc struct {
+		actionIndex int
+		run         func() error
+	}
+
 	// waitFuncs are function that needs to be executed after navigation
 	// typically used for waitEvent
-	waitFuncs := make([]func() error, 0)
+	waitFuncs := make([]deferredWaitFunc, 0)
 
 	// avoid any future panics caused due to go-rod library
 	// TODO(dwisiswant0): remove this once we get the RCA.
@@ -65,16 +71,26 @@ func (p *Page) ExecuteActions(input *contextargs.Context, actions []*Action) (ou
 	}()
 
 	for _, act := range actions {
+		executed := true
+		actionIndex := len(p.ActionDurations)
+		timeStart := time.Now()
+		var deferredWaitDuration time.Duration
 		switch act.ActionType.ActionType {
 		case ActionNavigate:
 			err = p.NavigateURL(act, outData)
 			if err == nil {
 				// if navigation successful trigger all waitFuncs (if any)
 				for _, waitFunc := range waitFuncs {
-					if waitFunc != nil {
-						if err := waitFunc(); err != nil {
+					if waitFunc.run != nil {
+						waitStart := time.Now()
+						if err := waitFunc.run(); err != nil {
+							waitDuration := time.Since(waitStart)
+							addActionDuration(p.ActionDurations, waitFunc.actionIndex, waitDuration)
 							return nil, errkit.Wrap(err, "error occurred while executing waitFunc")
 						}
+						waitDuration := time.Since(waitStart)
+						addActionDuration(p.ActionDurations, waitFunc.actionIndex, waitDuration)
+						deferredWaitDuration += waitDuration
 					}
 				}
 
@@ -124,7 +140,7 @@ func (p *Page) ExecuteActions(input *contextargs.Context, actions []*Action) (ou
 			var waitFunc func() error
 			waitFunc, err = p.WaitEvent(act, outData)
 			if waitFunc != nil {
-				waitFuncs = append(waitFuncs, waitFunc)
+				waitFuncs = append(waitFuncs, deferredWaitFunc{actionIndex: actionIndex, run: waitFunc})
 			}
 		case ActionWaitDialog:
 			err = p.HandleDialog(act, outData)
@@ -158,13 +174,22 @@ func (p *Page) ExecuteActions(input *contextargs.Context, actions []*Action) (ou
 		case ActionWaitVisible:
 			err = p.WaitVisible(act, outData)
 		default:
-			continue
+			executed = false
 		}
 		if err != nil {
 			return nil, errors.Wrap(err, "error occurred executing action")
 		}
+		if executed {
+			p.ActionDurations = append(p.ActionDurations, max(time.Since(timeStart)-deferredWaitDuration, 0))
+		}
 	}
 	return outData, nil
+}
+
+func addActionDuration(durations []time.Duration, index int, duration time.Duration) {
+	if index >= 0 && index < len(durations) {
+		durations[index] += duration
+	}
 }
 
 type rule struct {
@@ -186,9 +211,11 @@ func (p *Page) WaitVisible(act *Action, out ActionData) error {
 		return errors.Wrap(err, "Wrong polling time given")
 	}
 
-	element, _ := p.Sleeper(pollTime, timeout).
-		Timeout(timeout).
-		pageElementBy(act.Data)
+	lookupPage := p.Sleeper(pollTime, timeout).Timeout(timeout)
+	element, _, err := p.pageElementBy(lookupPage.Page(), act)
+	if err != nil {
+		return errors.Wrap(err, errElementDidNotAppear)
+	}
 
 	if element != nil {
 		if err := element.WaitVisible(); err != nil {
@@ -286,7 +313,7 @@ func (p *Page) ActionAddHeader(act *Action, out ActionData) error {
 		return err
 	}
 
-	p.rules = append(p.rules, rule{
+	p.appendRule(rule{
 		Action: ActionAddHeader,
 		Part:   part,
 		Args:   args,
@@ -314,7 +341,7 @@ func (p *Page) ActionSetHeader(act *Action, out ActionData) error {
 		return err
 	}
 
-	p.rules = append(p.rules, rule{
+	p.appendRule(rule{
 		Action: ActionSetHeader,
 		Part:   part,
 		Args:   args,
@@ -337,7 +364,7 @@ func (p *Page) ActionDeleteHeader(act *Action, out ActionData) error {
 		return err
 	}
 
-	p.rules = append(p.rules, rule{
+	p.appendRule(rule{
 		Action: ActionDeleteHeader,
 		Part:   part,
 		Args:   args,
@@ -360,7 +387,7 @@ func (p *Page) ActionSetBody(act *Action, out ActionData) error {
 		return err
 	}
 
-	p.rules = append(p.rules, rule{
+	p.appendRule(rule{
 		Action: ActionSetBody,
 		Part:   part,
 		Args:   args,
@@ -383,7 +410,7 @@ func (p *Page) ActionSetMethod(act *Action, out ActionData) error {
 		return err
 	}
 
-	p.rules = append(p.rules, rule{
+	p.appendRule(rule{
 		Action: ActionSetMethod,
 		Part:   part,
 		Args:   args,
@@ -460,7 +487,7 @@ func (p *Page) RunScript(act *Action, out ActionData) error {
 
 // ClickElement executes click actions for an element.
 func (p *Page) ClickElement(act *Action, out ActionData) error {
-	element, err := p.pageElementBy(act.Data)
+	element, _, err := p.pageElementBy(p.page, act)
 	if err != nil {
 		return errors.Wrap(err, errCouldNotGetElement)
 	}
@@ -485,7 +512,7 @@ func (p *Page) KeyboardAction(act *Action, out ActionData) error {
 
 // RightClickElement executes right click actions for an element.
 func (p *Page) RightClickElement(act *Action, out ActionData) error {
-	element, err := p.pageElementBy(act.Data)
+	element, _, err := p.pageElementBy(p.page, act)
 	if err != nil {
 		return errors.Wrap(err, errCouldNotGetElement)
 	}
@@ -620,7 +647,7 @@ func (p *Page) InputElement(act *Action, out ActionData) error {
 	if value == "" {
 		return errinvalidArguments
 	}
-	element, err := p.pageElementBy(act.Data)
+	element, _, err := p.pageElementBy(p.page, act)
 	if err != nil {
 		return errors.Wrap(err, errCouldNotGetElement)
 	}
@@ -642,7 +669,7 @@ func (p *Page) TimeInputElement(act *Action, out ActionData) error {
 	if value == "" {
 		return errinvalidArguments
 	}
-	element, err := p.pageElementBy(act.Data)
+	element, _, err := p.pageElementBy(p.page, act)
 	if err != nil {
 		return errors.Wrap(err, errCouldNotGetElement)
 	}
@@ -668,7 +695,7 @@ func (p *Page) SelectInputElement(act *Action, out ActionData) error {
 	if value == "" {
 		return errinvalidArguments
 	}
-	element, err := p.pageElementBy(act.Data)
+	element, selector, err := p.pageElementBy(p.page, act)
 	if err != nil {
 		return errors.Wrap(err, errCouldNotGetElement)
 	}
@@ -687,12 +714,15 @@ func (p *Page) SelectInputElement(act *Action, out ActionData) error {
 		selectedBool = true
 	}
 
-	selector, err := p.getActionArg(act, "selector")
-	if err != nil {
-		return err
+	if selector == nil {
+		resolved, err := p.getActionArg(act, "selector")
+		if err != nil {
+			return err
+		}
+		selector = &resolved
 	}
 
-	if err := element.Select([]string{value}, selectedBool, selectorBy(selector)); err != nil {
+	if err := element.Select([]string{value}, selectedBool, selectorBy(*selector)); err != nil {
 		return errors.Wrap(err, "could not select input")
 	}
 
@@ -743,7 +773,7 @@ func (p *Page) WaitStable(act *Action, out ActionData) error {
 
 // GetResource gets a resource from an element from page.
 func (p *Page) GetResource(act *Action, out ActionData) error {
-	element, err := p.pageElementBy(act.Data)
+	element, _, err := p.pageElementBy(p.page, act)
 	if err != nil {
 		return errors.Wrap(err, errCouldNotGetElement)
 	}
@@ -759,7 +789,7 @@ func (p *Page) GetResource(act *Action, out ActionData) error {
 
 // FilesInput acts with a file input element on page
 func (p *Page) FilesInput(act *Action, out ActionData) error {
-	element, err := p.pageElementBy(act.Data)
+	element, _, err := p.pageElementBy(p.page, act)
 	if err != nil {
 		return errors.Wrap(err, errCouldNotGetElement)
 	}
@@ -783,7 +813,7 @@ func (p *Page) FilesInput(act *Action, out ActionData) error {
 
 // ExtractElement extracts from an element on the page.
 func (p *Page) ExtractElement(act *Action, out ActionData) error {
-	element, err := p.pageElementBy(act.Data)
+	element, _, err := p.pageElementBy(p.page, act)
 	if err != nil {
 		return errors.Wrap(err, errCouldNotGetElement)
 	}
@@ -909,32 +939,58 @@ func (p *Page) HandleDialog(act *Action, out ActionData) error {
 //
 // Supported values for by: r -> selector & regex, x -> xpath, js -> eval js,
 // search => query, default ("") => selector.
-func (p *Page) pageElementBy(data map[string]string) (*rod.Element, error) {
-	by, ok := data["by"]
-	if !ok {
-		by = ""
+func (p *Page) pageElementBy(page *rod.Page, action *Action) (*rod.Element, *string, error) {
+	by, err := p.getActionArg(action, "by")
+	if err != nil {
+		return nil, nil, err
 	}
-	page := p.page
 
 	switch by {
 	case "r", "regex":
-		return page.ElementR(data["selector"], data["regex"])
-	case "x", "xpath":
-		return page.ElementX(data["xpath"])
-	case "js":
-		return page.ElementByJS(&rod.EvalOptions{JS: data["js"]})
-	case "search":
-		elms, err := page.Search(data["query"])
+		selector, err := p.getActionArg(action, "selector")
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-
+		regex, err := p.getActionArg(action, "regex")
+		if err != nil {
+			return nil, nil, err
+		}
+		element, err := page.ElementR(selector, regex)
+		return element, &selector, err
+	case "x", "xpath":
+		xpath, err := p.getActionArg(action, "xpath")
+		if err != nil {
+			return nil, nil, err
+		}
+		element, err := page.ElementX(xpath)
+		return element, nil, err
+	case "js":
+		js, err := p.getActionArg(action, "js")
+		if err != nil {
+			return nil, nil, err
+		}
+		element, err := page.ElementByJS(&rod.EvalOptions{JS: js})
+		return element, nil, err
+	case "search":
+		query, err := p.getActionArg(action, "query")
+		if err != nil {
+			return nil, nil, err
+		}
+		elms, err := page.Search(query)
+		if err != nil {
+			return nil, nil, err
+		}
 		if elms.First != nil {
-			return elms.First, nil
+			return elms.First, nil, nil
 		}
-		return nil, errors.New("no such element")
+		return nil, nil, errors.New("no such element")
 	default:
-		return page.Element(data["selector"])
+		selector, err := p.getActionArg(action, "selector")
+		if err != nil {
+			return nil, nil, err
+		}
+		element, err := page.Element(selector)
+		return element, &selector, err
 	}
 }
 
@@ -976,11 +1032,11 @@ func (p *Page) getActionArg(action *Action, arg string) (string, error) {
 
 	argValue := action.GetArg(arg)
 
-	if p.instance.interactsh != nil {
-		var interactshURLs []string
-		argValue, interactshURLs = p.instance.interactsh.Replace(argValue, p.InteractshURLs)
-		p.addInteractshURL(interactshURLs...)
+	prepared, err := render.ReplaceInteractshMarkers(argValue, p.instance.interactsh, nil)
+	if err != nil {
+		return "", fmt.Errorf("could not replace interactsh marker for argument %q: %w", arg, err)
 	}
+	argValue = prepared.Text
 
 	exprs := getExpressions(argValue, p.variables)
 
@@ -989,10 +1045,15 @@ func (p *Page) getActionArg(action *Action, arg string) (string, error) {
 		return "", errkit.Wrapf(err, "argument %q, value: %q", arg, argValue)
 	}
 
-	argValue, err = expressions.Evaluate(argValue, p.variables)
+	result, err := render.Render(render.Input{
+		Text:         argValue,
+		Values:       p.variables,
+		InteractURLs: prepared.InteractURLs,
+	})
 	if err != nil {
 		return "", fmt.Errorf("could not get value for argument %q: %s", arg, err)
 	}
+	p.addInteractshURL(result.InteractURLs...)
 
-	return argValue, nil
+	return result.Text, nil
 }

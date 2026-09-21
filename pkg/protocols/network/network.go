@@ -9,7 +9,9 @@ import (
 	"ManScan/pkg/protocols"
 	"ManScan/pkg/protocols/common/expressions"
 	"ManScan/pkg/protocols/common/generators"
+	"ManScan/pkg/protocols/common/interactsh"
 	"ManScan/pkg/protocols/common/portutil"
+	"ManScan/pkg/protocols/common/render"
 	"ManScan/pkg/protocols/network/networkclientpool"
 	"github.com/projectdiscovery/fastdialer/fastdialer"
 	"github.com/projectdiscovery/utils/errkit"
@@ -114,6 +116,7 @@ var RequestPartDefinitions = map[string]string{
 	"matched":       "Matched is the input which was matched upon",
 	"type":          "Type is the type of request made",
 	"request":       "Network request made from the client",
+	"duration":      "Latest measured operation duration in seconds",
 	"body,all,data": "Network response received from server (default)",
 	"raw":           "Full Network protocol data",
 }
@@ -192,15 +195,20 @@ func (request *Request) Compile(options *protocols.ExecutorOptions) error {
 		if input.Type.String() != "" {
 			continue
 		}
-		if compiled, evalErr := expressions.Evaluate(input.Data, preCompileVars); evalErr == nil {
-			input.Data = compiled
+
+		if interactsh.HasMarkers(input.Data) {
+			continue
+		}
+
+		if result, evalErr := render.Render(render.Input{Text: input.Data, Values: preCompileVars}); evalErr == nil && !interactsh.HasMarkers(result.Text) {
+			input.Data = result.Text
 		}
 	}
 
 	// parse ports and validate
 	if request.Port != "" {
 		seen := make(map[string]struct{})
-		for _, port := range strings.Split(request.Port, ",") {
+		for port := range strings.SplitSeq(request.Port, ",") {
 			port = strings.TrimSpace(port)
 			if port == "" {
 				continue
@@ -271,7 +279,14 @@ func (request *Request) Compile(options *protocols.ExecutorOptions) error {
 
 // Requests returns the total number of requests the YAML rule will perform
 func (request *Request) Requests() int {
-	return len(request.Address)
+	requests := len(request.Address)
+	if len(request.ports) > 0 {
+		requests *= len(request.ports)
+	}
+	if request.generator != nil {
+		requests *= request.generator.NewIterator().Total()
+	}
+	return requests
 }
 
 func (request *Request) SetDialer(dialer *fastdialer.Dialer) {

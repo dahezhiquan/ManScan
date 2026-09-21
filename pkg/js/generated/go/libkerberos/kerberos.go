@@ -4,7 +4,7 @@ import (
 	lib_kerberos "ManScan/pkg/js/libs/kerberos"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

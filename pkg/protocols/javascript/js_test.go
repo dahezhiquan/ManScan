@@ -89,6 +89,7 @@ func TestExecuteWithResultsReturnsArgEvaluationErrorWithoutPanic(t *testing.T) {
 
 	executorOptions := testutils.NewMockExecuterOptions(options, tmplInfo)
 	executorOptions.JsCompiler = templates.GetJsCompiler()
+	executorOptions.Verified = true
 
 	request := &javascript.Request{
 		Args: map[string]interface{}{
@@ -107,4 +108,24 @@ func TestExecuteWithResultsReturnsArgEvaluationErrorWithoutPanic(t *testing.T) {
 		})
 	})
 	require.ErrorContains(t, err, `failed to evaluate expression "base64()"`)
+}
+
+func TestExecuteWithResultsRejectsUnverifiedTemplate(t *testing.T) {
+	options := testutils.DefaultOptions.Copy()
+	testutils.Init(options)
+	t.Cleanup(func() {
+		testutils.Cleanup(options)
+	})
+
+	executorOptions := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{ID: "unverified-javascript"})
+	executorOptions.JsCompiler = templates.GetJsCompiler()
+
+	request := &javascript.Request{Code: `module.exports = { success: true, response: "unexpected" }`}
+	require.NoError(t, request.Compile(executorOptions))
+
+	target := contextargs.NewWithInput(context.Background(), "https://example.com:443")
+	err := request.ExecuteWithResults(target, nil, nil, func(*output.InternalWrappedEvent) {
+		t.Fatal("unexpected callback for unverified javascript template")
+	})
+	require.ErrorContains(t, err, "refusing to execute unverified javascript template")
 }

@@ -4,7 +4,7 @@ import (
 	lib_rdp "ManScan/pkg/js/libs/rdp"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

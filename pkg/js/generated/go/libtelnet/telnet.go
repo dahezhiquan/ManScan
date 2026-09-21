@@ -4,7 +4,7 @@ import (
 	lib_telnet "ManScan/pkg/js/libs/telnet"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

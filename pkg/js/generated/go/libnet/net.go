@@ -4,7 +4,7 @@ import (
 	lib_net "ManScan/pkg/js/libs/net"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

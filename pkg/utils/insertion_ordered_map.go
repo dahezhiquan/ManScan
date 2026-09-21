@@ -5,7 +5,7 @@ import (
 	"strconv"
 
 	"ManScan/pkg/utils/json"
-	"gopkg.in/yaml.v2"
+	"ManScan/pkg/utils/yaml"
 )
 
 type InsertionOrderedStringMap struct {

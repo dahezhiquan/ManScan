@@ -4,7 +4,7 @@ import (
 	lib_redis "ManScan/pkg/js/libs/redis"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

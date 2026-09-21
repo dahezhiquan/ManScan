@@ -4,7 +4,7 @@ import (
 	lib_rsync "ManScan/pkg/js/libs/rsync"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

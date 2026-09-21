@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"ManScan/pkg/model/types/severity"
-	"github.com/asaskevich/govalidator"
 )
 
 // JSONScalarToString converts an interface coming from json to string
@@ -96,7 +95,7 @@ func ToStringNSlice(data interface{}) interface{} {
 func ToHexOrString(data interface{}) string {
 	switch s := data.(type) {
 	case string:
-		if govalidator.IsASCII(s) {
+		if isASCII(s) {
 			return s
 		}
 		return hex.Dump([]byte(s))
@@ -105,6 +104,15 @@ func ToHexOrString(data interface{}) string {
 	default:
 		return fmt.Sprintf("%v", data)
 	}
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] > 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
 // ToStringSlice casts an interface to a []string type.

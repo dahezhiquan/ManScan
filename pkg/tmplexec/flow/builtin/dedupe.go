@@ -5,7 +5,7 @@ import (
 	"reflect"
 
 	"ManScan/pkg/types"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 // Dedupe is a javascript builtin for deduping values

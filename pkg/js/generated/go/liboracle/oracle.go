@@ -4,7 +4,7 @@ import (
 	lib_oracle "ManScan/pkg/js/libs/oracle"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

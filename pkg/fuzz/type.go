@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	"ManScan/pkg/utils/json"
+	"ManScan/pkg/utils/yaml"
 	"github.com/invopop/jsonschema"
 	mapsutil "github.com/projectdiscovery/utils/maps"
-	"gopkg.in/yaml.v2"
 )
 
 var (

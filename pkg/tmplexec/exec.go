@@ -19,7 +19,7 @@ import (
 	"ManScan/pkg/tmplexec/flow"
 	"ManScan/pkg/tmplexec/generic"
 	"ManScan/pkg/tmplexec/multiproto"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/utils/errkit"
 )
@@ -283,6 +283,8 @@ func getErrorCause(err error) string {
 
 // ExecuteWithResults executes the protocol requests and returns results instead of writing them.
 func (e *TemplateExecuter) ExecuteWithResults(ctx *scan.ScanContext) ([]*output.ResultEvent, error) {
+	defer e.options.RemoveTemplateCtx(ctx.Input.MetaInput)
+
 	var errx error
 	if e.options.Flow != "" {
 		flowexec, err := flow.NewFlowExecutor(e.requests, ctx, e.options, e.results, e.program)

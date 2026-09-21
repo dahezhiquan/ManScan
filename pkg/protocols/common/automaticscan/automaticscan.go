@@ -20,9 +20,9 @@ import (
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/helpers/writer"
 	"ManScan/pkg/protocols/http/httpclientpool"
-	httputil "ManScan/pkg/protocols/utils/http"
 	"ManScan/pkg/scan"
 	"ManScan/pkg/templates"
+	"ManScan/pkg/utils/yaml"
 	"github.com/logrusorgru/aurora/v4"
 	"github.com/pkg/errors"
 	"github.com/projectdiscovery/gologger"
@@ -34,7 +34,6 @@ import (
 	syncutil "github.com/projectdiscovery/utils/sync"
 	unitutils "github.com/projectdiscovery/utils/unit"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
-	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -209,10 +208,8 @@ func New(opts Options) (*Service, error) {
 	}
 
 	httpclient, err := httpclientpool.Get(opts.ExecuterOpts.Options, &httpclientpool.Configuration{
-		Connection: &httpclientpool.ConnectionConfiguration{
-			DisableKeepAlive: httputil.ShouldDisableKeepAlive(opts.ExecuterOpts.Options),
-		},
-	})
+		DisableCookie: true,
+	}, "")
 	if err != nil {
 		return nil, errors.Wrap(err, "could not get http client")
 	}

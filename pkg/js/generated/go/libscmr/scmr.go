@@ -4,7 +4,7 @@ import (
 	lib_scmr "ManScan/pkg/js/libs/scmr"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

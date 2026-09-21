@@ -4,7 +4,7 @@ import (
 	lib_pop3 "ManScan/pkg/js/libs/pop3"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

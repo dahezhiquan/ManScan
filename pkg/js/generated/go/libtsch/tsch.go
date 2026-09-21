@@ -4,7 +4,7 @@ import (
 	lib_tsch "ManScan/pkg/js/libs/tsch"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

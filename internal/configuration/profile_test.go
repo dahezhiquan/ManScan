@@ -1,4 +1,4 @@
-package main
+package configuration
 
 import (
 	"os"
@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	catalogconfig "ManScan/pkg/catalog/config"
 	"ManScan/pkg/types"
 )
 
@@ -31,12 +32,12 @@ secrets:
 		_ = tmpFile.Close()
 
 		opts := &types.Options{}
-		tempPath, err := processInlineSecretsFromProfile(tmpFile.Name(), opts)
+		tempDir, err := processInlineSecretsFromProfile(tmpFile.Name(), opts)
 		if err != nil {
 			t.Fatalf("processInlineSecretsFromProfile failed: %v", err)
 		}
 		defer func() {
-			_ = os.Remove(tempPath)
+			_ = os.RemoveAll(tempDir)
 		}()
 
 		if len(opts.SecretsFile) != 1 {
@@ -44,8 +45,8 @@ secrets:
 		}
 
 		secretsPath := opts.SecretsFile[0]
-		if !strings.Contains(secretsPath, "inline-secrets-") {
-			t.Errorf("secrets file path should contain 'inline-secrets-', got %s", secretsPath)
+		if filepath.Base(secretsPath) != "inline-secrets.yaml" {
+			t.Errorf("secrets file name = %q, want inline-secrets.yaml", filepath.Base(secretsPath))
 		}
 
 		data, err := os.ReadFile(secretsPath)
@@ -83,13 +84,13 @@ severity:
 		}
 
 		opts := &types.Options{}
-		tempPath, err := processInlineSecretsFromProfile(tmpFile.Name(), opts)
+		tempDir, err := processInlineSecretsFromProfile(tmpFile.Name(), opts)
 		if err != nil {
 			t.Fatalf("processInlineSecretsFromProfile should not fail: %v", err)
 		}
 
-		if tempPath != "" {
-			t.Errorf("expected empty temp path for profile without secrets, got %s", tempPath)
+		if tempDir != "" {
+			t.Errorf("expected no temporary directory for profile without secrets, got %s", tempDir)
 		}
 
 		if len(opts.SecretsFile) != 0 {
@@ -102,6 +103,50 @@ severity:
 		_, err := processInlineSecretsFromProfile(filepath.Join(t.TempDir(), "nonexistent.yaml"), opts)
 		if err == nil {
 			t.Error("expected error for nonexistent file")
+		}
+	})
+
+	t.Run("does not follow a shared temporary directory symlink", func(t *testing.T) {
+		tempRoot := t.TempDir()
+		t.Setenv("TMPDIR", tempRoot)
+		t.Setenv("TMP", tempRoot)
+		t.Setenv("TEMP", tempRoot)
+
+		victimDir := filepath.Join(tempRoot, "victim")
+		if err := os.Mkdir(victimDir, 0o755); err != nil {
+			t.Fatalf("create victim directory: %v", err)
+		}
+		before, err := os.Stat(victimDir)
+		if err != nil {
+			t.Fatalf("stat victim directory before processing: %v", err)
+		}
+
+		sharedPath := filepath.Join(tempRoot, "nuclei-secrets")
+		if err := os.Symlink(victimDir, sharedPath); err != nil {
+			t.Skipf("create directory symlink: %v", err)
+		}
+
+		profilePath := filepath.Join(t.TempDir(), "profile.yaml")
+		writeConfigFile(t, profilePath, "secrets:\n  static: []\n")
+		opts := &types.Options{}
+		tempDir, err := processInlineSecretsFromProfile(profilePath, opts)
+		if err != nil {
+			t.Fatalf("process inline secrets: %v", err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
+
+		if tempDir == sharedPath {
+			t.Fatalf("inline secrets used shared path %q", sharedPath)
+		}
+		if got := filepath.Dir(opts.SecretsFile[0]); got != tempDir {
+			t.Fatalf("inline secrets file directory = %q, want %q", got, tempDir)
+		}
+		after, err := os.Stat(victimDir)
+		if err != nil {
+			t.Fatalf("stat victim directory after processing: %v", err)
+		}
+		if before.Mode().Perm() != after.Mode().Perm() {
+			t.Fatalf("victim directory mode changed from %o to %o", before.Mode().Perm(), after.Mode().Perm())
 		}
 	})
 }
@@ -229,12 +274,12 @@ secrets:
 	}
 
 	opts := &types.Options{}
-	tempPath, err := processInlineSecretsFromProfile(tmpFile.Name(), opts)
+	tempDir, err := processInlineSecretsFromProfile(tmpFile.Name(), opts)
 	if err != nil {
 		t.Fatalf("processInlineSecretsFromProfile failed: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(tempPath)
+		_ = os.RemoveAll(tempDir)
 	}()
 
 	data, err := os.ReadFile(opts.SecretsFile[0])
@@ -250,5 +295,62 @@ secrets:
 	}
 	if !strings.Contains(content, "dynamic:") {
 		t.Errorf("secrets file should have 'dynamic:' key for Authx compatibility, got:\n%s", content)
+	}
+}
+
+func TestApplyProfileParsesInlineTargets(t *testing.T) {
+	profilePath := filepath.Join(t.TempDir(), "profile.yaml")
+	writeConfigFile(t, profilePath, "severity: [high]\n")
+	options := &types.Options{
+		InlineTargetsList: "inline.example\n# comment\n",
+		TargetsFilePath:   "list.example\n\nsecond.example\n",
+	}
+
+	tempSecretsDir, err := ApplyProfile(profilePath, options)
+	if err != nil {
+		t.Fatalf("apply profile: %v", err)
+	}
+	if tempSecretsDir != "" {
+		t.Fatalf("temporary secrets directory = %q, want empty", tempSecretsDir)
+	}
+	want := []string{"inline.example", "list.example", "second.example"}
+	if strings.Join(options.Targets, ",") != strings.Join(want, ",") {
+		t.Fatalf("targets = %v, want %v", options.Targets, want)
+	}
+	if options.TargetsFilePath != "" {
+		t.Fatalf("targets file path = %q, want empty", options.TargetsFilePath)
+	}
+}
+
+func TestResolveProfilePathByID(t *testing.T) {
+	templatesDir := t.TempDir()
+	profilePath := filepath.Join(templatesDir, "profiles", "nested", "recommended.yaml")
+	writeConfigFile(t, profilePath, "severity: [high]\n")
+
+	got, err := ResolveProfilePath("recommended", templatesDir)
+	if err != nil {
+		t.Fatalf("resolve profile ID: %v", err)
+	}
+	if got != profilePath {
+		t.Fatalf("profile path = %q, want %q", got, profilePath)
+	}
+}
+
+func TestTemplatesDirectoryOverridePrecedence(t *testing.T) {
+	dir := t.TempDir()
+	envDir := filepath.Join(dir, "environment")
+	flagDir := filepath.Join(dir, "flag")
+	t.Setenv(catalogconfig.NucleiTemplatesDirEnv, envDir)
+
+	got, overridden := TemplatesDirectoryOverride(&types.Options{NewTemplatesDirectory: flagDir})
+	if !overridden {
+		t.Fatal("flag template directory was not reported as an override")
+	}
+	want, err := filepath.Abs(flagDir)
+	if err != nil {
+		t.Fatalf("resolve expected path: %v", err)
+	}
+	if got != want {
+		t.Fatalf("template directory = %q, want flag path %q", got, want)
 	}
 }

@@ -1,28 +1,21 @@
 package reporting
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync/atomic"
 
-	"ManScan/pkg/reporting/exporters/mongo"
-
 	"ManScan/pkg/catalog/config"
-	json_exporter "ManScan/pkg/reporting/exporters/jsonexporter"
-	"ManScan/pkg/reporting/exporters/jsonl"
-	"github.com/projectdiscovery/gologger"
-
-	"go.uber.org/multierr"
-	"gopkg.in/yaml.v2"
-
-	"errors"
-
 	"ManScan/pkg/model/types/stringslice"
 	"ManScan/pkg/output"
 	"ManScan/pkg/reporting/dedupe"
 	"ManScan/pkg/reporting/exporters/es"
+	json_exporter "ManScan/pkg/reporting/exporters/jsonexporter"
+	"ManScan/pkg/reporting/exporters/jsonl"
 	"ManScan/pkg/reporting/exporters/markdown"
+	"ManScan/pkg/reporting/exporters/mongo"
 	"ManScan/pkg/reporting/exporters/pdf"
 	"ManScan/pkg/reporting/exporters/sarif"
 	"ManScan/pkg/reporting/exporters/splunk"
@@ -32,8 +25,11 @@ import (
 	"ManScan/pkg/reporting/trackers/gitlab"
 	"ManScan/pkg/reporting/trackers/jira"
 	"ManScan/pkg/reporting/trackers/linear"
+	"ManScan/pkg/utils/yaml"
+	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/utils/errkit"
 	fileutil "github.com/projectdiscovery/utils/file"
+	"go.uber.org/multierr"
 )
 
 var (

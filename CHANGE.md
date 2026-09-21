@@ -1,3 +1,24 @@
+## 2026-09-21 18:44 合并远程 nuclei dev 到 upstream
+
+- 变动目录：`.github/`、`cmd/`、`internal/`、`lib/`、`pkg/`，以及根目录配置与说明文件。
+- 变动文件：
+  - 根目录：`.gitignore`、`.sops.yaml`、`SECURITY_CONTEXT.md`、`go.mod`、`go.sum`。
+  - `.github/workflows/`：新增 `security-context.yml`。
+  - `cmd/nuclei/`：更新 `main.go`、benchmark 与 storage/auth/leak/max-time 测试，新增 leak 测试数据。
+  - `internal/configuration/`、`internal/runner/`、`internal/server/`、`internal/tests/`：合入远程 flags/profile/path、runner 目录与 preflight、server proxy/scope、集成测试和测试工具更新。
+  - `lib/`：合入 SDK、多引擎、ignore file、parser lifecycle、result callback 和规模回归测试更新。
+  - `pkg/`：合入 catalog/config/index/loader、installer、templates、protocols、js libs、fuzz、input、output、reporting、tmplexec、types、utils 等远程更新与测试数据。
+- 具体修改内容：
+  - 将远程 `nuclei/dev` 最新提交 `d47ace7701e223de5532e70bc50abdc7e7c0e91d` 合并到本地 `upstream`，并完成冲突处理。
+  - 将远程新增或恢复的原仓库内部 import 统一本地化为 `ManScan/...`，避免重新依赖 `github.com/projectdiscovery/nuclei/v3` 内部模块路径。
+  - 保留 ManScan 默认 `data/` 运行目录、默认关闭更新检查、简化更新提示、模板签名验证绕过、`.nuclei-ignore` 配置目录自愈、自动扫描进度/日志增强、暂停恢复先保存再关闭等二开行为。
+  - 按 ManScan 本地策略调整远程新增测试：未签名模板不再按远程默认策略拒绝，active ignore 文件继续使用 `data/config/.nuclei-ignore`，默认索引缓存继续落到 `data/cache`。
+  - 新增合并说明文档 `docs/remote-merge-updates/2026-09-21-upstream-merge.md`，记录来源、目标、冲突处理、import 本地化、验证结果和保留风险。
+- 修改目的或影响：
+  - 在本地 `upstream` 分支吸收远程 nuclei dev 分支最新功能、依赖升级、安全上下文、协议能力和测试覆盖。
+  - 保护 ManScan 既有二开运行行为，避免远程默认配置覆盖本地数据目录、更新策略、模板加载策略、自动扫描统计和暂停恢复语义。
+  - 重点测试集合已通过；全量 `go test ./...` 仍受外部 DNS 示例和 headless 时序影响，详见本次合并文档。
+
 ## 2026-09-21 16:52 输出自动模版映射加载数量
 
 - 变动目录：`pkg/protocols/common/automaticscan/`、`server/internal/pkg/scanruntime/`

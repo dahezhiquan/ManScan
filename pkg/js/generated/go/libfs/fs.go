@@ -4,7 +4,7 @@ import (
 	lib_fs "ManScan/pkg/js/libs/fs"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

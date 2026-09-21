@@ -1,5 +1,3 @@
-
-
 /**
  * Client is a client for MS SQL database.
  * Internally client uses microsoft/go-mssqldb driver.
@@ -10,7 +8,7 @@
  * ```
  */
 export class MSSQLClient {
-    
+
 
     // Constructor of MSSQLClient
     constructor() {}
@@ -29,7 +27,7 @@ export class MSSQLClient {
     public Connect(host: string, port: number, username: string): boolean | null {
         return null;
     }
-    
+
 
     /**
     * ConnectWithDB connects to MS SQL database using given credentials and database name.
@@ -46,7 +44,7 @@ export class MSSQLClient {
     public ConnectWithDB(host: string, port: number, username: string): boolean | null {
         return null;
     }
-    
+
 
     /**
     * IsMssql checks if the given host is running MS SQL database.
@@ -61,7 +59,21 @@ export class MSSQLClient {
     public IsMssql(host: string, port: number): boolean | null {
         return null;
     }
-    
+
+
+    /**
+    * FingerprintMssql gathers MSSQL pre-login fingerprint data from the target.
+    * @example
+    * ```javascript
+    * const mssql = require('nuclei/mssql');
+    * const info = mssql.FingerprintMssql('acme.com', 1433);
+    * log(to_json(info));
+    * ```
+    */
+    public FingerprintMssql(host: string, port: number): MSSQLInfo | null {
+        return null;
+    }
+
 
     /**
     * ExecuteQuery connects to MS SQL database using given credentials and executes a query.
@@ -77,7 +89,7 @@ export class MSSQLClient {
     public ExecuteQuery(host: string, port: number, username: string): SQLResult | null | null {
         return null;
     }
-    
+
 
 }
 
@@ -87,9 +99,30 @@ export class MSSQLClient {
  * SQLResult Interface
  */
 export interface SQLResult {
-    
+
     Count?: number,
-    
+
     Columns?: string[],
 }
 
+
+/**
+ * MSSQLInfo contains TDS pre-login fingerprint data.
+ */
+export interface MSSQLInfo {
+    host?: string,
+    ip?: string,
+    port?: number,
+    protocol?: string,
+    tls?: boolean,
+    transport?: string,
+    version?: string,
+    majorVersion?: number,
+    minorVersion?: number,
+    buildNumber?: number,
+    encryption?: number,
+    encryptionMode?: string,
+    mars?: boolean,
+    instanceMatches?: boolean,
+    raw?: string,
+}

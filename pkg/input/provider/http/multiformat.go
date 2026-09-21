@@ -10,6 +10,7 @@ import (
 	"ManScan/pkg/input/formats/burp"
 	"ManScan/pkg/input/formats/json"
 	"ManScan/pkg/input/formats/openapi"
+	"ManScan/pkg/input/formats/raw"
 	"ManScan/pkg/input/formats/swagger"
 	"ManScan/pkg/input/formats/yaml"
 	"ManScan/pkg/input/types"
@@ -145,6 +146,7 @@ var providersList = []formats.Format{
 	yaml.New(),
 	openapi.New(),
 	swagger.New(),
+	raw.New(),
 }
 
 // SupportedFormats returns the list of supported formats in comma-separated

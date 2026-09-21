@@ -4,7 +4,7 @@ import (
 	lib_smtp "ManScan/pkg/js/libs/smtp"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

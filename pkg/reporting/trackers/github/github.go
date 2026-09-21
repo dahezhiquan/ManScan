@@ -13,7 +13,7 @@ import (
 	"ManScan/pkg/reporting/exporters/markdown/util"
 	"ManScan/pkg/reporting/format"
 	"ManScan/pkg/reporting/trackers/filters"
-	"github.com/google/go-github/github"
+	"github.com/google/go-github/v30/github"
 	"github.com/pkg/errors"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"golang.org/x/oauth2"
@@ -203,8 +203,8 @@ func (i *Integration) findIssueByTitle(ctx context.Context, title string) (*gith
 		}
 
 		for _, issue := range issues.Issues {
-			if issue.Title != nil && *issue.Title == title {
-				return &issue, nil
+			if issue != nil && issue.Title != nil && *issue.Title == title {
+				return issue, nil
 			}
 		}
 

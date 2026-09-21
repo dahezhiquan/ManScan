@@ -10,7 +10,7 @@ import (
 	"ManScan/pkg/types"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/transport/http"
-	"github.com/google/go-github/github"
+	"github.com/google/go-github/v30/github"
 	"github.com/pkg/errors"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/utils/errkit"

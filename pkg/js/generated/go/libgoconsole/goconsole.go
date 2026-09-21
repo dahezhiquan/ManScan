@@ -4,7 +4,7 @@ import (
 	lib_goconsole "ManScan/pkg/js/libs/goconsole"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

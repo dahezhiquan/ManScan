@@ -4,7 +4,7 @@ import (
 	lib_ssh "ManScan/pkg/js/libs/ssh"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

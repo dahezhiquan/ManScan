@@ -4,7 +4,7 @@ import (
 	lib_dcerpc "ManScan/pkg/js/libs/dcerpc"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

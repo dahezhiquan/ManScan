@@ -59,8 +59,13 @@ type Executer interface {
 
 // TemplateVerification holds cached verification information for a template.
 type TemplateVerification struct {
-	Verified bool
-	Verifier string
+	Verified            bool
+	Verifier            string
+	VerifierFingerprint [32]byte
+
+	// ContentDigest binds the cached result to the verified template and
+	// imported-file contents.
+	ContentDigest [32]byte
 }
 
 // ExecutorOptions contains the configuration options for executer clients
@@ -73,6 +78,9 @@ type ExecutorOptions struct {
 	TemplateInfo model.Info
 	// TemplateVerifier is the verifier for the template
 	TemplateVerifier string
+	// Verified reports whether a trusted verifier verified the template's
+	// signature. Code and JavaScript protocols check it at execution time.
+	Verified bool
 	// TemplateVerificationCallback returns cached verification info for a template path.
 	// If it returns nil, verification should be computed normally.
 	TemplateVerificationCallback func(templatePath string) *TemplateVerification
@@ -96,6 +104,9 @@ type ExecutorOptions struct {
 	Browser *engine.Browser
 	// Interactsh is a client for interactsh oob polling server
 	Interactsh *interactsh.Client
+	// InteractshScope isolates delayed callbacks and cleanup for one execution
+	// when Interactsh is shared by concurrent engines.
+	InteractshScope *interactsh.RequestScope
 	// HostErrorsCache is an optional cache for handling host errors
 	HostErrorsCache hosterrorscache.CacheInterface
 	// Stop execution once first match is found (Assigned while parsing templates)
@@ -149,6 +160,20 @@ type ExecutorOptions struct {
 	CustomFastdialer *fastdialer.Dialer
 	// ClusterMappings stores cluster ID to template IDs mapping during execution
 	ClusterMappings *templateTypes.ClusterMappingsMap
+}
+
+// RegisterInteractshRequest attaches execution-local output dependencies before
+// registering a delayed OOB callback on a potentially shared Interactsh client.
+func (e *ExecutorOptions) RegisterInteractshRequest(urls []string, data *interactsh.RequestData) {
+	if e == nil || e.Interactsh == nil || data == nil {
+		return
+	}
+	data.Output = e.Output
+	data.Progress = e.Progress
+	data.IssuesClient = e.IssuesClient
+	data.FuzzParamsFrequency = e.FuzzParamsFrequency
+	data.Scope = e.InteractshScope
+	e.Interactsh.RequestEvent(urls, data)
 }
 
 // todo: centralizing components is not feasible with current clogged architecture
@@ -221,6 +246,24 @@ func (e *ExecutorOptions) GetTemplateCtx(input *contextargs.MetaInput) *contexta
 	return templateCtx
 }
 
+// NewVariablesScope creates a variable evaluation scope with terminal data
+// layers applied in order.
+func (e *ExecutorOptions) NewVariablesScope(values ...map[string]interface{}) *variables.Scope {
+	return variables.NewScope().AddData(values...)
+}
+
+// AddTemplateCtxToVariablesScope adds template context values to a variable
+// scope while preserving which keys came from prior variable evaluation.
+func (e *ExecutorOptions) AddTemplateCtxToVariablesScope(input *contextargs.MetaInput, scope *variables.Scope) {
+	if input == nil || scope == nil || !e.HasTemplateCtx(input) {
+		return
+	}
+
+	templateCtx := e.GetTemplateCtx(input)
+	scope.AddData(templateCtx.GetAll())
+	scope.AddTemplate(templateCtx.GetTemplateVariables())
+}
+
 // AddTemplateVars adds vars to template context with given template type as prefix
 // this method is no-op if template is not multi protocol
 func (e *ExecutorOptions) AddTemplateVars(input *contextargs.MetaInput, reqType templateTypes.ProtocolType, reqID string, vars map[string]interface{}) {
@@ -277,6 +320,7 @@ func (e *ExecutorOptions) Copy() *ExecutorOptions {
 		TemplatePath:                 e.TemplatePath,
 		TemplateInfo:                 e.TemplateInfo,
 		TemplateVerifier:             e.TemplateVerifier,
+		Verified:                     e.Verified,
 		TemplateVerificationCallback: e.TemplateVerificationCallback,
 		RawTemplate:                  e.RawTemplate,
 		Output:                       e.Output,
@@ -288,6 +332,7 @@ func (e *ExecutorOptions) Copy() *ExecutorOptions {
 		ProjectFile:                  e.ProjectFile,
 		Browser:                      e.Browser,
 		Interactsh:                   e.Interactsh,
+		InteractshScope:              e.InteractshScope,
 		HostErrorsCache:              e.HostErrorsCache,
 		StopAtFirstMatch:             e.StopAtFirstMatch,
 		Variables:                    e.Variables,
@@ -469,6 +514,7 @@ func (e *ExecutorOptions) ApplyNewEngineOptions(n *ExecutorOptions) {
 	e.ProjectFile = n.ProjectFile
 	e.Browser = n.Browser
 	e.Interactsh = n.Interactsh
+	e.InteractshScope = n.InteractshScope
 	e.HostErrorsCache = n.HostErrorsCache
 	e.InputHelper = n.InputHelper
 	e.FuzzParamsFrequency = n.FuzzParamsFrequency

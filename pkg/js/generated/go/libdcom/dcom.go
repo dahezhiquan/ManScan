@@ -4,7 +4,7 @@ import (
 	lib_dcom "ManScan/pkg/js/libs/dcom"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

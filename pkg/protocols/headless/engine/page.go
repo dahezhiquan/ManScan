@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type Page struct {
 	mutex              *sync.RWMutex
 	History            []HistoryData
 	InteractshURLs     []string
+	ActionDurations    []time.Duration
 	payloads           map[string]interface{}
 	variables          map[string]interface{}
 	lastActionNavigate *Action
@@ -55,11 +57,17 @@ type Options struct {
 
 // Run runs a list of actions by creating a new page in the browser.
 func (i *Instance) Run(ctx *contextargs.Context, actions []*Action, payloads map[string]interface{}, options *Options) (ActionData, *Page, error) {
+	if err := ctx.Context().Err(); err != nil {
+		return nil, nil, err
+	}
+
 	page, err := i.engine.Page(proto.TargetCreateTarget{})
 	if err != nil {
 		return nil, nil, err
 	}
-	page = page.Timeout(options.Timeout)
+	// A Rod page inherits the browser process context by default. Bind it to the
+	// request context so scan cancellation interrupts in-flight headless actions.
+	page = page.Context(ctx.Context()).Timeout(options.Timeout)
 
 	if err = i.browser.applyDefaultHeaders(page); err != nil {
 		_ = page.Close()
@@ -287,8 +295,26 @@ func (p *Page) addInteractshURL(URLs ...string) {
 	p.InteractshURLs = append(p.InteractshURLs, URLs...)
 }
 
+// appendRule records a request/response modification rule. The hijack handler
+// reads p.rules from a separate goroutine, so writes must be synchronized.
+func (p *Page) appendRule(r rule) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
+	p.rules = append(p.rules, r)
+}
+
+// rulesSnapshot returns a copy of the current rules for lock-free iteration by
+// the hijack handler (which performs network I/O and must not hold the lock).
+func (p *Page) rulesSnapshot() []rule {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+
+	return slices.Clone(p.rules)
+}
+
 func (p *Page) hasModificationRules() bool {
-	for _, rule := range p.rules {
+	for _, rule := range p.rulesSnapshot() {
 		if containsAnyModificationActionType(rule.Action) {
 			return true
 		}

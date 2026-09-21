@@ -4,7 +4,7 @@ import (
 	lib_krbforge "ManScan/pkg/js/libs/krbforge"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

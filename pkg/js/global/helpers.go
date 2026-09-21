@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 func registerAdditionalHelpers(runtime *goja.Runtime) {

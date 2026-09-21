@@ -120,13 +120,15 @@ func (p *StatsTicker) Init(hostCount int64, rulesCount int, requestCount int64) 
 		// total request count before the first periodic stats tick arrives.
 		p.emitCurrentSummary()
 
-		// Note: this is needed and is responsible for the tick event
-		p.stats.GetStatResponse(p.tickDuration, func(s string, err error) error {
-			if err != nil {
-				gologger.Warning().Msgf("Could not read statistics: %s\n", err)
-			}
-			return nil
-		})
+		if p.tickDuration > 0 {
+			// Note: this is needed and is responsible for the tick event
+			p.stats.GetStatResponse(p.tickDuration, func(s string, err error) error {
+				if err != nil {
+					gologger.Warning().Msgf("Could not read statistics: %s\n", err)
+				}
+				return nil
+			})
+		}
 	}
 }
 

@@ -4,7 +4,7 @@ import (
 	goruntime "runtime"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 	osutils "github.com/projectdiscovery/utils/os"
 )
 

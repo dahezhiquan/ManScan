@@ -2,12 +2,13 @@ package charts
 
 import (
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 
 	"ManScan/pkg/scan/events"
 	"ManScan/pkg/utils/json"
-	"github.com/labstack/echo/v4"
 	fileutil "github.com/projectdiscovery/utils/file"
 )
 
@@ -78,12 +79,15 @@ func NewScanEventsCharts(eventsDir string) (*ScanEventsCharts, error) {
 
 // Start starts the nuclei event charts server
 func (sc *ScanEventsCharts) Start(addr string) {
-	e := echo.New()
-	e.HideBanner = true
-	e.GET("/concurrency", sc.ConcurrencyVsTime)
-	e.GET("/fuzz", sc.TotalRequestsOverTime)
-	e.GET("/slow", sc.TopSlowTemplates)
-	e.GET("/rps", sc.RequestsVSInterval)
-	e.GET("/", sc.AllCharts)
-	e.Logger.Fatal(e.Start(addr))
+	log.Fatal(http.ListenAndServe(addr, sc.routes()))
+}
+
+func (sc *ScanEventsCharts) routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /concurrency", sc.ConcurrencyVsTime)
+	mux.HandleFunc("GET /fuzz", sc.TotalRequestsOverTime)
+	mux.HandleFunc("GET /slow", sc.TopSlowTemplates)
+	mux.HandleFunc("GET /rps", sc.RequestsVSInterval)
+	mux.HandleFunc("GET /{$}", sc.AllCharts)
+	return mux
 }

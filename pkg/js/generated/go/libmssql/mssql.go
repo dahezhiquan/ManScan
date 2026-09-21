@@ -4,7 +4,7 @@ import (
 	lib_mssql "ManScan/pkg/js/libs/mssql"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (
@@ -20,6 +20,7 @@ func init() {
 
 			// Objects / Classes
 			"MSSQLClient": gojs.GetClassConstructor[lib_mssql.MSSQLClient](&lib_mssql.MSSQLClient{}),
+			"MSSQLInfo":   gojs.GetClassConstructor[lib_mssql.MSSQLInfo](&lib_mssql.MSSQLInfo{}),
 		},
 	).Register()
 }

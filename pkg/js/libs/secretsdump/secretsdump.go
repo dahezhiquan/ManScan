@@ -18,7 +18,7 @@ import (
 	gpdrs "github.com/Mzack9999/goimpacket/pkg/dcerpc/drsuapi"
 	gpsession "github.com/Mzack9999/goimpacket/pkg/session"
 	gpsmb "github.com/Mzack9999/goimpacket/pkg/smb"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 
 	"ManScan/pkg/js/utils"
 	"ManScan/pkg/protocols/common/protocolstate"

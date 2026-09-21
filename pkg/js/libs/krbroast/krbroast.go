@@ -15,7 +15,7 @@ import (
 	"fmt"
 
 	gpkrb "github.com/Mzack9999/goimpacket/pkg/kerberos"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 
 	"ManScan/pkg/js/libs/dcerpc"
 	"ManScan/pkg/js/utils"

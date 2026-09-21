@@ -3,7 +3,7 @@ package wmi
 import (
 	"ManScan/pkg/js/libs/goexec"
 	"ManScan/pkg/js/utils"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 // Auth exposes WMI authentication constructors.

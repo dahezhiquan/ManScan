@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 
+	"ManScan/internal/server/proxy"
 	"ManScan/pkg/catalog/config"
 	"ManScan/pkg/protocols/common/protocolinit"
 	"ManScan/pkg/protocols/common/utils/vardump"
@@ -37,7 +38,7 @@ import (
 )
 
 var (
-	// Default directory used to save protocols traffic.
+	// Default directory used to save protocols traffic
 	DefaultDumpTrafficOutputFolder = config.DefaultResponsesDir()
 )
 
@@ -317,6 +318,11 @@ func validateDASTOptions(options *types.Options) error {
 	// Ensure the DAST server token meets minimum length requirement
 	if len(options.DASTServerToken) > 0 && len(options.DASTServerToken) < 16 {
 		return fmt.Errorf("DAST server token must be at least 16 characters long")
+	}
+	if options.DASTProxy {
+		if _, _, err := proxy.ParseAuth(options.DASTProxyAuth); err != nil {
+			return err
+		}
 	}
 	return nil
 }

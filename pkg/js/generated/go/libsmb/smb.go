@@ -4,7 +4,7 @@ import (
 	lib_smb "ManScan/pkg/js/libs/smb"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

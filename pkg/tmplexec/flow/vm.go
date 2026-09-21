@@ -10,8 +10,8 @@ import (
 	"ManScan/pkg/protocols/common/utils/vardump"
 	"ManScan/pkg/tmplexec/flow/builtin"
 	"ManScan/pkg/types"
-	"github.com/Mzack9999/goja"
 	"github.com/logrusorgru/aurora/v4"
+	"github.com/projectdiscovery/goja"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/utils/sync/sizedpool"
 )

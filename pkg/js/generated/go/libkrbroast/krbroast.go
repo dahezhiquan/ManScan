@@ -4,7 +4,7 @@ import (
 	lib_krbroast "ManScan/pkg/js/libs/krbroast"
 
 	"ManScan/pkg/js/gojs"
-	"github.com/Mzack9999/goja"
+	"github.com/projectdiscovery/goja"
 )
 
 var (

@@ -9,8 +9,8 @@ import (
 
 	"ManScan/pkg/js/utils"
 	"ManScan/pkg/protocols/common/protocolstate"
-	"github.com/Mzack9999/goja"
 	"github.com/praetorian-inc/fingerprintx/pkg/plugins"
+	"github.com/projectdiscovery/goja"
 
 	pluginsmtp "github.com/praetorian-inc/fingerprintx/pkg/plugins/services/smtp"
 )

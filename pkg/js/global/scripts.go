@@ -11,11 +11,12 @@ import (
 	"time"
 
 	"ManScan/pkg/js/gojs"
+	jsnet "ManScan/pkg/js/libs/net"
 	"ManScan/pkg/protocols/common/protocolstate"
 	"ManScan/pkg/protocols/common/utils/vardump"
 	"ManScan/pkg/types"
-	"github.com/Mzack9999/goja"
 	"github.com/logrusorgru/aurora/v4"
+	"github.com/projectdiscovery/goja"
 	"github.com/projectdiscovery/gologger"
 	"github.com/projectdiscovery/utils/errkit"
 	stringsutil "github.com/projectdiscovery/utils/strings"
@@ -127,13 +128,7 @@ func initBuiltInFunc(runtime *goja.Runtime) {
 				return false, errkit.New("isPortOpen: host or port is empty")
 			}
 
-			executionId := ctx.Value("executionId").(string)
-			dialer := protocolstate.GetDialersWithId(executionId)
-			if dialer == nil {
-				panic("dialers with executionId " + executionId + " not found")
-			}
-
-			conn, err := dialer.Fastdialer.Dial(ctx, "tcp", net.JoinHostPort(host, port))
+			conn, err := jsnet.Dial(ctx, "tcp", net.JoinHostPort(host, port))
 			if err != nil {
 				return false, err
 			}
