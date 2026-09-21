@@ -61,3 +61,5 @@ ManScan 是一个现代化、高性能的漏洞扫描器，使用基于 YAML 的
 - **pkg/fuzz/** - Fuzzing 引擎与 DAST 能力
 - **pkg/input/** - 多种输入格式的处理（Burp、OpenAPI 等）
 - **pkg/reporting/** - 结果导出与缺陷跟踪集成
+
+See SECURITY_CONTEXT.md for this repo's known vulnerabilities and recurring weak spots. Check it before writing or reviewing security-sensitive code.

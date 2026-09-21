@@ -105,3 +105,5 @@
 - 仅修改 `server` 目录下的文件
 - 仅修改 `docs` 目录下的文件
 - 仅修改仓库当前根目录下的文件，例如根目录中的 `*.md`、配置文件或其他零散文件
+
+See SECURITY_CONTEXT.md for this repo's known vulnerabilities and recurring weak spots. Check it before writing or reviewing security-sensitive code.
