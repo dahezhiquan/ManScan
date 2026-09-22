@@ -4,10 +4,12 @@ CREATE TABLE `manscan_asset_domain_title_history` (
                                                      `history_title` VARCHAR(255) NOT NULL COMMENT '历史title，非空字符串',
                                                      `first_title_created_at` DATETIME NOT NULL COMMENT '首次title创建时间',
                                                      `latest_title_alive_at` DATE NOT NULL COMMENT '最新title存活日期',
+                                                     `is_alive` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存活：0否，1是',
 
                                                      PRIMARY KEY (`id`),
                                                      UNIQUE KEY `uk_domain_history_title` (`domain`, `history_title`),
                                                      KEY `idx_domain` (`domain`),
+                                                     KEY `idx_is_alive` (`is_alive`),
                                                      KEY `idx_latest_title_alive_at` (`latest_title_alive_at`)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4

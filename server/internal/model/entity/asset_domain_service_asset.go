@@ -9,6 +9,7 @@ type AssetDomainServiceAsset struct {
 	AppVersion   string    `gorm:"column:app_version;not null"`
 	LastFoundAt  time.Time `gorm:"column:last_found_at;not null"`
 	FirstFoundAt time.Time `gorm:"column:first_found_at;not null"`
+	IsAlive      bool      `gorm:"column:is_alive;not null;default:false"`
 }
 
 func (AssetDomainServiceAsset) TableName() string {

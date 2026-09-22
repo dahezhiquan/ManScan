@@ -5,10 +5,12 @@ CREATE TABLE `manscan_asset_domain_service_assets` (
                                                        `app_version` VARCHAR(128) NOT NULL COMMENT '应用版本',
                                                        `last_found_at` DATETIME NOT NULL COMMENT '最近发现时间',
                                                        `first_found_at` DATETIME NOT NULL COMMENT '首次发现时间',
+                                                       `is_alive` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存活：0否，1是',
 
                                                        PRIMARY KEY (`id`),
                                                        UNIQUE KEY `uk_domain_app_name_version` (`domain`, `app_name`, `app_version`),
                                                        KEY `idx_domain` (`domain`),
+                                                       KEY `idx_is_alive` (`is_alive`),
                                                        KEY `idx_last_found_at` (`last_found_at`),
                                                        KEY `idx_first_found_at` (`first_found_at`)
 ) ENGINE=InnoDB
