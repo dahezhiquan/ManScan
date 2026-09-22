@@ -651,7 +651,7 @@ func TestBuildVulnerabilityDoesNotSkipFingerprintNameWithoutFingerprintTags(t *t
 					ID:       "legacy-fingerprint",
 					Name:     "Nginx 指纹识别",
 					Tags:     []string{"web"},
-					Severity: "info",
+					Severity: "high",
 				},
 			},
 		},
@@ -662,7 +662,7 @@ func TestBuildVulnerabilityDoesNotSkipFingerprintNameWithoutFingerprintTags(t *t
 		"matched-at":  "https://app.example.com/",
 		"info": map[string]interface{}{
 			"name":     "Nginx 指纹识别",
-			"severity": "info",
+			"severity": "high",
 			"tags":     []interface{}{"web"},
 		},
 	})
@@ -674,6 +674,39 @@ func TestBuildVulnerabilityDoesNotSkipFingerprintNameWithoutFingerprintTags(t *t
 	}
 	if vulnerability.VulnerabilityName != "Nginx 指纹识别" {
 		t.Fatalf("VulnerabilityName = %q, want Nginx 指纹识别", vulnerability.VulnerabilityName)
+	}
+}
+
+func TestBuildVulnerabilitySkipsInfoSeverityWithoutFingerprintTags(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"http-missing-security-headers": {
+					ID:       "http-missing-security-headers",
+					Name:     "HTTP 安全响应头缺失",
+					Tags:     []string{"web"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+
+	vulnerability, err := svc.buildVulnerabilityFromPayload(context.Background(), 42, "即时扫描任务", map[string]interface{}{
+		"template-id": "http-missing-security-headers",
+		"matched-at":  "https://app.example.com/",
+		"info": map[string]interface{}{
+			"name":     "HTTP 安全响应头缺失",
+			"severity": "info",
+			"tags":     []interface{}{"web"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVulnerabilityFromPayload() error = %v", err)
+	}
+	if vulnerability != nil {
+		t.Fatalf("vulnerability = %+v, want nil for info severity result", vulnerability)
 	}
 }
 

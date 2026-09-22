@@ -339,6 +339,10 @@ func (s *State) RecordResult(templateID, templateName, severity string, tags []s
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if !HasFingerprintTag(tags) && IsInfoSeverity(severity) {
+		return false
+	}
+
 	key := ""
 	if len(keys) > 0 {
 		key = strings.TrimSpace(keys[0])
@@ -376,8 +380,6 @@ func (s *State) RecordResult(templateID, templateName, severity string, tags []s
 		s.resultSummary.MediumCount++
 	case "low":
 		s.resultSummary.LowCount++
-	case "info", "informational":
-		s.resultSummary.InfoCount++
 	}
 	s.progress.Matched++
 	s.writeProgressSnapshotLocked()
@@ -395,6 +397,17 @@ func HasFingerprintTag(tags []string) bool {
 		}
 	}
 	return false
+}
+
+// IsInfoSeverity reports whether a result is informational and should not be
+// counted as a vulnerability.
+func IsInfoSeverity(severity string) bool {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "info", "informational":
+		return true
+	default:
+		return false
+	}
 }
 
 // NormalizeResultTags trims, lowercases and deduplicates result tags.
@@ -793,6 +806,9 @@ func ReadResultSummaryFromMatchLog(path string, targetCount int) (ResultSummary,
 			summary.TechCount++
 			continue
 		}
+		if IsInfoSeverity(severity) {
+			continue
+		}
 		switch strings.ToLower(strings.TrimSpace(severity)) {
 		case "critical":
 			summary.CriticalCount++
@@ -802,8 +818,6 @@ func ReadResultSummaryFromMatchLog(path string, targetCount int) (ResultSummary,
 			summary.MediumCount++
 		case "low":
 			summary.LowCount++
-		case "info", "informational":
-			summary.InfoCount++
 		}
 	}
 	if err := scanner.Err(); err != nil {
