@@ -8,7 +8,7 @@ CREATE TABLE `manscan_asset_domain_service_assets` (
                                                        `is_alive` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存活：0否，1是',
 
                                                        PRIMARY KEY (`id`),
-                                                       UNIQUE KEY `uk_domain_app_name_version` (`domain`, `app_name`, `app_version`),
+                                                       UNIQUE KEY `uk_domain_app_name` (`domain`, `app_name`),
                                                        KEY `idx_domain` (`domain`),
                                                        KEY `idx_is_alive` (`is_alive`),
                                                        KEY `idx_last_found_at` (`last_found_at`),
