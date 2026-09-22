@@ -14,7 +14,8 @@ CREATE TABLE `manscan_vulnerabilities` (
                                            `status` VARCHAR(32) NOT NULL DEFAULT 'unreviewed'
                                                COMMENT '漏洞状态: unreviewed=未审核, confirmed=已确认, ticketed=已发单, fixed=已修复, false_positive=误报, ignored=忽略',
 
-                                           `asset_domain` VARCHAR(255) DEFAULT NULL COMMENT '漏洞资产Domain',
+                                           `asset_path` TEXT DEFAULT NULL COMMENT '漏洞资产完整路径',
+                                           `asset_domain` VARCHAR(255) DEFAULT NULL COMMENT '漏洞资产domain，不含 http/https 前缀，格式为 domain:port 或 ip:port',
                                            `asset_host` VARCHAR(255) DEFAULT NULL COMMENT '漏洞资产Host/IP',
                                            `asset_port` INT UNSIGNED DEFAULT NULL COMMENT '漏洞存在端口',
 

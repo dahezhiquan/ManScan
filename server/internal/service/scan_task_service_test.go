@@ -520,8 +520,11 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	if got.VulnerabilityName != "HTTP 安全响应头缺失 - cross-origin-embedder-policy" {
 		t.Fatalf("VulnerabilityName = %q, want %q", got.VulnerabilityName, "HTTP 安全响应头缺失 - cross-origin-embedder-policy")
 	}
-	if got.AssetDomain == nil || *got.AssetDomain != "https://app.example.com:8443/login" {
-		t.Fatalf("AssetDomain = %v, want https://app.example.com:8443/login", got.AssetDomain)
+	if got.AssetPath == nil || *got.AssetPath != "https://app.example.com:8443/login" {
+		t.Fatalf("AssetPath = %v, want https://app.example.com:8443/login", got.AssetPath)
+	}
+	if got.AssetDomain == nil || *got.AssetDomain != "app.example.com:8443" {
+		t.Fatalf("AssetDomain = %v, want app.example.com:8443", got.AssetDomain)
 	}
 	if got.AssetHost == nil || *got.AssetHost != "192.0.2.10" {
 		t.Fatalf("AssetHost = %v, want 192.0.2.10", got.AssetHost)
@@ -591,6 +594,47 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 	if _, ok := detail["template-path"]; ok {
 		t.Fatal("Detail unexpectedly contains template-path")
+	}
+}
+
+func TestVulnerabilityAssetDomainUsesHostPortWithoutScheme(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		asset vulnerabilityAsset
+		want  string
+	}{
+		{
+			name:  "domain with port",
+			asset: vulnerabilityAsset{Domain: "app.example.com", Host: "192.0.2.10", Port: 8443},
+			want:  "app.example.com:8443",
+		},
+		{
+			name:  "ip with default port",
+			asset: vulnerabilityAsset{Host: "192.0.2.10", Port: 443},
+			want:  "192.0.2.10:443",
+		},
+		{
+			name:  "host already contains port",
+			asset: vulnerabilityAsset{Domain: "app.example.com:8443", Host: "192.0.2.10", Port: 8443},
+			want:  "app.example.com:8443",
+		},
+		{
+			name:  "ipv6 with port",
+			asset: vulnerabilityAsset{Host: "2001:db8::1", Port: 443},
+			want:  "[2001:db8::1]:443",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := vulnerabilityAssetDomain(tc.asset); got != tc.want {
+				t.Fatalf("vulnerabilityAssetDomain() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
