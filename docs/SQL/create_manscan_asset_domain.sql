@@ -11,7 +11,11 @@ CREATE TABLE `manscan_asset_domain` (
                                         `last_alive_at` DATETIME DEFAULT NULL COMMENT '上次扫描存活时间',
 
                                         `region` VARCHAR(100) DEFAULT NULL COMMENT '区域',
-                                        `vulnerability_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '漏洞数量',
+                                        `vulnerability_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '漏洞总数量，不包含info等级',
+                                        `critical_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '严重漏洞数量',
+                                        `high_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '高危漏洞数量',
+                                        `medium_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '中危漏洞数量',
+                                        `low_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '低危漏洞数量',
 
                                         `components` TEXT DEFAULT NULL COMMENT '组件名称列表，多个组件用逗号分隔',
                                         `component_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '组件数量',

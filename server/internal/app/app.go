@@ -33,8 +33,10 @@ func Run() error {
 
 	scanTaskRepository := repository.NewScanTaskRepository(db)
 	vulnerabilityRepository := repository.NewVulnerabilityRepository(db)
+	assetDomainRepository := repository.NewAssetDomainRepository(db)
 	assetConfigCenterRepository := repository.NewAssetConfigCenterRepository(db)
 	vulnerabilityService := service.NewVulnerabilityService(vulnerabilityRepository)
+	assetDomainService := service.NewAssetDomainService(assetDomainRepository)
 	assetConfigCenterService := service.NewAssetConfigCenterService(assetConfigCenterRepository)
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
@@ -49,6 +51,7 @@ func Run() error {
 		handler.NewTemplateHandler(templateService),
 		handler.NewScanTaskHandler(scanTaskService),
 		handler.NewVulnerabilityHandler(vulnerabilityService),
+		handler.NewAssetDomainHandler(assetDomainService),
 		handler.NewAssetConfigCenterHandler(assetConfigCenterService),
 	)
 

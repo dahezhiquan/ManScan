@@ -1443,3 +1443,82 @@ curl -X PUT "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
 ```bash
 curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 ```
+
+## 29. 获取域名资产清单
+
+- 请求方法和路径：`GET /api/v1/domain-assets`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | `int` | 否 | 页码，最小为 `1`，默认 `1` |
+| `page_size` | `int` | 否 | 每页数量，范围 `1-100`，默认 `10` |
+| `keyword` | `string` | 否 | 按域名或站点标题模糊搜索 |
+| `owner` | `string` | 否 | 按负责人模糊筛选 |
+| `region` | `string` | 否 | 按区域模糊筛选 |
+| `asset_address` | `string` | 否 | 按资产地址模糊筛选，当前对应 `domain` 字段 |
+| `risk_level` | `string` | 否 | 按风险等级精确筛选，支持 `critical`、`high`、`medium`、`low`、`info`、`unknown` |
+| `is_alive` | `bool` | 否 | 按存活状态筛选 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 1,
+    "totalPages": 1,
+    "items": [
+      {
+        "id": 1,
+        "domain": "app.example.com:443",
+        "asset_address": "app.example.com:443",
+        "owner": "安全团队",
+        "title": "Example App",
+        "crawler_path_count": 12,
+        "whitebox_path_count": 3,
+        "first_alive_at": "2026-09-22T10:00:00+08:00",
+        "last_alive_at": "2026-09-22T11:00:00+08:00",
+        "region": "internal",
+        "risk_level": "high",
+        "vulnerability_count": 6,
+        "critical_count": 1,
+        "high_count": 2,
+        "medium_count": 2,
+        "low_count": 1,
+        "components": "nginx,spring",
+        "component_count": 2,
+        "has_form": true,
+        "has_upload": false,
+        "has_admin": false,
+        "has_uc_login": true,
+        "has_baidu_login": false,
+        "screenshot_path": "/screenshots/app.png",
+        "manual_note": "",
+        "http_status_code": 200,
+        "is_alive": true
+      }
+    ]
+  }
+}
+```
+
+- 说明：
+  - `critical_count`、`high_count`、`medium_count`、`low_count` 分别表示严重、高危、中危、低危漏洞数量。
+  - `vulnerability_count` 保留为兼容字段，语义为漏洞总数且不包含 `info` 等级。
+  - 列表默认按风险等级、漏洞总数、最近存活时间和 ID 倒序排序。
+  - 当前后端表结构没有 `organization`、`scan_task`、`business_system` 字段，因此这些前端筛选项不会作为服务端查询条件。
+
+- 错误码说明：
+  - `40001`：分页参数非法，或 `is_alive` 不是布尔值
+  - `50001`：获取域名资产清单失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&risk_level=high&is_alive=true"
+```
