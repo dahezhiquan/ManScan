@@ -14,7 +14,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func TestAssetDomainRepositoryListReturnsSeverityCounts(t *testing.T) {
+func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 	t.Parallel()
 
 	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
@@ -31,27 +31,18 @@ func TestAssetDomainRepositoryListReturnsSeverityCounts(t *testing.T) {
 
 	title := "Example App"
 	region := "internal"
-	riskLevel := "high"
 	items := []entity.AssetDomain{
 		{
-			ID:                 1,
-			Domain:             "app.example.com:443",
-			Title:              &title,
-			Region:             &region,
-			RiskLevel:          &riskLevel,
-			VulnerabilityCount: 6,
-			CriticalCount:      1,
-			HighCount:          2,
-			MediumCount:        2,
-			LowCount:           1,
-			ComponentCount:     3,
-			IsAlive:            true,
+			ID:      1,
+			Domain:  "app.example.com:443",
+			Title:   &title,
+			Region:  &region,
+			IsAlive: true,
 		},
 		{
-			ID:                 2,
-			Domain:             "static.example.com:443",
-			VulnerabilityCount: 0,
-			IsAlive:            false,
+			ID:      2,
+			Domain:  "static.example.com:443",
+			IsAlive: false,
 		},
 	}
 	for i := range items {
@@ -67,7 +58,6 @@ func TestAssetDomainRepositoryListReturnsSeverityCounts(t *testing.T) {
 		Keyword:      "example app",
 		Region:       "internal",
 		AssetAddress: "app.example.com",
-		RiskLevel:    "high",
 		IsAlive:      boolPointer(true),
 	})
 	if err != nil {
@@ -77,14 +67,8 @@ func TestAssetDomainRepositoryListReturnsSeverityCounts(t *testing.T) {
 		t.Fatalf("page = %+v, want exactly one item", page)
 	}
 
-	got := page.Items[0]
-	if got.CriticalCount != 1 || got.HighCount != 2 || got.MediumCount != 2 || got.LowCount != 1 {
-		t.Fatalf("severity counts = critical:%d high:%d medium:%d low:%d, want 1/2/2/1",
-			got.CriticalCount,
-			got.HighCount,
-			got.MediumCount,
-			got.LowCount,
-		)
+	if got := page.Items[0]; got.Domain != "app.example.com:443" || !got.IsAlive {
+		t.Fatalf("item = %+v, want filtered app domain with alive state", got)
 	}
 }
 
@@ -283,6 +267,7 @@ func TestAssetDomainRepositorySyncObservationsInsertUsesFieldWhitelist(t *testin
 		"high_count",
 		"medium_count",
 		"low_count",
+		"components",
 		"component_count",
 	} {
 		if strings.Contains(insertSQL, column) {

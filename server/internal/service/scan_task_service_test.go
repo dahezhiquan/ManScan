@@ -523,8 +523,8 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	if got.AssetPath == nil || *got.AssetPath != "https://app.example.com:8443/login" {
 		t.Fatalf("AssetPath = %v, want https://app.example.com:8443/login", got.AssetPath)
 	}
-	if got.AssetDomain == nil || *got.AssetDomain != "app.example.com:8443" {
-		t.Fatalf("AssetDomain = %v, want app.example.com:8443", got.AssetDomain)
+	if got.AssetEndpoint == nil || *got.AssetEndpoint != "app.example.com:8443" {
+		t.Fatalf("AssetEndpoint = %v, want app.example.com:8443", got.AssetEndpoint)
 	}
 	if got.AssetHost == nil || *got.AssetHost != "192.0.2.10" {
 		t.Fatalf("AssetHost = %v, want 192.0.2.10", got.AssetHost)
@@ -597,7 +597,7 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 }
 
-func TestVulnerabilityAssetDomainUsesHostPortWithoutScheme(t *testing.T) {
+func TestVulnerabilityAssetEndpointUsesHostPortWithoutScheme(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -631,8 +631,8 @@ func TestVulnerabilityAssetDomainUsesHostPortWithoutScheme(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := vulnerabilityAssetDomain(tc.asset); got != tc.want {
-				t.Fatalf("vulnerabilityAssetDomain() = %q, want %q", got, tc.want)
+			if got := vulnerabilityAssetEndpoint(tc.asset); got != tc.want {
+				t.Fatalf("vulnerabilityAssetEndpoint() = %q, want %q", got, tc.want)
 			}
 		})
 	}

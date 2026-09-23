@@ -862,7 +862,7 @@ curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
         "severity": "high",
         "template_id": "http-missing-security-headers",
         "asset_path": "https://app.example.com/login",
-        "asset_domain": "app.example.com:443",
+        "asset_endpoint": "app.example.com:443",
         "asset_host": "192.0.2.10",
         "status": "unreviewed",
         "tags": ["cve", "kev"],
@@ -1100,7 +1100,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
     "fixed_at": null,
     "status": "unreviewed",
     "asset_path": "https://app.example.com/login",
-    "asset_domain": "app.example.com:443",
+    "asset_endpoint": "app.example.com:443",
     "asset_host": "192.0.2.10",
     "asset_port": 8443,
     "tags": ["cve", "kev"],
@@ -1458,7 +1458,6 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 | `owner` | `string` | 否 | 按负责人模糊筛选 |
 | `region` | `string` | 否 | 按区域模糊筛选 |
 | `asset_address` | `string` | 否 | 按资产地址模糊筛选，当前对应 `domain` 字段 |
-| `risk_level` | `string` | 否 | 按风险等级精确筛选，支持 `critical`、`high`、`medium`、`low`、`info`、`unknown` |
 | `is_alive` | `bool` | 否 | 按存活状态筛选 |
 
 - 响应格式：
@@ -1479,19 +1478,9 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
         "asset_address": "app.example.com:443",
         "owner": "安全团队",
         "title": "Example App",
-        "crawler_path_count": 12,
-        "whitebox_path_count": 3,
         "first_alive_at": "2026-09-22T10:00:00+08:00",
         "last_alive_at": "2026-09-22T11:00:00+08:00",
         "region": "internal",
-        "risk_level": "high",
-        "vulnerability_count": 6,
-        "critical_count": 1,
-        "high_count": 2,
-        "medium_count": 2,
-        "low_count": 1,
-        "components": "nginx,spring",
-        "component_count": 2,
         "has_form": true,
         "has_upload": false,
         "has_admin": false,
@@ -1510,10 +1499,8 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 ```
 
 - 说明：
-  - `critical_count`、`high_count`、`medium_count`、`low_count` 分别表示严重、高危、中危、低危漏洞数量。
-  - `vulnerability_count` 保留为兼容字段，语义为漏洞总数且不包含 `info` 等级。
   - `request`、`response` 分别表示该域名资产最近一次探测保存的请求与响应原文；没有记录时返回空字符串。
-  - 列表默认按风险等级、漏洞总数、最近存活时间和 ID 倒序排序。
+  - 列表默认按最近存活时间和 ID 倒序排序。
   - 当前后端表结构没有 `organization`、`scan_task`、`business_system` 字段，因此这些前端筛选项不会作为服务端查询条件。
 
 - 错误码说明：
@@ -1523,5 +1510,5 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 - 使用示例：
 
 ```bash
-curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&risk_level=high&is_alive=true"
+curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&is_alive=true"
 ```

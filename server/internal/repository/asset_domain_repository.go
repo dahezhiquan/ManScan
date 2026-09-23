@@ -36,16 +36,6 @@ type AssetDomainNetworkItem struct {
 	SmallCategory string
 }
 
-const assetDomainRiskOrder = `CASE LOWER(COALESCE(a.risk_level, ''))
-WHEN 'critical' THEN 1
-WHEN 'high' THEN 2
-WHEN 'medium' THEN 3
-WHEN 'low' THEN 4
-WHEN 'info' THEN 5
-WHEN 'unknown' THEN 6
-ELSE 7
-END ASC`
-
 func NewAssetDomainRepository(db *gorm.DB) AssetDomainRepository {
 	return &assetDomainRepository{db: db}
 }
@@ -108,8 +98,6 @@ func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDom
 	items := make([]entity.AssetDomain, 0)
 	if err := r.applyListFilters(r.db.WithContext(ctx).Table("manscan_asset_domain AS a"), query).
 		Select("a.*").
-		Order(assetDomainRiskOrder).
-		Order("a.vulnerability_count DESC").
 		Order("a.last_alive_at DESC").
 		Order("a.id DESC").
 		Offset((page - 1) * pageSize).
@@ -149,9 +137,6 @@ func (r *assetDomainRepository) applyListFilters(db *gorm.DB, query dto.ListAsse
 	}
 	if strings.TrimSpace(query.AssetAddress) != "" {
 		db = applyLikeAnyFilter(db, "a.domain", []string{query.AssetAddress})
-	}
-	if strings.TrimSpace(query.RiskLevel) != "" {
-		db = applyLowerInFilter(db, "a.risk_level", []string{query.RiskLevel})
 	}
 	if query.IsAlive != nil {
 		db = db.Where("a.is_alive = ?", *query.IsAlive)

@@ -45,7 +45,6 @@ func (h *assetDomainHandler) List(c *gin.Context) {
 		Owner:        c.Query("owner"),
 		Region:       c.Query("region"),
 		AssetAddress: c.Query("asset_address"),
-		RiskLevel:    c.Query("risk_level"),
 	}
 	if hasIsAlive {
 		query.IsAlive = &isAlive

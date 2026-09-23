@@ -7,11 +7,8 @@ CREATE TABLE `manscan_asset_host` (
                                       `os_version` VARCHAR(128) DEFAULT NULL COMMENT '操作系统版本',
                                       `scan_created_at` DATETIME NOT NULL COMMENT '扫描创建时间',
                                       `last_alive_at` DATETIME DEFAULT NULL COMMENT '上次扫描存活时间',
-                                      `port_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '主机存在的端口数量',
-                                      `has_high_risk_service` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '主机是否存在高危服务：0否，1是',
+
                                       `manual_note` TEXT DEFAULT NULL COMMENT '人工注释',
-                                      `risk_level` VARCHAR(32) DEFAULT NULL COMMENT '主机风险等级',
-                                      `vulnerability_count` INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '主机漏洞数量',
                                       `is_alive` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存活：0否，1是',
                                       `related_domains` longtext DEFAULT NULL COMMENT '主机关联的域名资产，多个用英文逗号分隔',
 
@@ -19,11 +16,9 @@ CREATE TABLE `manscan_asset_host` (
                                       UNIQUE KEY `uk_ip_address` (`ip_address`),
                                       KEY `idx_region` (`region`),
                                       KEY `idx_owner` (`owner`),
-                                      KEY `idx_risk_level` (`risk_level`),
                                       KEY `idx_is_alive` (`is_alive`),
                                       KEY `idx_last_alive_at` (`last_alive_at`),
-                                      KEY `idx_scan_created_at` (`scan_created_at`),
-                                      KEY `idx_has_high_risk_service` (`has_high_risk_service`)
+                                      KEY `idx_scan_created_at` (`scan_created_at`)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
   COLLATE=utf8mb4_unicode_ci

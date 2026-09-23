@@ -10,7 +10,6 @@ CREATE TABLE `manscan_asset_host_port` (
                                            `app_name` VARCHAR(255) DEFAULT NULL COMMENT '端口应用名称',
                                            `app_version` VARCHAR(128) DEFAULT NULL COMMENT '端口应用版本',
                                            `is_alive` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存活：0否，1是',
-                                           `has_vulnerability` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '端口是否存在漏洞：0否，1是',
                                            `is_high_risk_port` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否是高危端口：0否，1是',
 
                                            PRIMARY KEY (`id`),
@@ -23,7 +22,6 @@ CREATE TABLE `manscan_asset_host_port` (
                                            KEY `idx_service_name` (`service_name`),
                                            KEY `idx_app_name` (`app_name`),
                                            KEY `idx_is_alive` (`is_alive`),
-                                           KEY `idx_has_vulnerability` (`has_vulnerability`),
                                            KEY `idx_is_high_risk_port` (`is_high_risk_port`)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
