@@ -1,16 +1,28 @@
 package service
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"ManScan/pkg/utils"
@@ -18,13 +30,22 @@ import (
 	"ManScan/server/internal/pkg/scanruntime"
 	"ManScan/server/internal/repository"
 
-	"github.com/projectdiscovery/httpx/common/httpx"
+	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/projectdiscovery/useragent"
+	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 )
 
 var errScanTaskPausedBeforeProcess = errors.New("scan task paused before scanner process started")
 
-func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, state *scanruntime.State) error {
+const (
+	assetDomainFingerprintCacheEnv       = "MANSCAN_ASSET_DOMAIN_FINGERPRINT_CACHE"
+	assetDomainWappalyzerMaxBody         = 4 * 1024 * 1024
+	assetDomainComponentSummaryNameLimit = 10
+)
+
+var assetDomainTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+
+func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, state *scanruntime.State, fingerprintCachePath string) error {
 	if s.assetDomainRepository == nil || len(targets) == 0 {
 		return nil
 	}
@@ -33,7 +54,7 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	}
 
 	if state != nil {
-		state.Append("info", "asset_domain_probe_started", "开始扫描前域名资产存活探测")
+		state.Append("info", "asset_domain_probe_started", "开始扫描前域名资产存活 & 指纹探测")
 	}
 	networkItems, err := s.assetDomainRepository.ListNetworkItems(ctx)
 	if err != nil {
@@ -49,6 +70,9 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		return nil
 	}
 
+	if state != nil {
+		state.Append("info", "asset_domain_wappalyzer_started", "开始进行 Wappalyzer 被动指纹识别")
+	}
 	probeResult, err := probeAssetDomainLiveness(ctx, request, targets, buildAssetDomainNetworkRegions(networkItems))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -61,6 +85,9 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			state.Append("warn", "asset_domain_probe_failed", "扫描前域名资产存活探测失败，已跳过资产同步")
 		}
 		return nil
+	}
+	if state != nil {
+		state.Append("info", "asset_domain_wappalyzer_finished", "Wappalyzer 被动指纹识别结果 - "+assetDomainComponentSummary(probeResult.ServiceAssets))
 	}
 	if len(probeResult.CheckedDomains) == 0 {
 		if state != nil {
@@ -81,6 +108,42 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		}
 		return nil
 	}
+	if err := s.assetDomainRepository.SyncServiceAssets(ctx, probeResult.ServiceAssets, probeResult.CheckedDomains, time.Now()); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if s.logger != nil {
+			s.logger.Error("sync probed asset domain service assets failed", "service_asset_count", len(probeResult.ServiceAssets), "checked_domain_count", len(probeResult.CheckedDomains), "error", err)
+		}
+		if state != nil {
+			state.Append("warn", "asset_domain_service_asset_sync_failed", "扫描前域名组件识别完成，但同步组件表失败")
+		}
+		return nil
+	}
+	if err := writeAssetDomainFingerprintCache(fingerprintCachePath, probeResult.Fingerprints); err != nil {
+		if s.logger != nil {
+			s.logger.Error("write asset domain fingerprint cache failed", "path", fingerprintCachePath, "error", err)
+		}
+	}
+	if !request.AutomaticScan {
+		if state != nil {
+			state.Append("info", "asset_domain_fingerprint_template_started", "开始进行 ManScan 智能主动指纹识别")
+		}
+		activeServiceAssets, err := s.runAssetDomainFingerprintTemplates(ctx, request, probeResult.AliveTargets, filepath.Dir(fingerprintCachePath))
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+			if s.logger != nil {
+				s.logger.Error("run asset domain fingerprint templates failed", "target_count", len(probeResult.AliveTargets), "error", err)
+			}
+			if state != nil {
+				state.Append("warn", "asset_domain_fingerprint_template_failed", "扫描前域名组件指纹模板识别失败，已继续后续扫描")
+			}
+		} else if state != nil {
+			state.Append("info", "asset_domain_fingerprint_template_finished", "智能主动指纹识别结果 - "+assetDomainComponentSummary(activeServiceAssets))
+		}
+	}
 	if state != nil {
 		aliveCount := len(probeResult.Observations)
 		notAliveCount := len(probeResult.CheckedDomains) - aliveCount
@@ -93,12 +156,47 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 }
 
 func assetDomainProbeFinishedMessage(aliveCount, notAliveCount int) string {
-	return fmt.Sprintf("扫描前域名资产存活探测完成，本次扫描存活 %d 个，不存活 %d 个", aliveCount, notAliveCount)
+	return fmt.Sprintf("扫描前域名资产存活 & 指纹探测完成，本次扫描存活 %d 个，不存活 %d 个", aliveCount, notAliveCount)
+}
+
+func assetDomainComponentSummary(values []repository.AssetDomainServiceAssetObservation) string {
+	values = uniqueAssetDomainServiceAssetObservations(values)
+	if len(values) == 0 {
+		return "识别到 0 个组件"
+	}
+
+	names := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		name := normalizeAssetDomainComponentName(value.AppName)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return fmt.Sprintf("识别到 %d 个组件", len(values))
+	}
+
+	displayNames := names
+	if len(displayNames) > assetDomainComponentSummaryNameLimit {
+		displayNames = displayNames[:assetDomainComponentSummaryNameLimit]
+		return fmt.Sprintf("识别到 %d 个组件：%s 等 %d 种", len(values), strings.Join(displayNames, "、"), len(names))
+	}
+	return fmt.Sprintf("识别到 %d 个组件：%s", len(values), strings.Join(displayNames, "、"))
 }
 
 type assetDomainLivenessProbeResult struct {
 	Observations   []repository.AssetDomainObservation
 	CheckedDomains []string
+	ServiceAssets  []repository.AssetDomainServiceAssetObservation
+	Fingerprints   []assetDomainFingerprintCacheEntry
+	AliveTargets   []string
 }
 
 type assetDomainNetworkRegion struct {
@@ -107,25 +205,11 @@ type assetDomainNetworkRegion struct {
 }
 
 func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, networkRegions []assetDomainNetworkRegion) (assetDomainLivenessProbeResult, error) {
-	httpxOptions := httpx.DefaultOptions
-	httpxOptions.RetryMax = request.Retries
-	httpxOptions.Timeout = time.Duration(defaultInt(request.Timeout, 10)) * time.Second
-	httpxOptions.FollowRedirects = true
-	httpxOptions.MaxRedirects = defaultInt(request.MaxRedirects, httpxOptions.MaxRedirects)
-	httpxOptions.MaxResponseBodySizeToRead = int64(defaultInt(request.ResponseReadSize, 1024*1024))
-	if proxy := firstCleanString(request.Proxy); proxy != "" {
-		httpxOptions.Proxy = proxy
-	}
-
-	httpxClient, err := httpx.New(&httpxOptions)
+	httpClient := newAssetDomainWappalyzerHTTPClient(request)
+	wappalyzerClient, err := wappalyzer.New()
 	if err != nil {
-		return assetDomainLivenessProbeResult{}, err
+		wappalyzerClient = nil
 	}
-	defer func() {
-		if httpxClient.Dialer != nil {
-			httpxClient.Dialer.Close()
-		}
-	}()
 
 	concurrency := request.ProbeConcurrency
 	if concurrency <= 0 {
@@ -166,7 +250,7 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result, err := probeAssetDomainTarget(ctx, httpxClient, target, networkRegions)
+			result, err := probeAssetDomainTarget(ctx, httpClient, wappalyzerClient, target, networkRegions)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					setFirstErr(err)
@@ -206,16 +290,67 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 			checkedSeen[domain] = struct{}{}
 			probeResult.CheckedDomains = append(probeResult.CheckedDomains, domain)
 		}
+		probeResult.ServiceAssets = append(probeResult.ServiceAssets, result.ServiceAssets...)
+		probeResult.Fingerprints = append(probeResult.Fingerprints, result.Fingerprints...)
+		probeResult.AliveTargets = append(probeResult.AliveTargets, result.AliveTargets...)
 	}
+	probeResult.ServiceAssets = uniqueAssetDomainServiceAssetObservations(probeResult.ServiceAssets)
+	probeResult.Fingerprints = uniqueAssetDomainFingerprintCacheEntries(probeResult.Fingerprints)
+	probeResult.AliveTargets = uniqueNonEmptyStrings(probeResult.AliveTargets)
 	return probeResult, nil
 }
 
 type assetDomainProbeTargetResult struct {
 	Observations   []repository.AssetDomainObservation
 	CheckedDomains []string
+	ServiceAssets  []repository.AssetDomainServiceAssetObservation
+	Fingerprints   []assetDomainFingerprintCacheEntry
+	AliveTargets   []string
 }
 
-func probeAssetDomainTarget(ctx context.Context, httpxClient *httpx.HTTPX, target string, networkRegions []assetDomainNetworkRegion) (assetDomainProbeTargetResult, error) {
+type assetDomainFingerprintCacheEntry struct {
+	Target     string                                 `json:"target"`
+	Domain     string                                 `json:"domain"`
+	Components []assetDomainFingerprintCacheComponent `json:"components"`
+}
+
+type assetDomainFingerprintCacheComponent struct {
+	Domain     string `json:"domain"`
+	AppName    string `json:"app_name"`
+	AppVersion string `json:"app_version"`
+}
+
+type assetDomainProbeHTTPResponse struct {
+	Input           string
+	StatusCode      int
+	FirstStatusCode int
+	Headers         map[string][]string
+	Data            []byte
+	Raw             string
+	Request         string
+}
+
+type assetDomainProbeStatusRecorder struct {
+	firstStatusCode atomic.Int64
+}
+
+type assetDomainProbeStatusRecorderKey struct{}
+
+type assetDomainProbeStatusTransport struct {
+	base http.RoundTripper
+}
+
+func (t assetDomainProbeStatusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if resp != nil && resp.StatusCode > 0 {
+		if recorder, ok := req.Context().Value(assetDomainProbeStatusRecorderKey{}).(*assetDomainProbeStatusRecorder); ok && recorder != nil {
+			recorder.firstStatusCode.CompareAndSwap(0, int64(resp.StatusCode))
+		}
+	}
+	return resp, err
+}
+
+func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Client, wappalyzerClient *wappalyzer.Wappalyze, target string, networkRegions []assetDomainNetworkRegion) (assetDomainProbeTargetResult, error) {
 	result := assetDomainProbeTargetResult{}
 	for _, probeURL := range assetDomainProbeURLs(target) {
 		if err := ctx.Err(); err != nil {
@@ -226,13 +361,7 @@ func probeAssetDomainTarget(ctx context.Context, httpxClient *httpx.HTTPX, targe
 			continue
 		}
 		result.CheckedDomains = append(result.CheckedDomains, domain)
-		req, err := httpxClient.NewRequestWithContext(ctx, http.MethodGet, probeURL)
-		if err != nil {
-			continue
-		}
-		userAgent := useragent.PickRandom()
-		req.Header.Set("User-Agent", userAgent.Raw)
-		resp, err := httpxClient.Do(req, httpx.UnsafeOptions{})
+		resp, err := doAssetDomainWappalyzerRequest(ctx, httpClient, probeURL)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return assetDomainProbeTargetResult{}, err
@@ -247,9 +376,393 @@ func probeAssetDomainTarget(ctx context.Context, httpxClient *httpx.HTTPX, targe
 			Request:        finalAssetDomainRequest(resp),
 			Response:       resp.Raw,
 		})
+		components := assetDomainWappalyzerComponents(wappalyzerClient, domain, resp)
+		result.ServiceAssets = append(result.ServiceAssets, components...)
+		if wappalyzerClient != nil {
+			result.Fingerprints = append(result.Fingerprints, assetDomainFingerprintCacheEntry{
+				Target:     target,
+				Domain:     domain,
+				Components: assetDomainFingerprintCacheComponents(components),
+			})
+		}
+		result.AliveTargets = append(result.AliveTargets, firstNonEmpty(resp.Input, probeURL, target))
 		return result, nil
 	}
 	return result, nil
+}
+
+func newAssetDomainWappalyzerHTTPClient(request dto.CreateScanTaskRequest) *retryablehttp.Client {
+	options := retryablehttp.DefaultOptionsSingle
+	options.RetryMax = defaultInt(request.Retries, 1)
+	options.Timeout = time.Duration(defaultInt(request.Timeout, 10)) * time.Second
+	var proxyURL *url.URL
+	if proxyValue := firstCleanString(request.Proxy); proxyValue != "" {
+		if parsedProxyURL, err := url.Parse(proxyValue); err == nil {
+			proxyURL = parsedProxyURL
+		}
+	}
+	options.WrapTransport = func(base http.RoundTripper) http.RoundTripper {
+		transport := base
+		if proxyURL != nil {
+			if httpTransport, ok := base.(*http.Transport); ok {
+				cloned := httpTransport.Clone()
+				cloned.Proxy = http.ProxyURL(proxyURL)
+				transport = cloned
+			}
+		}
+		return assetDomainProbeStatusTransport{base: transport}
+	}
+	client := retryablehttp.NewClient(options)
+	maxRedirects := defaultInt(request.MaxRedirects, 10)
+	redirectPolicy := func(req *http.Request, via []*http.Request) error {
+		if request.DisableRedirects {
+			return http.ErrUseLastResponse
+		}
+		if maxRedirects >= 0 && len(via) >= maxRedirects {
+			return http.ErrUseLastResponse
+		}
+		return nil
+	}
+	client.HTTPClient.CheckRedirect = redirectPolicy
+	client.HTTPClient2.CheckRedirect = redirectPolicy
+	return client
+}
+
+func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.Client, targetURL string) (*assetDomainProbeHTTPResponse, error) {
+	if client == nil {
+		client = retryablehttp.NewClient(retryablehttp.DefaultOptionsSingle)
+	}
+	recorder := &assetDomainProbeStatusRecorder{}
+	requestCtx := context.WithValue(ctx, assetDomainProbeStatusRecorderKey{}, recorder)
+	req, err := retryablehttp.NewRequestWithContext(requestCtx, http.MethodGet, targetURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	userAgent := useragent.PickRandom()
+	req.Header.Set("User-Agent", userAgent.Raw)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+	firstStatusCode := int(recorder.firstStatusCode.Load())
+	if firstStatusCode <= 0 {
+		firstStatusCode = resp.StatusCode
+	}
+
+	data, err := io.ReadAll(io.LimitReader(resp.Body, assetDomainWappalyzerMaxBody))
+	if err != nil {
+		return nil, err
+	}
+	return &assetDomainProbeHTTPResponse{
+		Input:           finalAssetDomainResponseURL(resp, targetURL),
+		StatusCode:      resp.StatusCode,
+		FirstStatusCode: firstStatusCode,
+		Headers:         resp.Header,
+		Data:            data,
+		Raw:             dumpAssetDomainResponse(resp, data),
+		Request:         dumpAssetDomainRequest(resp.Request),
+	}, nil
+}
+
+func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context, request dto.CreateScanTaskRequest, aliveTargets []string, taskDir string) ([]repository.AssetDomainServiceAssetObservation, error) {
+	aliveTargets = uniqueNonEmptyStrings(aliveTargets)
+	if len(aliveTargets) == 0 || s.assetDomainRepository == nil {
+		return nil, nil
+	}
+
+	targetsFile := filepath.Join(taskDir, "asset-domain-fingerprint-targets.txt")
+	if err := os.WriteFile(targetsFile, []byte(strings.Join(aliveTargets, "\n")+"\n"), 0o644); err != nil {
+		return nil, err
+	}
+
+	executable, baseArgs := resolveManScanCommand(s.rootDir)
+	args := append(baseArgs, buildAssetDomainFingerprintTemplateCLIArgs(request, taskDir, targetsFile)...)
+	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd.Dir = s.rootDir
+	prepareTaskCommand(cmd)
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	queue := newAssetDomainServiceAssetQueue(s)
+	if queue == nil {
+		return nil, nil
+	}
+
+	if err := cmd.Start(); err != nil {
+		queue.CloseAndWait()
+		return nil, err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		streamAssetDomainFingerprintTemplateResults(stdoutPipe, queue)
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(io.Discard, stderrPipe)
+	}()
+
+	waitErr := cmd.Wait()
+	wg.Wait()
+	queue.CloseAndWait()
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return nil, context.Canceled
+	}
+	return queue.Observations(), waitErr
+}
+
+func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile string) []string {
+	args := []string{
+		"-l", targetsFile,
+		"-j",
+		"-or",
+		"-nc",
+		"--tags", "tech,detect,favicon",
+	}
+
+	appendBool := func(enabled bool, flag string) {
+		if enabled {
+			args = append(args, flag)
+		}
+	}
+	appendInt := func(value int, flag string) {
+		if value > 0 {
+			args = append(args, flag, strconv.Itoa(value))
+		}
+	}
+	appendFlag := func(flag string, values ...string) {
+		for _, value := range values {
+			value = strings.TrimSpace(value)
+			if value != "" {
+				args = append(args, flag, value)
+			}
+		}
+	}
+
+	appendBool(request.ScanAllIPs, "-sa")
+	appendBool(request.NoInteractsh, "-no-interactsh")
+	appendBool(request.FollowRedirects, "-fr")
+	appendBool(request.FollowHostRedirects, "-fhr")
+	appendBool(request.DisableRedirects, "-dr")
+	appendBool(request.ForceAttemptHTTP2, "-fh2")
+	appendBool(request.TLSImpersonate, "-tlsi")
+	appendBool(request.NoHostErrors, "-nmhe")
+	appendBool(request.Headless, "--headless")
+	appendBool(request.UseInstalledChrome, "-sc")
+	appendBool(request.ProxyInternal, "-pi")
+
+	appendInt(defaultInt(request.RateLimit, 150), "-rl")
+	if duration := defaultInt64(request.RateLimitDuration, 1000); duration > 0 {
+		args = append(args, "-rld", fmt.Sprintf("%dms", duration))
+	}
+	appendInt(defaultInt(request.BulkSize, 25), "-bs")
+	appendInt(defaultInt(request.TemplateThreads, 25), "-c")
+	appendInt(defaultInt(request.HeadlessBulkSize, 10), "-hbs")
+	appendInt(defaultInt(request.HeadlessTemplateThreads, 10), "-headc")
+	appendInt(defaultInt(request.JSConcurrency, 120), "-jsc")
+	appendInt(defaultInt(request.PayloadConcurrency, 25), "-pc")
+	appendInt(defaultInt(request.Timeout, 10), "--timeout")
+	appendInt(defaultInt(request.Retries, 1), "--retries")
+	appendInt(defaultInt(request.MaxHostError, 30), "-mhe")
+	appendInt(defaultInt(request.PageTimeout, 20), "--page-timeout")
+
+	if values := cleanStringSlice(request.ExcludeTargets); len(values) > 0 {
+		args = append(args, "-eh", strings.Join(values, ","))
+	}
+	if values := cleanStringSlice(request.IPVersion); len(values) > 0 {
+		args = append(args, "-iv", strings.Join(values, ","))
+	}
+	for _, header := range cleanStringSlice(request.CustomHeaders) {
+		args = append(args, "-H", header)
+	}
+	for _, variable := range cleanStringSlice(request.Vars) {
+		args = append(args, "-V", variable)
+	}
+	appendFlag("--sni", request.SNI)
+	appendFlag("-sip", request.SourceIP)
+	appendFlag("-ss", firstNonEmpty(request.ScanStrategy, "auto"))
+	for _, item := range cleanStringSlice(request.HeadlessOptionalArguments) {
+		args = append(args, "-ho", item)
+	}
+	appendFlag("-cdpe", request.CDPEndpoint)
+	for _, proxy := range cleanStringSlice(request.Proxy) {
+		args = append(args, "-p", proxy)
+	}
+	args = append(args, "-elog", filepath.Join(taskDir, "asset-domain-fingerprint-error.log"))
+	return args
+}
+
+func streamAssetDomainFingerprintTemplateResults(reader io.Reader, queue *assetDomainServiceAssetQueue) {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var payload map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			continue
+		}
+		queue.Enqueue(assetDomainServiceAssetResultEvent{payload: payload})
+	}
+}
+
+func assetDomainWappalyzerComponents(wappalyzerClient *wappalyzer.Wappalyze, domain string, resp *assetDomainProbeHTTPResponse) []repository.AssetDomainServiceAssetObservation {
+	if wappalyzerClient == nil || resp == nil {
+		return nil
+	}
+	fingerprints := wappalyzerClient.Fingerprint(resp.Headers, resp.Data)
+	components := make([]repository.AssetDomainServiceAssetObservation, 0, len(fingerprints))
+	for value := range fingerprints {
+		appName, appVersion := splitAssetDomainComponentVersion(value)
+		appName = normalizeAssetDomainComponentName(appName)
+		if appName == "" {
+			continue
+		}
+		components = append(components, repository.AssetDomainServiceAssetObservation{
+			Domain:     domain,
+			AppName:    appName,
+			AppVersion: strings.TrimSpace(appVersion),
+		})
+	}
+	return uniqueAssetDomainServiceAssetObservations(components)
+}
+
+func splitAssetDomainComponentVersion(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	appName, appVersion, ok := strings.Cut(value, ":")
+	if !ok {
+		return value, ""
+	}
+	return strings.TrimSpace(appName), strings.TrimSpace(appVersion)
+}
+
+func normalizeAssetDomainComponentName(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.ToLower(value)
+}
+
+func uniqueAssetDomainServiceAssetObservations(values []repository.AssetDomainServiceAssetObservation) []repository.AssetDomainServiceAssetObservation {
+	result := make([]repository.AssetDomainServiceAssetObservation, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Domain = strings.TrimSpace(value.Domain)
+		value.AppName = normalizeAssetDomainComponentName(value.AppName)
+		value.AppVersion = strings.TrimSpace(value.AppVersion)
+		if value.Domain == "" || value.AppName == "" {
+			continue
+		}
+		key := value.Domain + "\x00" + value.AppName
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func uniqueAssetDomainFingerprintCacheEntries(values []assetDomainFingerprintCacheEntry) []assetDomainFingerprintCacheEntry {
+	result := make([]assetDomainFingerprintCacheEntry, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Target = strings.TrimSpace(value.Target)
+		value.Domain = strings.TrimSpace(value.Domain)
+		value.Components = uniqueAssetDomainFingerprintCacheComponents(value.Components)
+		if value.Domain == "" {
+			continue
+		}
+		if _, ok := seen[value.Domain]; ok {
+			continue
+		}
+		seen[value.Domain] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func assetDomainFingerprintCacheComponents(values []repository.AssetDomainServiceAssetObservation) []assetDomainFingerprintCacheComponent {
+	components := make([]assetDomainFingerprintCacheComponent, 0, len(values))
+	for _, value := range uniqueAssetDomainServiceAssetObservations(values) {
+		components = append(components, assetDomainFingerprintCacheComponent{
+			Domain:     value.Domain,
+			AppName:    value.AppName,
+			AppVersion: value.AppVersion,
+		})
+	}
+	return components
+}
+
+func uniqueAssetDomainFingerprintCacheComponents(values []assetDomainFingerprintCacheComponent) []assetDomainFingerprintCacheComponent {
+	result := make([]assetDomainFingerprintCacheComponent, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Domain = strings.TrimSpace(value.Domain)
+		value.AppName = normalizeAssetDomainComponentName(value.AppName)
+		value.AppVersion = strings.TrimSpace(value.AppVersion)
+		if value.Domain == "" || value.AppName == "" {
+			continue
+		}
+		key := value.Domain + "\x00" + value.AppName
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func writeAssetDomainFingerprintCache(path string, fingerprints []assetDomainFingerprintCacheEntry) error {
+	path = strings.TrimSpace(path)
+	if path == "" || len(fingerprints) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.Marshal(fingerprints)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
 }
 
 func buildAssetDomainNetworkRegions(items []repository.AssetDomainNetworkItem) []assetDomainNetworkRegion {
@@ -307,14 +820,12 @@ func assetDomainHasInternalSuffix(host string) bool {
 	return false
 }
 
-func firstAssetDomainHTTPStatusCode(resp *httpx.Response) uint {
+func firstAssetDomainHTTPStatusCode(resp *assetDomainProbeHTTPResponse) uint {
 	if resp == nil {
 		return 0
 	}
-	for _, item := range resp.Chain {
-		if item.StatusCode > 0 {
-			return uint(item.StatusCode)
-		}
+	if resp.FirstStatusCode > 0 {
+		return uint(resp.FirstStatusCode)
 	}
 	if resp.StatusCode > 0 {
 		return uint(resp.StatusCode)
@@ -322,23 +833,55 @@ func firstAssetDomainHTTPStatusCode(resp *httpx.Response) uint {
 	return 0
 }
 
-func assetDomainResponseTitle(resp *httpx.Response) string {
+func assetDomainResponseTitle(resp *assetDomainProbeHTTPResponse) string {
 	if resp == nil {
 		return ""
 	}
-	return httpx.ExtractTitle(resp)
+	matches := assetDomainTitlePattern.FindSubmatch(resp.Data)
+	if len(matches) < 2 {
+		return ""
+	}
+	title := html.UnescapeString(string(bytes.TrimSpace(matches[1])))
+	return strings.Join(strings.Fields(title), " ")
 }
 
-func finalAssetDomainRequest(resp *httpx.Response) string {
+func finalAssetDomainRequest(resp *assetDomainProbeHTTPResponse) string {
 	if resp == nil {
 		return ""
 	}
-	for i := len(resp.Chain) - 1; i >= 0; i-- {
-		if request := strings.TrimSpace(string(resp.Chain[i].Request)); request != "" {
-			return request
-		}
+	return resp.Request
+}
+
+func finalAssetDomainResponseURL(resp *http.Response, fallback string) string {
+	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
+		return fallback
 	}
-	return ""
+	if value := strings.TrimSpace(resp.Request.URL.String()); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func dumpAssetDomainRequest(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	data, err := httputil.DumpRequestOut(req, false)
+	if err != nil {
+		return strings.TrimSpace(req.Method + " " + req.URL.String())
+	}
+	return string(data)
+}
+
+func dumpAssetDomainResponse(resp *http.Response, data []byte) string {
+	if resp == nil {
+		return ""
+	}
+	header, err := httputil.DumpResponse(resp, false)
+	if err != nil {
+		return string(data)
+	}
+	return string(header) + string(data)
 }
 
 func assetDomainProbeURLs(target string) []string {

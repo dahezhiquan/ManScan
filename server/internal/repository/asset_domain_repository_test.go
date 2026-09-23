@@ -291,6 +291,83 @@ func TestAssetDomainRepositorySyncObservationsInsertUsesFieldWhitelist(t *testin
 	}
 }
 
+func TestAssetDomainRepositorySyncServiceAssets(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	if err := db.AutoMigrate(&entity.AssetDomainServiceAsset{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_domain_app_name ON manscan_asset_domain_service_assets(domain, app_name)").Error; err != nil {
+		t.Fatalf("Create unique index error = %v", err)
+	}
+
+	oldFirstFoundAt := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	oldLastFoundAt := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+	if err := db.Create(&entity.AssetDomainServiceAsset{
+		Domain:       "app.example.com:443",
+		AppName:      "tomcat",
+		AppVersion:   "9.0.1",
+		FirstFoundAt: oldFirstFoundAt,
+		LastFoundAt:  oldLastFoundAt,
+		IsAlive:      true,
+	}).Error; err != nil {
+		t.Fatalf("Create tomcat error = %v", err)
+	}
+	if err := db.Create(&entity.AssetDomainServiceAsset{
+		Domain:       "app.example.com:443",
+		AppName:      "nginx",
+		AppVersion:   "1.20.0",
+		FirstFoundAt: oldFirstFoundAt,
+		LastFoundAt:  oldLastFoundAt,
+		IsAlive:      false,
+	}).Error; err != nil {
+		t.Fatalf("Create nginx error = %v", err)
+	}
+
+	observedAt := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	repo := NewAssetDomainRepository(db)
+	if err := repo.SyncServiceAssets(context.Background(), []AssetDomainServiceAssetObservation{
+		{Domain: "app.example.com:443", AppName: "nginx", AppVersion: "1.24.0"},
+		{Domain: "api.example.com:8443", AppName: "spring", AppVersion: "6.1.0"},
+	}, []string{"app.example.com:443", "api.example.com:8443"}, observedAt); err != nil {
+		t.Fatalf("SyncServiceAssets() error = %v", err)
+	}
+	if err := repo.SyncServiceAssets(context.Background(), []AssetDomainServiceAssetObservation{
+		{Domain: "app.example.com:443", AppName: "nginx"},
+	}, nil, observedAt.Add(time.Hour)); err != nil {
+		t.Fatalf("SyncServiceAssets() second error = %v", err)
+	}
+
+	var items []entity.AssetDomainServiceAsset
+	if err := db.Order("domain ASC, app_name ASC").Find(&items).Error; err != nil {
+		t.Fatalf("Find() error = %v", err)
+	}
+	byKey := make(map[string]entity.AssetDomainServiceAsset, len(items))
+	for _, item := range items {
+		byKey[item.Domain+"\x00"+item.AppName] = item
+	}
+
+	nginx := byKey["app.example.com:443\x00nginx"]
+	if !nginx.IsAlive || nginx.AppVersion != "1.24.0" || !nginx.FirstFoundAt.Equal(oldFirstFoundAt) || !nginx.LastFoundAt.Equal(observedAt.Add(time.Hour)) {
+		t.Fatalf("nginx = %+v, want alive with retained first time and retained non-empty version", nginx)
+	}
+	tomcat := byKey["app.example.com:443\x00tomcat"]
+	if tomcat.IsAlive || tomcat.AppVersion != "9.0.1" || !tomcat.LastFoundAt.Equal(oldLastFoundAt) {
+		t.Fatalf("tomcat = %+v, want stale component marked not alive without timestamp/version rewrite", tomcat)
+	}
+	spring := byKey["api.example.com:8443\x00spring"]
+	if !spring.IsAlive || spring.AppVersion != "6.1.0" || !spring.FirstFoundAt.Equal(observedAt) || !spring.LastFoundAt.Equal(observedAt) {
+		t.Fatalf("spring = %+v, want inserted alive component", spring)
+	}
+}
+
 func TestAssetDomainRepositoryListNetworkItems(t *testing.T) {
 	t.Parallel()
 

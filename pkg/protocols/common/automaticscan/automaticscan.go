@@ -2,8 +2,11 @@ package automaticscan
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,8 +40,9 @@ import (
 )
 
 const (
-	mappingFilename = "wappalyzer-mapping.yml"
-	maxDefaultBody  = 4 * unitutils.Mega
+	mappingFilename                = "wappalyzer-mapping.yml"
+	maxDefaultBody                 = 4 * unitutils.Mega
+	assetDomainFingerprintCacheEnv = "MANSCAN_ASSET_DOMAIN_FINGERPRINT_CACHE"
 )
 
 // Options contains configuration options for automatic scan service
@@ -60,14 +64,28 @@ type Service struct {
 	templateDirs       []string // root Template Directories
 	technologyMappings map[string]string
 	techTemplates      []*templates.Template
+	fingerprintCache   map[string][]assetDomainFingerprintCacheComponent
 	totalGate          *totalGate
 	ServiceOpts        Options
 	hasResults         *atomic.Bool
 }
 
 type mappedTarget struct {
-	input          *contextargs.MetaInput
-	finalTemplates []*templates.Template
+	input                *contextargs.MetaInput
+	finalTemplates       []*templates.Template
+	usedCachedWappalyzer bool
+}
+
+type assetDomainFingerprintCacheComponent struct {
+	Domain     string `json:"domain"`
+	AppName    string `json:"app_name"`
+	AppVersion string `json:"app_version"`
+}
+
+type assetDomainFingerprintCacheEntry struct {
+	Target     string                                 `json:"target"`
+	Domain     string                                 `json:"domain"`
+	Components []assetDomainFingerprintCacheComponent `json:"components"`
 }
 
 type totalGate struct {
@@ -223,6 +241,7 @@ func New(opts Options) (*Service, error) {
 		httpclient:         httpclient,
 		technologyMappings: mappingData,
 		techTemplates:      techDetectTemplates,
+		fingerprintCache:   loadAssetDomainFingerprintCache(),
 		ServiceOpts:        opts,
 		hasResults:         &atomic.Bool{},
 	}, nil
@@ -288,7 +307,10 @@ func (s *Service) Execute() error {
 
 func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 	// get tags using wappalyzer
-	tagsFromWappalyzer := s.getTagsUsingWappalyzer(input)
+	tagsFromWappalyzer, usedCachedWappalyzer := s.getTagsUsingCachedWappalyzer(input)
+	if !usedCachedWappalyzer {
+		tagsFromWappalyzer = s.getTagsUsingWappalyzer(input)
+	}
 	// get tags using detection templates
 	tagsFromDetectTemplates, matched := s.getTagsUsingDetectionTemplates(input)
 	if matched > 0 {
@@ -316,16 +338,16 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 
 	if len(finalTags) == 0 {
 		gologger.Warning().Msgf("Skipping automatic scan since no vulnerability tags were found on %v\n", input.Input)
-		return mappedTarget{input: input}
+		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer}
 	}
 
 	finalTemplates, err := LoadTemplatesWithTags(s.ServiceOpts, s.templateDirs, finalTags, false)
 	if err != nil {
 		gologger.Error().Msgf("%v Error loading templates: %s\n", input.Input, err)
-		return mappedTarget{input: input}
+		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer}
 	}
 	s.opts.Logger.Info().Msgf("%s 已加载漏洞模版数量：%d", input.Input, len(finalTemplates))
-	return mappedTarget{input: input, finalTemplates: finalTemplates}
+	return mappedTarget{input: input, finalTemplates: finalTemplates, usedCachedWappalyzer: usedCachedWappalyzer}
 }
 
 func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
@@ -335,7 +357,13 @@ func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
 
 	// Wappalyzer performs one direct request per target. Detection templates
 	// and mapped vulnerability templates expose their compiled request counts.
-	total := int64(s.target.Count())
+	wappalyzerTargets := int64(s.target.Count())
+	for _, target := range targets {
+		if target.usedCachedWappalyzer {
+			wappalyzerTargets--
+		}
+	}
+	total := wappalyzerTargets
 	for _, template := range s.techTemplates {
 		total += int64(template.TotalRequests) * int64(s.target.Count())
 	}
@@ -367,6 +395,110 @@ func mappedTemplateCount(targets []mappedTarget) int64 {
 		}
 	}
 	return int64(len(templateIDs))
+}
+
+func loadAssetDomainFingerprintCache() map[string][]assetDomainFingerprintCacheComponent {
+	path := strings.TrimSpace(os.Getenv(assetDomainFingerprintCacheEnv))
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) == 0 {
+		return nil
+	}
+	var entries []assetDomainFingerprintCacheEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return nil
+	}
+
+	cache := make(map[string][]assetDomainFingerprintCacheComponent, len(entries)*2)
+	for _, entry := range entries {
+		components := dedupeAssetDomainFingerprintCacheComponents(entry.Components)
+		for _, key := range []string{
+			assetDomainFingerprintCacheKey(entry.Target),
+			assetDomainFingerprintCacheKey(entry.Domain),
+		} {
+			if key == "" {
+				continue
+			}
+			cache[key] = components
+		}
+	}
+	return cache
+}
+
+func dedupeAssetDomainFingerprintCacheComponents(values []assetDomainFingerprintCacheComponent) []assetDomainFingerprintCacheComponent {
+	result := make([]assetDomainFingerprintCacheComponent, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Domain = strings.TrimSpace(value.Domain)
+		value.AppName = normalizeAppName(value.AppName)
+		value.AppVersion = strings.TrimSpace(value.AppVersion)
+		if value.AppName == "" {
+			continue
+		}
+		key := value.Domain + "\x00" + value.AppName
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func assetDomainFingerprintCacheKey(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if endpoint := assetDomainFingerprintEndpoint(value); endpoint != "" {
+		return endpoint
+	}
+	return strings.ToLower(value)
+}
+
+func assetDomainFingerprintEndpoint(value string) string {
+	parsed, ok := parseAssetDomainFingerprintEndpoint(value)
+	if !ok {
+		return ""
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return ""
+	}
+	port := strings.TrimSpace(parsed.Port())
+	if port == "" {
+		switch strings.ToLower(parsed.Scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	if port == "" {
+		return strings.ToLower(host)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
+	}
+	return strings.ToLower(net.JoinHostPort(host, port))
+}
+
+func parseAssetDomainFingerprintEndpoint(value string) (*url.URL, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, false
+	}
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.Host != "" {
+		return parsed, true
+	}
+	parsed, err = url.Parse("scheme://" + value)
+	if err == nil && parsed.Host != "" {
+		return parsed, true
+	}
+	return nil, false
 }
 
 func (s *Service) executeMappedTemplates(target mappedTarget) {
@@ -451,6 +583,42 @@ func (s *Service) getTagsUsingWappalyzer(input *contextargs.MetaInput) []string 
 		}
 	}
 	return sliceutil.Dedupe(items)
+}
+
+func (s *Service) getTagsUsingCachedWappalyzer(input *contextargs.MetaInput) ([]string, bool) {
+	if s == nil || input == nil || len(s.fingerprintCache) == 0 {
+		return nil, false
+	}
+
+	components, ok := s.fingerprintCache[assetDomainFingerprintCacheKey(input.Input)]
+	if !ok {
+		return nil, false
+	}
+
+	normalized := make(map[string]struct{})
+	for _, component := range components {
+		appName := normalizeAppName(component.AppName)
+		if appName == "" {
+			continue
+		}
+		normalized[appName] = struct{}{}
+	}
+	for appName := range normalized {
+		if value, ok := s.technologyMappings[appName]; ok {
+			delete(normalized, appName)
+			normalized[value] = struct{}{}
+		}
+	}
+
+	items := make([]string, 0, len(normalized))
+	for appName := range normalized {
+		if strings.Contains(appName, " ") {
+			items = append(items, strings.Split(strings.ToLower(appName), " ")...)
+		} else {
+			items = append(items, strings.ToLower(appName))
+		}
+	}
+	return sliceutil.Dedupe(items), true
 }
 
 // getTagsUsingDetectionTemplates returns tags using detection templates

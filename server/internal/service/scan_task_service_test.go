@@ -116,6 +116,33 @@ func TestBuildScanCLIArgsIncludesTemplateCapabilities(t *testing.T) {
 	}
 }
 
+func TestBuildAssetDomainFingerprintTemplateCLIArgsUsesOnlyFingerprintTags(t *testing.T) {
+	t.Parallel()
+
+	args := buildAssetDomainFingerprintTemplateCLIArgs(
+		dto.CreateScanTaskRequest{
+			Tags:            []string{"spring"},
+			IncludeIDs:      []string{"CVE-2026-0001"},
+			CustomHeaders:   []string{"X-Test: yes"},
+			FollowRedirects: true,
+			RateLimit:       10,
+			Timeout:         3,
+		},
+		"/tmp/task",
+		"/tmp/task/fingerprint-targets.txt",
+	)
+
+	if flagValue(args, "--tags") != "tech,detect,favicon" {
+		t.Fatalf("--tags = %q, want fingerprint tags", flagValue(args, "--tags"))
+	}
+	if hasArg(args, "-id") {
+		t.Fatalf("args unexpectedly inherited vulnerability template id filter: %v", args)
+	}
+	if !hasArg(args, "-fr") || flagValue(args, "-H") != "X-Test: yes" {
+		t.Fatalf("args = %v, want scan request transport options", args)
+	}
+}
+
 func TestBuildScanCLIArgsIncludesInteractshConfiguration(t *testing.T) {
 	t.Parallel()
 
@@ -486,7 +513,7 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 
 	queue := newVulnerabilityQueue(svc)
-	handler := svc.resultHandler(42, "即时扫描任务", queue)
+	handler := svc.resultHandler(42, "即时扫描任务", queue, nil)
 	handler(map[string]interface{}{
 		"template-id":   "CVE-2026-0001",
 		"matched-at":    "https://app.example.com:8443/login",
@@ -682,6 +709,46 @@ func TestBuildVulnerabilitySkipsFingerprintTagResult(t *testing.T) {
 				t.Fatalf("vulnerability = %+v, want nil for fingerprint tag result", vulnerability)
 			}
 		})
+	}
+}
+
+func TestBuildAssetDomainServiceAssetsFromFingerprintPayload(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"nginx-detect": {
+					ID:       "nginx-detect",
+					Name:     "Nginx Detect",
+					Tags:     []string{"tech", "nginx", "http"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+
+	observations, err := svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), map[string]interface{}{
+		"template-id":       "nginx-detect",
+		"matched-at":        "https://app.example.com:8443/login",
+		"host":              "app.example.com",
+		"port":              "8443",
+		"matcher-name":      "nginx",
+		"extracted-results": []interface{}{"nginx:1.24.0"},
+		"info": map[string]interface{}{
+			"name": "Nginx Detect",
+			"tags": []interface{}{"tech", "nginx", "http"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayload() error = %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations = %+v, want one nginx component", observations)
+	}
+	got := observations[0]
+	if got.Domain != "app.example.com:8443" || got.AppName != "nginx" || got.AppVersion != "1.24.0" {
+		t.Fatalf("observation = %+v, want app.example.com:8443 nginx 1.24.0", got)
 	}
 }
 

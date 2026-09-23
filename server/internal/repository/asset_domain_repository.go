@@ -16,6 +16,7 @@ type AssetDomainRepository interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error)
 	ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error)
 	SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error
+	SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error
 }
 
 type assetDomainRepository struct {
@@ -34,6 +35,12 @@ type AssetDomainObservation struct {
 type AssetDomainNetworkItem struct {
 	ItemName      string
 	SmallCategory string
+}
+
+type AssetDomainServiceAssetObservation struct {
+	Domain     string
+	AppName    string
+	AppVersion string
 }
 
 func NewAssetDomainRepository(db *gorm.DB) AssetDomainRepository {
@@ -76,6 +83,24 @@ func (r *assetDomainRepository) SyncObservations(ctx context.Context, observatio
 			Model(&entity.AssetDomain{}).
 			Where("domain IN ?", notAliveDomains).
 			Update("is_alive", false).Error
+	})
+}
+
+func (r *assetDomainRepository) SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error {
+	observations = uniqueAssetDomainServiceAssetObservations(observations)
+	checkedDomains = uniqueNonEmptyAssetDomains(checkedDomains)
+	if len(observations) == 0 && len(checkedDomains) == 0 {
+		return nil
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := upsertAssetDomainServiceAssets(ctx, tx, observations, observedAt); err != nil {
+			return err
+		}
+		return markStaleAssetDomainServiceAssets(ctx, tx, observations, checkedDomains, observedAt)
 	})
 }
 
@@ -142,6 +167,95 @@ func (r *assetDomainRepository) applyListFilters(db *gorm.DB, query dto.ListAsse
 		db = db.Where("a.is_alive = ?", *query.IsAlive)
 	}
 	return db
+}
+
+func upsertAssetDomainServiceAssets(ctx context.Context, db *gorm.DB, observations []AssetDomainServiceAssetObservation, observedAt time.Time) error {
+	const batchSize = 500
+	for start := 0; start < len(observations); start += batchSize {
+		end := start + batchSize
+		if end > len(observations) {
+			end = len(observations)
+		}
+		batch := observations[start:end]
+		items := make([]map[string]interface{}, 0, end-start)
+		for _, observation := range batch {
+			items = append(items, map[string]interface{}{
+				"domain":         observation.Domain,
+				"app_name":       observation.AppName,
+				"app_version":    observation.AppVersion,
+				"first_found_at": observedAt,
+				"last_found_at":  observedAt,
+				"is_alive":       true,
+			})
+		}
+		if err := db.WithContext(ctx).
+			Table("manscan_asset_domain_service_assets").
+			Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "domain"}, {Name: "app_name"}},
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"last_found_at": observedAt,
+					"is_alive":      true,
+				}),
+			}).
+			Create(&items).Error; err != nil {
+			return err
+		}
+		if err := updateAssetDomainServiceAssetVersions(ctx, db, batch); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func updateAssetDomainServiceAssetVersions(ctx context.Context, db *gorm.DB, observations []AssetDomainServiceAssetObservation) error {
+	var builder strings.Builder
+	args := make([]interface{}, 0, len(observations)*3)
+	builder.WriteString("CASE")
+	for _, observation := range observations {
+		if observation.AppVersion == "" {
+			continue
+		}
+		builder.WriteString(" WHEN domain = ? AND app_name = ? THEN ?")
+		args = append(args, observation.Domain, observation.AppName, observation.AppVersion)
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	builder.WriteString(" ELSE app_version END")
+
+	domains := make([]string, 0, len(observations))
+	appNames := make([]string, 0, len(observations))
+	for _, observation := range observations {
+		if observation.AppVersion == "" {
+			continue
+		}
+		domains = append(domains, observation.Domain)
+		appNames = append(appNames, observation.AppName)
+	}
+	return db.WithContext(ctx).
+		Table("manscan_asset_domain_service_assets").
+		Where("domain IN ? AND app_name IN ?", uniqueNonEmptyAssetDomains(domains), uniqueNonEmptyAssetDomains(appNames)).
+		Update("app_version", gorm.Expr(builder.String(), args...)).Error
+}
+
+func markStaleAssetDomainServiceAssets(ctx context.Context, db *gorm.DB, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error {
+	aliveAppsByDomain := make(map[string][]string)
+	for _, observation := range observations {
+		aliveAppsByDomain[observation.Domain] = append(aliveAppsByDomain[observation.Domain], observation.AppName)
+	}
+
+	for _, domain := range checkedDomains {
+		query := db.WithContext(ctx).
+			Table("manscan_asset_domain_service_assets").
+			Where("domain = ? AND last_found_at < ?", domain, observedAt)
+		if appNames := aliveAppsByDomain[domain]; len(appNames) > 0 {
+			query = query.Where("app_name NOT IN ?", appNames)
+		}
+		if err := query.Update("is_alive", false).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func upsertAliveAssetDomainObservations(ctx context.Context, db *gorm.DB, observations []AssetDomainObservation, observedAt time.Time) error {
@@ -346,6 +460,26 @@ func uniqueNonEmptyAssetDomains(values []string) []string {
 			continue
 		}
 		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func uniqueAssetDomainServiceAssetObservations(values []AssetDomainServiceAssetObservation) []AssetDomainServiceAssetObservation {
+	result := make([]AssetDomainServiceAssetObservation, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Domain = strings.TrimSpace(value.Domain)
+		value.AppName = strings.TrimSpace(value.AppName)
+		value.AppVersion = strings.TrimSpace(value.AppVersion)
+		if value.Domain == "" || value.AppName == "" {
+			continue
+		}
+		key := value.Domain + "\x00" + value.AppName
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
 		result = append(result, value)
 	}
 	return result

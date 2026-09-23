@@ -82,8 +82,9 @@ type normalizedTaskRequest struct {
 }
 
 type scanTaskRuntime struct {
-	state              *scanruntime.State
-	vulnerabilityQueue *vulnerabilityQueue
+	state                        *scanruntime.State
+	vulnerabilityQueue           *vulnerabilityQueue
+	assetDomainServiceAssetQueue *assetDomainServiceAssetQueue
 
 	mu              sync.Mutex
 	cancel          context.CancelFunc
@@ -268,6 +269,7 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 
 	runtime := newScanTaskRuntime(state)
 	runtime.vulnerabilityQueue = newVulnerabilityQueue(s)
+	runtime.assetDomainServiceAssetQueue = newAssetDomainServiceAssetQueue(s)
 	s.mu.Lock()
 	s.states[task.ID] = runtime
 	s.mu.Unlock()
@@ -427,9 +429,10 @@ func (s *scanTaskService) Resume(ctx context.Context, taskID int64) (*dto.Resume
 
 	runtime := newScanTaskRuntime(state)
 	runtime.vulnerabilityQueue = newVulnerabilityQueue(s)
+	runtime.assetDomainServiceAssetQueue = newAssetDomainServiceAssetQueue(s)
 	if err := s.repository.PrepareForResume(ctx, taskID); err != nil {
 		runtime.state.Close()
-		runtime.closeVulnerabilityQueue()
+		runtime.closeResultQueues()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrScanTaskNotResumable
 		}
@@ -758,14 +761,15 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	defer cancel()
 	defer runtime.ClearCancel()
 
-	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, plan.CollectedTargets, state); err != nil {
+	taskDir := filepath.Dir(state.LogFilePath)
+	fingerprintCachePath := filepath.Join(taskDir, "asset-domain-fingerprints.json")
+	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, plan.CollectedTargets, state, fingerprintCachePath); err != nil {
 		return err
 	}
 	if runtime.IsPauseRequested() {
 		return errScanTaskPausedBeforeProcess
 	}
 
-	taskDir := filepath.Dir(state.LogFilePath)
 	targetsFile := filepath.Join(taskDir, "targets.txt")
 	if err := os.WriteFile(targetsFile, []byte(strings.Join(plan.CollectedTargets, "\n")+"\n"), 0o644); err != nil {
 		return err
@@ -778,6 +782,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 
 	cmd := exec.CommandContext(cmdCtx, executable, args...)
 	cmd.Dir = s.rootDir
+	cmd.Env = append(os.Environ(), assetDomainFingerprintCacheEnv+"="+fingerprintCachePath)
 	prepareTaskCommand(cmd)
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -816,7 +821,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		scanruntime.StreamCommandOutputWithResultHandler(stdoutPipe, state, "stdout", true, s.resultHandler(state.ID, state.TaskName, runtime.vulnerabilityQueue))
+		scanruntime.StreamCommandOutputWithResultHandler(stdoutPipe, state, "stdout", true, s.resultHandler(state.ID, state.TaskName, runtime.vulnerabilityQueue, runtime.assetDomainServiceAssetQueue))
 	}()
 	go func() {
 		defer wg.Done()
@@ -836,7 +841,7 @@ func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntim
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
-	runtime.closeVulnerabilityQueue()
+	runtime.closeResultQueues()
 	s.archiveStoredResponses(taskID, runtime.state)
 
 	state := runtime.state
@@ -853,7 +858,7 @@ func (s *scanTaskService) finishSuccessTask(taskID int64, runtime *scanTaskRunti
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
-	runtime.closeVulnerabilityQueue()
+	runtime.closeResultQueues()
 	s.archiveStoredResponses(taskID, runtime.state)
 
 	state := runtime.state
@@ -870,7 +875,7 @@ func (s *scanTaskService) finishCancelledTask(taskID int64, runtime *scanTaskRun
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
-	runtime.closeVulnerabilityQueue()
+	runtime.closeResultQueues()
 	s.archiveStoredResponses(taskID, runtime.state)
 
 	state := runtime.state
@@ -889,7 +894,7 @@ func (s *scanTaskService) finishPausedTask(taskID int64, runtime *scanTaskRuntim
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
-	runtime.closeVulnerabilityQueue()
+	runtime.closeResultQueues()
 
 	state := runtime.state
 	finishedAt := time.Now()
@@ -1194,7 +1199,7 @@ func (s *scanTaskService) releaseDeletedRuntime(taskID int64) {
 	}
 
 	runtime.TryFinalize()
-	runtime.closeVulnerabilityQueue()
+	runtime.closeResultQueues()
 	if runtime.state != nil {
 		finishedAt := time.Now()
 		runtime.state.MarkFinished("cancelled", finishedAt, "扫描任务已删除")
@@ -1910,6 +1915,17 @@ func firstNonEmpty(values ...string) string {
 
 func newScanTaskRuntime(state *scanruntime.State) *scanTaskRuntime {
 	return &scanTaskRuntime{state: state}
+}
+
+func (r *scanTaskRuntime) closeResultQueues() {
+	if r == nil {
+		return
+	}
+	r.closeVulnerabilityQueue()
+	if r.assetDomainServiceAssetQueue != nil {
+		r.assetDomainServiceAssetQueue.CloseAndWait()
+		r.assetDomainServiceAssetQueue = nil
+	}
 }
 
 func (r *scanTaskRuntime) closeVulnerabilityQueue() {

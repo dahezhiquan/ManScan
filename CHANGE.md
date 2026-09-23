@@ -1,3 +1,16 @@
+## 2026-09-23 19:10 域名组件自动更新复用预探测指纹
+
+- 变动目录：`pkg/protocols/common/automaticscan/`
+- 变动文件：`pkg/protocols/common/automaticscan/automaticscan.go`、`pkg/protocols/common/automaticscan/automaticscan_test.go`
+- 具体修改内容：
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中新增扫描前域名资产指纹缓存读取能力，通过 `MANSCAN_ASSET_DOMAIN_FINGERPRINT_CACHE` 读取服务端预探测阶段写出的组件结果。
+  - 自动模版映射阶段命中缓存时复用预探测 Wappalyzer 组件生成 tags，跳过重复的 Wappalyzer HTTP 请求；检测模版仍照常执行，用于补充指纹模版 tag、matcher name 和 extractor 结果。
+  - 调整自动扫描总请求数估算，命中缓存的目标不再计入 Wappalyzer 请求数，避免前端进度总量偏大。
+  - 在 `pkg/protocols/common/automaticscan/automaticscan_test.go` 中新增缓存加载回归测试，覆盖 URL、domain endpoint key 以及空组件缓存仍代表已完成 Wappalyzer 探测的场景。
+- 修改目的或影响：
+  - 域名资产存活探测已做过 Wappalyzer 指纹识别时，自动模版映射不再重复发起同类请求，降低大批量扫描时的额外网络开销。
+  - 保留原有检测模版识别链路，确保自动模版映射仍能使用模板 tag、matcher name 和提取结果补充最终 tags。
+
 ## 2026-09-21 18:44 合并远程 nuclei dev 到 upstream
 
 - 变动目录：`.github/`、`cmd/`、`internal/`、`lib/`、`pkg/`，以及根目录配置与说明文件。

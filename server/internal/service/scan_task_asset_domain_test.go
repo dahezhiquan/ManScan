@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
@@ -193,8 +195,72 @@ func TestAssetDomainProbeFinishedMessage(t *testing.T) {
 	t.Parallel()
 
 	got := assetDomainProbeFinishedMessage(3, 2)
-	want := "扫描前域名资产存活探测完成，本次扫描存活 3 个，不存活 2 个"
+	want := "扫描前域名资产存活 & 指纹探测完成，本次扫描存活 3 个，不存活 2 个"
 	if got != want {
 		t.Fatalf("assetDomainProbeFinishedMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestAssetDomainComponentSummary(t *testing.T) {
+	t.Parallel()
+
+	got := assetDomainComponentSummary([]repository.AssetDomainServiceAssetObservation{
+		{Domain: "app.example.com:443", AppName: "nginx"},
+		{Domain: "api.example.com:443", AppName: "tomcat"},
+		{Domain: "app.example.com:443", AppName: "nginx"},
+	})
+	want := "识别到 2 个组件：nginx、tomcat"
+	if got != want {
+		t.Fatalf("assetDomainComponentSummary() = %q, want %q", got, want)
+	}
+
+	empty := assetDomainComponentSummary(nil)
+	if empty != "识别到 0 个组件" {
+		t.Fatalf("assetDomainComponentSummary(nil) = %q, want zero summary", empty)
+	}
+}
+
+func TestWriteAssetDomainFingerprintCacheUsesSnakeCaseComponents(t *testing.T) {
+	t.Parallel()
+
+	cachePath := t.TempDir() + "/fingerprints.json"
+	err := writeAssetDomainFingerprintCache(cachePath, []assetDomainFingerprintCacheEntry{
+		{
+			Target: "https://app.example.com/",
+			Domain: "app.example.com:443",
+			Components: []assetDomainFingerprintCacheComponent{
+				{
+					Domain:     "app.example.com:443",
+					AppName:    "nginx",
+					AppVersion: "1.24.0",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("writeAssetDomainFingerprintCache() error = %v", err)
+	}
+
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	var payload []map[string]interface{}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	components, ok := payload[0]["components"].([]interface{})
+	if !ok || len(components) != 1 {
+		t.Fatalf("components = %v, want one component", payload[0]["components"])
+	}
+	component, ok := components[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("component = %v, want object", components[0])
+	}
+	if component["app_name"] != "nginx" || component["app_version"] != "1.24.0" {
+		t.Fatalf("component = %v, want snake_case app fields", component)
+	}
+	if _, ok := component["AppName"]; ok {
+		t.Fatalf("component = %v, must not use Go field names", component)
 	}
 }
