@@ -14,11 +14,19 @@ import (
 
 type AssetDomainRepository interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error)
-	SyncLiveness(ctx context.Context, aliveDomains, checkedDomains []string, observedAt time.Time) error
+	SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error
 }
 
 type assetDomainRepository struct {
 	db *gorm.DB
+}
+
+type AssetDomainObservation struct {
+	Domain         string
+	HTTPStatusCode uint
+	Title          string
+	Request        string
+	Response       string
 }
 
 const assetDomainRiskOrder = `CASE LOWER(COALESCE(a.risk_level, ''))
@@ -35,10 +43,10 @@ func NewAssetDomainRepository(db *gorm.DB) AssetDomainRepository {
 	return &assetDomainRepository{db: db}
 }
 
-func (r *assetDomainRepository) SyncLiveness(ctx context.Context, aliveDomains, checkedDomains []string, observedAt time.Time) error {
-	aliveDomains = uniqueNonEmptyAssetDomains(aliveDomains)
+func (r *assetDomainRepository) SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error {
+	observations = uniqueAssetDomainObservations(observations)
 	checkedDomains = uniqueNonEmptyAssetDomains(checkedDomains)
-	if len(aliveDomains) == 0 && len(checkedDomains) == 0 {
+	if len(observations) == 0 && len(checkedDomains) == 0 {
 		return nil
 	}
 	if observedAt.IsZero() {
@@ -46,9 +54,10 @@ func (r *assetDomainRepository) SyncLiveness(ctx context.Context, aliveDomains, 
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := upsertAliveAssetDomains(ctx, tx, aliveDomains, observedAt); err != nil {
+		if err := upsertAliveAssetDomainObservations(ctx, tx, observations, observedAt); err != nil {
 			return err
 		}
+		aliveDomains := assetDomainObservationDomains(observations)
 		notAliveDomains := assetDomainDifference(checkedDomains, aliveDomains)
 		if len(notAliveDomains) == 0 {
 			return nil
@@ -130,33 +139,56 @@ func (r *assetDomainRepository) applyListFilters(db *gorm.DB, query dto.ListAsse
 	return db
 }
 
-func upsertAliveAssetDomains(ctx context.Context, db *gorm.DB, domains []string, observedAt time.Time) error {
+func upsertAliveAssetDomainObservations(ctx context.Context, db *gorm.DB, observations []AssetDomainObservation, observedAt time.Time) error {
 	const batchSize = 500
-	for start := 0; start < len(domains); start += batchSize {
+	for start := 0; start < len(observations); start += batchSize {
 		end := start + batchSize
-		if end > len(domains) {
-			end = len(domains)
+		if end > len(observations) {
+			end = len(observations)
 		}
-		items := make([]entity.AssetDomain, 0, end-start)
-		for _, domain := range domains[start:end] {
-			items = append(items, entity.AssetDomain{
-				Domain:       domain,
-				IsAlive:      true,
-				FirstAliveAt: &observedAt,
-				LastAliveAt:  &observedAt,
-			})
+		batch := observations[start:end]
+		items := make([]map[string]interface{}, 0, end-start)
+		domains := make([]string, 0, end-start)
+		for _, observation := range batch {
+			domains = append(domains, observation.Domain)
+			item := map[string]interface{}{
+				"domain":           observation.Domain,
+				"is_alive":         true,
+				"first_alive_at":   observedAt,
+				"last_alive_at":    observedAt,
+				"http_status_code": nil,
+				"title":            nil,
+				"request":          nil,
+				"response":         nil,
+			}
+			if observation.HTTPStatusCode > 0 {
+				item["http_status_code"] = observation.HTTPStatusCode
+			}
+			if observation.Title != "" {
+				item["title"] = observation.Title
+			}
+			if observation.Request != "" {
+				item["request"] = observation.Request
+			}
+			if observation.Response != "" {
+				item["response"] = observation.Response
+			}
+			items = append(items, item)
 		}
 		if err := db.WithContext(ctx).
+			Table("manscan_asset_domain").
 			Clauses(clause.OnConflict{
-				Columns:   []clause.Column{{Name: "domain"}},
-				DoNothing: true,
+				Columns: []clause.Column{{Name: "domain"}},
+				DoUpdates: clause.Assignments(map[string]interface{}{
+					"domain": gorm.Expr("domain"),
+				}),
 			}).
 			Create(&items).Error; err != nil {
 			return err
 		}
 		if err := db.WithContext(ctx).
 			Model(&entity.AssetDomain{}).
-			Where("domain IN ?", domains[start:end]).
+			Where("domain IN ?", domains).
 			Updates(map[string]interface{}{
 				"is_alive":       true,
 				"first_alive_at": gorm.Expr("COALESCE(first_alive_at, ?)", observedAt),
@@ -164,8 +196,75 @@ func upsertAliveAssetDomains(ctx context.Context, db *gorm.DB, domains []string,
 			}).Error; err != nil {
 			return err
 		}
+		if err := updateAssetDomainObservationFields(ctx, db, batch, domains); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func updateAssetDomainObservationFields(ctx context.Context, db *gorm.DB, observations []AssetDomainObservation, domains []string) error {
+	updates := map[string]interface{}{}
+	if expr, ok := buildAssetDomainCaseExpr(observations, "http_status_code", func(observation AssetDomainObservation) (interface{}, bool) {
+		if observation.HTTPStatusCode == 0 {
+			return nil, false
+		}
+		return observation.HTTPStatusCode, true
+	}); ok {
+		updates["http_status_code"] = expr
+	}
+	if expr, ok := buildAssetDomainCaseExpr(observations, "title", func(observation AssetDomainObservation) (interface{}, bool) {
+		if observation.Title == "" {
+			return nil, false
+		}
+		return observation.Title, true
+	}); ok {
+		updates["title"] = expr
+	}
+	if expr, ok := buildAssetDomainCaseExpr(observations, "request", func(observation AssetDomainObservation) (interface{}, bool) {
+		if observation.Request == "" {
+			return nil, false
+		}
+		return observation.Request, true
+	}); ok {
+		updates["request"] = expr
+	}
+	if expr, ok := buildAssetDomainCaseExpr(observations, "response", func(observation AssetDomainObservation) (interface{}, bool) {
+		if observation.Response == "" {
+			return nil, false
+		}
+		return observation.Response, true
+	}); ok {
+		updates["response"] = expr
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	return db.WithContext(ctx).
+		Model(&entity.AssetDomain{}).
+		Where("domain IN ?", domains).
+		Updates(updates).Error
+}
+
+func buildAssetDomainCaseExpr(observations []AssetDomainObservation, column string, valueOf func(AssetDomainObservation) (interface{}, bool)) (clause.Expr, bool) {
+	var builder strings.Builder
+	args := make([]interface{}, 0, len(observations)*2)
+	builder.WriteString("CASE domain")
+	for _, observation := range observations {
+		value, ok := valueOf(observation)
+		if !ok {
+			continue
+		}
+		builder.WriteString(" WHEN ? THEN ?")
+		args = append(args, observation.Domain, value)
+	}
+	if len(args) == 0 {
+		return gorm.Expr(column), false
+	}
+	builder.WriteString(" ELSE ")
+	builder.WriteString(column)
+	builder.WriteString(" END")
+	return gorm.Expr(builder.String(), args...), true
 }
 
 func assetDomainDifference(values, excludes []string) []string {
@@ -185,6 +284,34 @@ func assetDomainDifference(values, excludes []string) []string {
 		if _, ok := excluded[value]; ok {
 			continue
 		}
+		result = append(result, value)
+	}
+	return result
+}
+
+func assetDomainObservationDomains(observations []AssetDomainObservation) []string {
+	result := make([]string, 0, len(observations))
+	for _, observation := range observations {
+		domain := strings.TrimSpace(observation.Domain)
+		if domain != "" {
+			result = append(result, domain)
+		}
+	}
+	return result
+}
+
+func uniqueAssetDomainObservations(values []AssetDomainObservation) []AssetDomainObservation {
+	result := make([]AssetDomainObservation, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Domain = strings.TrimSpace(value.Domain)
+		if value.Domain == "" {
+			continue
+		}
+		if _, ok := seen[value.Domain]; ok {
+			continue
+		}
+		seen[value.Domain] = struct{}{}
 		result = append(result, value)
 	}
 	return result

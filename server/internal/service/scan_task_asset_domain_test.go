@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"ManScan/server/internal/model/dto"
@@ -84,10 +85,70 @@ func TestProbeAssetDomainLivenessUsesHTTPXProbe(t *testing.T) {
 	}
 
 	want := "localhost:" + parsed.Port()
-	if len(result.AliveDomains) != 1 || result.AliveDomains[0] != want {
-		t.Fatalf("AliveDomains = %v, want [%s]", result.AliveDomains, want)
+	if len(result.Observations) != 1 || result.Observations[0].Domain != want {
+		t.Fatalf("Observations = %v, want domain %s", result.Observations, want)
 	}
 	if len(result.CheckedDomains) != 2 {
 		t.Fatalf("CheckedDomains = %v, want localhost and 192.0.2.10", result.CheckedDomains)
+	}
+}
+
+func TestProbeAssetDomainLivenessRecordsRedirectObservation(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, "/final", http.StatusFound)
+		case "/final":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte("<html><head><title>Final Title</title></head><body>ok</body></html>"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	target := "http://localhost:" + parsed.Port() + "/start"
+
+	result, err := probeAssetDomainLiveness(context.Background(), dto.CreateScanTaskRequest{
+		ProbeConcurrency: 1,
+		Timeout:          3,
+		MaxRedirects:     3,
+		ResponseReadSize: 1024 * 1024,
+	}, []string{target})
+	if err != nil {
+		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
+	}
+	if len(result.Observations) != 1 {
+		t.Fatalf("Observations = %v, want exactly one", result.Observations)
+	}
+
+	observation := result.Observations[0]
+	if observation.HTTPStatusCode != http.StatusFound {
+		t.Fatalf("HTTPStatusCode = %d, want %d", observation.HTTPStatusCode, http.StatusFound)
+	}
+	if observation.Title != "Final Title" {
+		t.Fatalf("Title = %q, want Final Title", observation.Title)
+	}
+	if !strings.Contains(observation.Request, "/final") {
+		t.Fatalf("Request = %q, want final redirect request", observation.Request)
+	}
+	if !strings.Contains(observation.Response, "HTTP/1.1 200 OK") || !strings.Contains(observation.Response, "Final Title") {
+		t.Fatalf("Response = %q, want final response", observation.Response)
+	}
+}
+
+func TestAssetDomainProbeFinishedMessage(t *testing.T) {
+	t.Parallel()
+
+	got := assetDomainProbeFinishedMessage(3, 2)
+	want := "扫描前域名资产存活探测完成，本次扫描存活 3 个，不存活 2 个"
+	if got != want {
+		t.Fatalf("assetDomainProbeFinishedMessage() = %q, want %q", got, want)
 	}
 }

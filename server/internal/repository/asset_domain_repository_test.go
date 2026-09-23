@@ -109,34 +109,62 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	lastAliveAt := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	observedAt := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
 	title := "Existing Title"
+	existingStatusCode := uint(418)
+	existingRequest := "GET /old HTTP/1.1\r\nHost: app.example.com\r\n\r\n"
+	existingResponse := "HTTP/1.1 418 I'm a teapot\r\n\r\nold"
 	if err := db.Create(&entity.AssetDomain{
-		Domain:       "app.example.com:443",
-		Title:        &title,
-		IsAlive:      false,
-		FirstAliveAt: &firstAliveAt,
-		LastAliveAt:  &lastAliveAt,
+		Domain:         "app.example.com:443",
+		Title:          &title,
+		HTTPStatusCode: &existingStatusCode,
+		Request:        &existingRequest,
+		Response:       &existingResponse,
+		IsAlive:        false,
+		FirstAliveAt:   &firstAliveAt,
+		LastAliveAt:    &lastAliveAt,
 	}).Error; err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	oldStatusCode := uint(200)
+	oldRequest := "GET / HTTP/1.1\r\nHost: old.example.com\r\n\r\n"
+	oldResponse := "HTTP/1.1 200 OK\r\n\r\nold"
 	if err := db.Create(&entity.AssetDomain{
-		Domain:  "old.example.com:443",
-		IsAlive: true,
+		Domain:         "old.example.com:443",
+		HTTPStatusCode: &oldStatusCode,
+		Request:        &oldRequest,
+		Response:       &oldResponse,
+		IsAlive:        true,
 	}).Error; err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 
 	repo := NewAssetDomainRepository(db)
-	if err := repo.SyncLiveness(context.Background(), []string{
-		"api.example.com:8443",
-		"api.example.com:8443",
-		"app.example.com:443",
+	if err := repo.SyncObservations(context.Background(), []AssetDomainObservation{
+		{
+			Domain:         "api.example.com:8443",
+			HTTPStatusCode: 201,
+			Title:          "API",
+			Request:        "GET /api HTTP/1.1\r\nHost: api.example.com\r\n\r\n",
+			Response:       "HTTP/1.1 201 Created\r\n\r\napi",
+		},
+		{
+			Domain:         "api.example.com:8443",
+			HTTPStatusCode: 202,
+			Title:          "Duplicate API",
+		},
+		{
+			Domain:         "app.example.com:443",
+			HTTPStatusCode: 302,
+			Title:          "Final Title",
+			Request:        "GET /final HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
+			Response:       "HTTP/1.1 200 OK\r\n\r\nfinal",
+		},
 	}, []string{
 		"api.example.com:8443",
 		"app.example.com:443",
 		"old.example.com:443",
 		"missing.example.com:443",
 	}, observedAt); err != nil {
-		t.Fatalf("SyncLiveness() error = %v", err)
+		t.Fatalf("SyncObservations() error = %v", err)
 	}
 
 	var items []entity.AssetDomain
@@ -155,9 +183,27 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	if !inserted.IsAlive || inserted.FirstAliveAt == nil || !inserted.FirstAliveAt.Equal(observedAt) || inserted.LastAliveAt == nil || !inserted.LastAliveAt.Equal(observedAt) {
 		t.Fatalf("inserted liveness = %+v, want alive with observed timestamps", inserted)
 	}
+	if inserted.HTTPStatusCode == nil || *inserted.HTTPStatusCode != 201 || inserted.Title == nil || *inserted.Title != "API" {
+		t.Fatalf("inserted observation = %+v, want first observation fields", inserted)
+	}
+	if inserted.Request == nil || *inserted.Request != "GET /api HTTP/1.1\r\nHost: api.example.com\r\n\r\n" {
+		t.Fatalf("inserted request = %v, want probe request", inserted.Request)
+	}
+	if inserted.Response == nil || *inserted.Response != "HTTP/1.1 201 Created\r\n\r\napi" {
+		t.Fatalf("inserted response = %v, want probe response", inserted.Response)
+	}
 	existing := byDomain["app.example.com:443"]
-	if !existing.IsAlive || existing.Title == nil || *existing.Title != title {
-		t.Fatalf("existing item = %+v, want alive with retained title", existing)
+	if !existing.IsAlive || existing.Title == nil || *existing.Title != "Final Title" {
+		t.Fatalf("existing item = %+v, want alive with updated title", existing)
+	}
+	if existing.HTTPStatusCode == nil || *existing.HTTPStatusCode != 302 {
+		t.Fatalf("existing HTTPStatusCode = %v, want 302", existing.HTTPStatusCode)
+	}
+	if existing.Request == nil || *existing.Request != "GET /final HTTP/1.1\r\nHost: app.example.com\r\n\r\n" {
+		t.Fatalf("existing request = %v, want final request", existing.Request)
+	}
+	if existing.Response == nil || *existing.Response != "HTTP/1.1 200 OK\r\n\r\nfinal" {
+		t.Fatalf("existing response = %v, want final response", existing.Response)
 	}
 	if existing.FirstAliveAt == nil || !existing.FirstAliveAt.Equal(firstAliveAt) {
 		t.Fatalf("existing first_alive_at = %v, want %v", existing.FirstAliveAt, firstAliveAt)
@@ -169,6 +215,95 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	if old.IsAlive {
 		t.Fatalf("old IsAlive = true, want false")
 	}
+	if old.HTTPStatusCode == nil || *old.HTTPStatusCode != oldStatusCode || old.Request == nil || *old.Request != oldRequest || old.Response == nil || *old.Response != oldResponse {
+		t.Fatalf("old observation = %+v, want retained observation fields", old)
+	}
+}
+
+func TestAssetDomainRepositorySyncObservationsInsertUsesFieldWhitelist(t *testing.T) {
+	t.Parallel()
+
+	statements := make([]string, 0)
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: sqlCaptureLogger{
+			Interface:  logger.Default.LogMode(logger.Silent),
+			statements: &statements,
+		},
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	if err := db.AutoMigrate(&entity.AssetDomain{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_asset_domain_domain ON manscan_asset_domain(domain)").Error; err != nil {
+		t.Fatalf("Create unique index error = %v", err)
+	}
+
+	statements = statements[:0]
+	repo := NewAssetDomainRepository(db)
+	if err := repo.SyncObservations(context.Background(), []AssetDomainObservation{
+		{
+			Domain:         "api.example.com:8443",
+			HTTPStatusCode: 200,
+			Title:          "API",
+			Request:        "GET / HTTP/1.1\r\nHost: api.example.com\r\n\r\n",
+			Response:       "HTTP/1.1 200 OK\r\n\r\napi",
+		},
+	}, []string{"api.example.com:8443"}, time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("SyncObservations() error = %v", err)
+	}
+
+	insertSQL := ""
+	for _, statement := range statements {
+		if strings.Contains(strings.ToLower(statement), "insert into") &&
+			strings.Contains(strings.ToLower(statement), "manscan_asset_domain") {
+			insertSQL = statement
+			break
+		}
+	}
+	if insertSQL == "" {
+		t.Fatalf("insert SQL not captured; statements = %v", statements)
+	}
+	for _, column := range []string{
+		"crawler_path_count",
+		"whitebox_path_count",
+		"vulnerability_count",
+		"critical_count",
+		"high_count",
+		"medium_count",
+		"low_count",
+		"component_count",
+	} {
+		if strings.Contains(insertSQL, column) {
+			t.Fatalf("insert SQL contains unconfirmed count column %q: %s", column, insertSQL)
+		}
+	}
+	for _, column := range []string{
+		"domain",
+		"is_alive",
+		"first_alive_at",
+		"last_alive_at",
+		"http_status_code",
+		"title",
+		"request",
+		"response",
+	} {
+		if !strings.Contains(insertSQL, column) {
+			t.Fatalf("insert SQL missing expected column %q: %s", column, insertSQL)
+		}
+	}
+}
+
+type sqlCaptureLogger struct {
+	logger.Interface
+	statements *[]string
+}
+
+func (l sqlCaptureLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+	statement, _ := fc()
+	*l.statements = append(*l.statements, statement)
 }
 
 func boolPointer(value bool) *bool {

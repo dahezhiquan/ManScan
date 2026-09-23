@@ -16,6 +16,7 @@ import (
 	"ManScan/pkg/utils"
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/scanruntime"
+	"ManScan/server/internal/repository"
 
 	"github.com/projectdiscovery/httpx/common/httpx"
 	"github.com/projectdiscovery/useragent"
@@ -42,32 +43,47 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		if s.logger != nil {
 			s.logger.Error("probe asset domains before scan failed", "error", err)
 		}
+		if state != nil {
+			state.Append("warn", "asset_domain_probe_failed", "扫描前域名资产存活探测失败，已跳过资产同步")
+		}
 		return nil
 	}
 	if len(probeResult.CheckedDomains) == 0 {
 		if state != nil {
-			state.Append("info", "asset_domain_probe_finished", "扫描前域名资产存活探测完成，未发现可同步域名资产")
+			state.Append("info", "asset_domain_probe_finished", assetDomainProbeFinishedMessage(0, 0))
 		}
 		return nil
 	}
 
-	if err := s.assetDomainRepository.SyncLiveness(ctx, probeResult.AliveDomains, probeResult.CheckedDomains, time.Now()); err != nil {
+	if err := s.assetDomainRepository.SyncObservations(ctx, probeResult.Observations, probeResult.CheckedDomains, time.Now()); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
 		if s.logger != nil {
-			s.logger.Error("sync probed asset domain liveness failed", "alive_domain_count", len(probeResult.AliveDomains), "checked_domain_count", len(probeResult.CheckedDomains), "error", err)
+			s.logger.Error("sync probed asset domain liveness failed", "alive_domain_count", len(probeResult.Observations), "checked_domain_count", len(probeResult.CheckedDomains), "error", err)
+		}
+		if state != nil {
+			state.Append("warn", "asset_domain_probe_sync_failed", "扫描前域名资产存活探测完成，但同步资产表失败")
 		}
 		return nil
 	}
 	if state != nil {
-		state.Append("info", "asset_domain_probe_finished", fmt.Sprintf("扫描前域名资产存活探测完成，已同步 %d 个存活域名资产，检查 %d 个域名资产", len(probeResult.AliveDomains), len(probeResult.CheckedDomains)))
+		aliveCount := len(probeResult.Observations)
+		notAliveCount := len(probeResult.CheckedDomains) - aliveCount
+		if notAliveCount < 0 {
+			notAliveCount = 0
+		}
+		state.Append("info", "asset_domain_probe_finished", assetDomainProbeFinishedMessage(aliveCount, notAliveCount))
 	}
 	return nil
 }
 
+func assetDomainProbeFinishedMessage(aliveCount, notAliveCount int) string {
+	return fmt.Sprintf("扫描前域名资产存活探测完成，本次扫描存活 %d 个，不存活 %d 个", aliveCount, notAliveCount)
+}
+
 type assetDomainLivenessProbeResult struct {
-	AliveDomains   []string
+	Observations   []repository.AssetDomainObservation
 	CheckedDomains []string
 }
 
@@ -75,6 +91,9 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 	httpxOptions := httpx.DefaultOptions
 	httpxOptions.RetryMax = request.Retries
 	httpxOptions.Timeout = time.Duration(defaultInt(request.Timeout, 10)) * time.Second
+	httpxOptions.FollowRedirects = true
+	httpxOptions.MaxRedirects = defaultInt(request.MaxRedirects, httpxOptions.MaxRedirects)
+	httpxOptions.MaxResponseBodySizeToRead = int64(defaultInt(request.ResponseReadSize, 1024*1024))
 	if proxy := firstCleanString(request.Proxy); proxy != "" {
 		httpxOptions.Proxy = proxy
 	}
@@ -150,16 +169,16 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 		return assetDomainLivenessProbeResult{}, probeErr
 	}
 
-	aliveSeen := make(map[string]struct{}, len(results))
+	observationSeen := make(map[string]struct{}, len(results))
 	checkedSeen := make(map[string]struct{}, len(results))
 	probeResult := assetDomainLivenessProbeResult{}
 	for result := range results {
-		for _, domain := range result.AliveDomains {
-			if _, ok := aliveSeen[domain]; ok {
+		for _, observation := range result.Observations {
+			if _, ok := observationSeen[observation.Domain]; ok {
 				continue
 			}
-			aliveSeen[domain] = struct{}{}
-			probeResult.AliveDomains = append(probeResult.AliveDomains, domain)
+			observationSeen[observation.Domain] = struct{}{}
+			probeResult.Observations = append(probeResult.Observations, observation)
 		}
 		for _, domain := range result.CheckedDomains {
 			if _, ok := checkedSeen[domain]; ok {
@@ -173,7 +192,7 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 }
 
 type assetDomainProbeTargetResult struct {
-	AliveDomains   []string
+	Observations   []repository.AssetDomainObservation
 	CheckedDomains []string
 }
 
@@ -188,22 +207,63 @@ func probeAssetDomainTarget(ctx context.Context, httpxClient *httpx.HTTPX, targe
 			continue
 		}
 		result.CheckedDomains = append(result.CheckedDomains, domain)
-		req, err := httpxClient.NewRequestWithContext(ctx, http.MethodHead, probeURL)
+		req, err := httpxClient.NewRequestWithContext(ctx, http.MethodGet, probeURL)
 		if err != nil {
 			continue
 		}
 		userAgent := useragent.PickRandom()
 		req.Header.Set("User-Agent", userAgent.Raw)
-		if _, err := httpxClient.Do(req, httpx.UnsafeOptions{}); err != nil {
+		resp, err := httpxClient.Do(req, httpx.UnsafeOptions{})
+		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return assetDomainProbeTargetResult{}, err
 			}
 			continue
 		}
-		result.AliveDomains = append(result.AliveDomains, domain)
+		result.Observations = append(result.Observations, repository.AssetDomainObservation{
+			Domain:         domain,
+			HTTPStatusCode: firstAssetDomainHTTPStatusCode(resp),
+			Title:          assetDomainResponseTitle(resp),
+			Request:        finalAssetDomainRequest(resp),
+			Response:       resp.Raw,
+		})
 		return result, nil
 	}
 	return result, nil
+}
+
+func firstAssetDomainHTTPStatusCode(resp *httpx.Response) uint {
+	if resp == nil {
+		return 0
+	}
+	for _, item := range resp.Chain {
+		if item.StatusCode > 0 {
+			return uint(item.StatusCode)
+		}
+	}
+	if resp.StatusCode > 0 {
+		return uint(resp.StatusCode)
+	}
+	return 0
+}
+
+func assetDomainResponseTitle(resp *httpx.Response) string {
+	if resp == nil {
+		return ""
+	}
+	return httpx.ExtractTitle(resp)
+}
+
+func finalAssetDomainRequest(resp *httpx.Response) string {
+	if resp == nil {
+		return ""
+	}
+	for i := len(resp.Chain) - 1; i >= 0; i-- {
+		if request := strings.TrimSpace(string(resp.Chain[i].Request)); request != "" {
+			return request
+		}
+	}
+	return ""
 }
 
 func assetDomainProbeURLs(target string) []string {
