@@ -40,5 +40,7 @@ type AssetDomainListItem struct {
 	ScreenshotPath     string     `json:"screenshot_path"`
 	ManualNote         string     `json:"manual_note"`
 	HTTPStatusCode     *uint      `json:"http_status_code"`
+	Request            string     `json:"request"`
+	Response           string     `json:"response"`
 	IsAlive            bool       `json:"is_alive"`
 }

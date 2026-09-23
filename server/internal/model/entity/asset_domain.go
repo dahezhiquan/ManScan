@@ -28,6 +28,8 @@ type AssetDomain struct {
 	ScreenshotPath     *string    `gorm:"column:screenshot_path"`
 	ManualNote         *string    `gorm:"column:manual_note"`
 	HTTPStatusCode     *uint      `gorm:"column:http_status_code"`
+	Request            *string    `gorm:"column:request"`
+	Response           *string    `gorm:"column:response"`
 	IsAlive            bool       `gorm:"column:is_alive"`
 }
 

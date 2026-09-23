@@ -32,6 +32,8 @@ CREATE TABLE `manscan_asset_domain` (
                                         `screenshot_path` VARCHAR(500) DEFAULT NULL COMMENT '网页截图路径',
                                         `manual_note` TEXT DEFAULT NULL COMMENT '人工注释',
                                         `http_status_code` SMALLINT UNSIGNED DEFAULT NULL COMMENT '响应状态码',
+                                        `request` LONGTEXT DEFAULT NULL COMMENT '资产探测请求原文',
+                                        `response` LONGTEXT DEFAULT NULL COMMENT '资产探测响应原文',
                                         `is_alive` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存活：0否，1是',
 
                                         PRIMARY KEY (`id`),

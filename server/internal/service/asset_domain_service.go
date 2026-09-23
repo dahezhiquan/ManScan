@@ -68,6 +68,8 @@ func toAssetDomainListItem(item entity.AssetDomain) dto.AssetDomainListItem {
 		ScreenshotPath:     derefString(item.ScreenshotPath),
 		ManualNote:         derefString(item.ManualNote),
 		HTTPStatusCode:     item.HTTPStatusCode,
+		Request:            derefString(item.Request),
+		Response:           derefString(item.Response),
 		IsAlive:            item.IsAlive,
 	}
 }

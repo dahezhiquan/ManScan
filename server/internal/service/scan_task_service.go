@@ -62,6 +62,7 @@ const (
 type scanTaskService struct {
 	repository              repository.ScanTaskRepository
 	vulnerabilityRepository repository.VulnerabilityRepository
+	assetDomainRepository   repository.AssetDomainRepository
 	templateRepository      repository.TemplateRepository
 	logger                  *logx.Logger
 	rootDir                 string
@@ -96,6 +97,7 @@ type scanTaskRuntime struct {
 func NewScanTaskService(
 	repo repository.ScanTaskRepository,
 	vulnerabilityRepo repository.VulnerabilityRepository,
+	assetDomainRepo repository.AssetDomainRepository,
 	templateRepo repository.TemplateRepository,
 	logger *logx.Logger,
 	rootDir string,
@@ -106,6 +108,7 @@ func NewScanTaskService(
 	return &scanTaskService{
 		repository:              repo,
 		vulnerabilityRepository: vulnerabilityRepo,
+		assetDomainRepository:   assetDomainRepo,
 		templateRepository:      templateRepo,
 		logger:                  logger,
 		rootDir:                 rootDir,
@@ -747,6 +750,21 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 		return errors.New("scan runtime is nil")
 	}
 	state := runtime.state
+	cmdCtx, cancel := context.WithCancel(context.Background())
+	if !runtime.AttachCancel(cancel) {
+		cancel()
+		return context.Canceled
+	}
+	defer cancel()
+	defer runtime.ClearCancel()
+
+	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, plan.CollectedTargets, state); err != nil {
+		return err
+	}
+	if runtime.IsPauseRequested() {
+		return errScanTaskPausedBeforeProcess
+	}
+
 	taskDir := filepath.Dir(state.LogFilePath)
 	targetsFile := filepath.Join(taskDir, "targets.txt")
 	if err := os.WriteFile(targetsFile, []byte(strings.Join(plan.CollectedTargets, "\n")+"\n"), 0o644); err != nil {
@@ -757,14 +775,6 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 
 	executable, baseArgs := resolveManScanCommand(s.rootDir)
 	args := append(baseArgs, buildScanCLIArgs(plan.Raw, taskDir, targetsFile, resumeFile, storeResponseDir)...)
-
-	cmdCtx, cancel := context.WithCancel(context.Background())
-	if !runtime.AttachCancel(cancel) {
-		cancel()
-		return context.Canceled
-	}
-	defer cancel()
-	defer runtime.ClearCancel()
 
 	cmd := exec.CommandContext(cmdCtx, executable, args...)
 	cmd.Dir = s.rootDir

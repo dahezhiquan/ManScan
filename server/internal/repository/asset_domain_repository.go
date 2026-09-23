@@ -3,15 +3,18 @@ package repository
 import (
 	"context"
 	"strings"
+	"time"
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type AssetDomainRepository interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error)
+	SyncLiveness(ctx context.Context, aliveDomains, checkedDomains []string, observedAt time.Time) error
 }
 
 type assetDomainRepository struct {
@@ -30,6 +33,31 @@ END ASC`
 
 func NewAssetDomainRepository(db *gorm.DB) AssetDomainRepository {
 	return &assetDomainRepository{db: db}
+}
+
+func (r *assetDomainRepository) SyncLiveness(ctx context.Context, aliveDomains, checkedDomains []string, observedAt time.Time) error {
+	aliveDomains = uniqueNonEmptyAssetDomains(aliveDomains)
+	checkedDomains = uniqueNonEmptyAssetDomains(checkedDomains)
+	if len(aliveDomains) == 0 && len(checkedDomains) == 0 {
+		return nil
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := upsertAliveAssetDomains(ctx, tx, aliveDomains, observedAt); err != nil {
+			return err
+		}
+		notAliveDomains := assetDomainDifference(checkedDomains, aliveDomains)
+		if len(notAliveDomains) == 0 {
+			return nil
+		}
+		return tx.WithContext(ctx).
+			Model(&entity.AssetDomain{}).
+			Where("domain IN ?", notAliveDomains).
+			Update("is_alive", false).Error
+	})
 }
 
 func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error) {
@@ -100,4 +128,81 @@ func (r *assetDomainRepository) applyListFilters(db *gorm.DB, query dto.ListAsse
 		db = db.Where("a.is_alive = ?", *query.IsAlive)
 	}
 	return db
+}
+
+func upsertAliveAssetDomains(ctx context.Context, db *gorm.DB, domains []string, observedAt time.Time) error {
+	const batchSize = 500
+	for start := 0; start < len(domains); start += batchSize {
+		end := start + batchSize
+		if end > len(domains) {
+			end = len(domains)
+		}
+		items := make([]entity.AssetDomain, 0, end-start)
+		for _, domain := range domains[start:end] {
+			items = append(items, entity.AssetDomain{
+				Domain:       domain,
+				IsAlive:      true,
+				FirstAliveAt: &observedAt,
+				LastAliveAt:  &observedAt,
+			})
+		}
+		if err := db.WithContext(ctx).
+			Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "domain"}},
+				DoNothing: true,
+			}).
+			Create(&items).Error; err != nil {
+			return err
+		}
+		if err := db.WithContext(ctx).
+			Model(&entity.AssetDomain{}).
+			Where("domain IN ?", domains[start:end]).
+			Updates(map[string]interface{}{
+				"is_alive":       true,
+				"first_alive_at": gorm.Expr("COALESCE(first_alive_at, ?)", observedAt),
+				"last_alive_at":  observedAt,
+			}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assetDomainDifference(values, excludes []string) []string {
+	excluded := make(map[string]struct{}, len(excludes))
+	for _, value := range excludes {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			excluded[value] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := excluded[value]; ok {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
+}
+
+func uniqueNonEmptyAssetDomains(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }

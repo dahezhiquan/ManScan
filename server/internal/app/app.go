@@ -41,6 +41,7 @@ func Run() error {
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
 		vulnerabilityRepository,
+		assetDomainRepository,
 		templateRepository,
 		logger,
 		cfg.RootDir,

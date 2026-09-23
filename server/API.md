@@ -1500,6 +1500,8 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
         "screenshot_path": "/screenshots/app.png",
         "manual_note": "",
         "http_status_code": 200,
+        "request": "GET / HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
+        "response": "HTTP/1.1 200 OK\r\n\r\n<html>Example App</html>",
         "is_alive": true
       }
     ]
@@ -1510,6 +1512,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 - 说明：
   - `critical_count`、`high_count`、`medium_count`、`low_count` 分别表示严重、高危、中危、低危漏洞数量。
   - `vulnerability_count` 保留为兼容字段，语义为漏洞总数且不包含 `info` 等级。
+  - `request`、`response` 分别表示该域名资产最近一次探测保存的请求与响应原文；没有记录时返回空字符串。
   - 列表默认按风险等级、漏洞总数、最近存活时间和 ID 倒序排序。
   - 当前后端表结构没有 `organization`、`scan_task`、`business_system` 字段，因此这些前端筛选项不会作为服务端查询条件。
 
