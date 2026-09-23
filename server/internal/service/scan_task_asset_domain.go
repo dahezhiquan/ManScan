@@ -35,7 +35,21 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	if state != nil {
 		state.Append("info", "asset_domain_probe_started", "开始扫描前域名资产存活探测")
 	}
-	probeResult, err := probeAssetDomainLiveness(ctx, request, targets)
+	networkItems, err := s.assetDomainRepository.ListNetworkItems(ctx)
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if s.logger != nil {
+			s.logger.Error("load asset domain network config failed", "error", err)
+		}
+		if state != nil {
+			state.Append("warn", "asset_domain_probe_config_failed", "扫描前域名资产存活探测失败，已跳过资产同步")
+		}
+		return nil
+	}
+
+	probeResult, err := probeAssetDomainLiveness(ctx, request, targets, buildAssetDomainNetworkRegions(networkItems))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
@@ -87,7 +101,12 @@ type assetDomainLivenessProbeResult struct {
 	CheckedDomains []string
 }
 
-func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskRequest, targets []string) (assetDomainLivenessProbeResult, error) {
+type assetDomainNetworkRegion struct {
+	prefix netip.Prefix
+	region string
+}
+
+func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, networkRegions []assetDomainNetworkRegion) (assetDomainLivenessProbeResult, error) {
 	httpxOptions := httpx.DefaultOptions
 	httpxOptions.RetryMax = request.Retries
 	httpxOptions.Timeout = time.Duration(defaultInt(request.Timeout, 10)) * time.Second
@@ -147,7 +166,7 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result, err := probeAssetDomainTarget(ctx, httpxClient, target)
+			result, err := probeAssetDomainTarget(ctx, httpxClient, target, networkRegions)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					setFirstErr(err)
@@ -196,7 +215,7 @@ type assetDomainProbeTargetResult struct {
 	CheckedDomains []string
 }
 
-func probeAssetDomainTarget(ctx context.Context, httpxClient *httpx.HTTPX, target string) (assetDomainProbeTargetResult, error) {
+func probeAssetDomainTarget(ctx context.Context, httpxClient *httpx.HTTPX, target string, networkRegions []assetDomainNetworkRegion) (assetDomainProbeTargetResult, error) {
 	result := assetDomainProbeTargetResult{}
 	for _, probeURL := range assetDomainProbeURLs(target) {
 		if err := ctx.Err(); err != nil {
@@ -222,6 +241,7 @@ func probeAssetDomainTarget(ctx context.Context, httpxClient *httpx.HTTPX, targe
 		}
 		result.Observations = append(result.Observations, repository.AssetDomainObservation{
 			Domain:         domain,
+			Region:         assetDomainRegion(domain, networkRegions),
 			HTTPStatusCode: firstAssetDomainHTTPStatusCode(resp),
 			Title:          assetDomainResponseTitle(resp),
 			Request:        finalAssetDomainRequest(resp),
@@ -230,6 +250,61 @@ func probeAssetDomainTarget(ctx context.Context, httpxClient *httpx.HTTPX, targe
 		return result, nil
 	}
 	return result, nil
+}
+
+func buildAssetDomainNetworkRegions(items []repository.AssetDomainNetworkItem) []assetDomainNetworkRegion {
+	regions := make([]assetDomainNetworkRegion, 0, len(items))
+	for _, item := range items {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(item.ItemName))
+		if err != nil {
+			continue
+		}
+		regions = append(regions, assetDomainNetworkRegion{
+			prefix: prefix.Masked(),
+			region: strings.TrimSpace(item.SmallCategory),
+		})
+	}
+	return regions
+}
+
+func assetDomainRegion(domain string, networkRegions []assetDomainNetworkRegion) string {
+	host := assetDomainHost(domain)
+	if host == "" {
+		return ""
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		for _, region := range networkRegions {
+			if region.prefix.Contains(addr) {
+				return region.region
+			}
+		}
+		return "外网"
+	}
+	if assetDomainHasInternalSuffix(host) {
+		return "内网"
+	}
+	return "外网"
+}
+
+func assetDomainHost(domain string) string {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(domain)
+	if err == nil {
+		return strings.Trim(strings.ToLower(host), "[]")
+	}
+	return strings.Trim(strings.ToLower(domain), "[]")
+}
+
+func assetDomainHasInternalSuffix(host string) bool {
+	for _, label := range strings.Split(strings.ToLower(strings.TrimSpace(host)), ".") {
+		if strings.HasSuffix(label, "-int") {
+			return true
+		}
+	}
+	return false
 }
 
 func firstAssetDomainHTTPStatusCode(resp *httpx.Response) uint {

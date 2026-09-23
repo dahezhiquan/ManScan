@@ -141,6 +141,7 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	if err := repo.SyncObservations(context.Background(), []AssetDomainObservation{
 		{
 			Domain:         "api.example.com:8443",
+			Region:         "外网",
 			HTTPStatusCode: 201,
 			Title:          "API",
 			Request:        "GET /api HTTP/1.1\r\nHost: api.example.com\r\n\r\n",
@@ -153,6 +154,7 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 		},
 		{
 			Domain:         "app.example.com:443",
+			Region:         "内网",
 			HTTPStatusCode: 302,
 			Title:          "Final Title",
 			Request:        "GET /final HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
@@ -186,6 +188,9 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	if inserted.HTTPStatusCode == nil || *inserted.HTTPStatusCode != 201 || inserted.Title == nil || *inserted.Title != "API" {
 		t.Fatalf("inserted observation = %+v, want first observation fields", inserted)
 	}
+	if inserted.Region == nil || *inserted.Region != "外网" {
+		t.Fatalf("inserted region = %v, want 外网", inserted.Region)
+	}
 	if inserted.Request == nil || *inserted.Request != "GET /api HTTP/1.1\r\nHost: api.example.com\r\n\r\n" {
 		t.Fatalf("inserted request = %v, want probe request", inserted.Request)
 	}
@@ -198,6 +203,9 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	}
 	if existing.HTTPStatusCode == nil || *existing.HTTPStatusCode != 302 {
 		t.Fatalf("existing HTTPStatusCode = %v, want 302", existing.HTTPStatusCode)
+	}
+	if existing.Region == nil || *existing.Region != "内网" {
+		t.Fatalf("existing region = %v, want 内网", existing.Region)
 	}
 	if existing.Request == nil || *existing.Request != "GET /final HTTP/1.1\r\nHost: app.example.com\r\n\r\n" {
 		t.Fatalf("existing request = %v, want final request", existing.Request)
@@ -246,6 +254,7 @@ func TestAssetDomainRepositorySyncObservationsInsertUsesFieldWhitelist(t *testin
 	if err := repo.SyncObservations(context.Background(), []AssetDomainObservation{
 		{
 			Domain:         "api.example.com:8443",
+			Region:         "外网",
 			HTTPStatusCode: 200,
 			Title:          "API",
 			Request:        "GET / HTTP/1.1\r\nHost: api.example.com\r\n\r\n",
@@ -286,6 +295,7 @@ func TestAssetDomainRepositorySyncObservationsInsertUsesFieldWhitelist(t *testin
 		"first_alive_at",
 		"last_alive_at",
 		"http_status_code",
+		"region",
 		"title",
 		"request",
 		"response",
@@ -293,6 +303,46 @@ func TestAssetDomainRepositorySyncObservationsInsertUsesFieldWhitelist(t *testin
 		if !strings.Contains(insertSQL, column) {
 			t.Fatalf("insert SQL missing expected column %q: %s", column, insertSQL)
 		}
+	}
+}
+
+func TestAssetDomainRepositoryListNetworkItems(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	if err := db.AutoMigrate(&entity.AssetConfigCenter{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	items := []entity.AssetConfigCenter{
+		{ItemName: "10.0.0.0/8", BigCategory: "network", SmallCategory: "生产内网", Status: "enabled"},
+		{ItemName: "192.168.0.0/16", BigCategory: "network", SmallCategory: "办公内网", Status: "enabled"},
+		{ItemName: "172.16.0.0/12", BigCategory: "network", SmallCategory: "测试内网", Status: "disabled"},
+		{ItemName: "203.0.113.0/24", BigCategory: "owner", SmallCategory: "unused", Status: "enabled"},
+	}
+	for i := range items {
+		if err := db.Create(&items[i]).Error; err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+
+	repo := NewAssetDomainRepository(db)
+	networkItems, err := repo.ListNetworkItems(context.Background())
+	if err != nil {
+		t.Fatalf("ListNetworkItems() error = %v", err)
+	}
+	got := make([]string, 0, len(networkItems))
+	for _, item := range networkItems {
+		got = append(got, item.ItemName+":"+item.SmallCategory)
+	}
+	if strings.Join(got, ",") != "10.0.0.0/8:生产内网,192.168.0.0/16:办公内网,172.16.0.0/12:测试内网" {
+		t.Fatalf("ListNetworkItems() = %v, want network item_name and small_category only", networkItems)
 	}
 }
 

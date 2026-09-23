@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"ManScan/server/internal/model/dto"
+	"ManScan/server/internal/repository"
 )
 
 func TestCanonicalAssetDomainFromURL(t *testing.T) {
@@ -79,7 +80,7 @@ func TestProbeAssetDomainLivenessUsesHTTPXProbe(t *testing.T) {
 	result, err := probeAssetDomainLiveness(context.Background(), dto.CreateScanTaskRequest{
 		ProbeConcurrency: 2,
 		Timeout:          3,
-	}, []string{target, target, "http://192.0.2.10"})
+	}, []string{target, target, "http://192.0.2.10"}, nil)
 	if err != nil {
 		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
 	}
@@ -120,7 +121,7 @@ func TestProbeAssetDomainLivenessRecordsRedirectObservation(t *testing.T) {
 		Timeout:          3,
 		MaxRedirects:     3,
 		ResponseReadSize: 1024 * 1024,
-	}, []string{target})
+	}, []string{target}, nil)
 	if err != nil {
 		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
 	}
@@ -140,6 +141,51 @@ func TestProbeAssetDomainLivenessRecordsRedirectObservation(t *testing.T) {
 	}
 	if !strings.Contains(observation.Response, "HTTP/1.1 200 OK") || !strings.Contains(observation.Response, "Final Title") {
 		t.Fatalf("Response = %q, want final response", observation.Response)
+	}
+}
+
+func TestAssetDomainRegion(t *testing.T) {
+	t.Parallel()
+
+	networkRegions := buildAssetDomainNetworkRegions([]repository.AssetDomainNetworkItem{
+		{ItemName: "10.0.0.0/8", SmallCategory: "生产内网"},
+		{ItemName: "invalid-cidr", SmallCategory: "无效网段"},
+	})
+	tests := []struct {
+		name   string
+		domain string
+		want   string
+	}{
+		{
+			name:   "ip in network",
+			domain: "10.107.71.65:8889",
+			want:   "生产内网",
+		},
+		{
+			name:   "ip outside network",
+			domain: "192.0.2.10:443",
+			want:   "外网",
+		},
+		{
+			name:   "domain with internal label suffix",
+			domain: "ai-force.duxiaoman-int.com:443",
+			want:   "内网",
+		},
+		{
+			name:   "domain without internal suffix",
+			domain: "api.example.com:443",
+			want:   "外网",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := assetDomainRegion(tc.domain, networkRegions); got != tc.want {
+				t.Fatalf("assetDomainRegion(%q) = %q, want %q", tc.domain, got, tc.want)
+			}
+		})
 	}
 }
 

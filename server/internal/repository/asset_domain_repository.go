@@ -14,6 +14,7 @@ import (
 
 type AssetDomainRepository interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error)
+	ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error)
 	SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error
 }
 
@@ -23,10 +24,16 @@ type assetDomainRepository struct {
 
 type AssetDomainObservation struct {
 	Domain         string
+	Region         string
 	HTTPStatusCode uint
 	Title          string
 	Request        string
 	Response       string
+}
+
+type AssetDomainNetworkItem struct {
+	ItemName      string
+	SmallCategory string
 }
 
 const assetDomainRiskOrder = `CASE LOWER(COALESCE(a.risk_level, ''))
@@ -41,6 +48,19 @@ END ASC`
 
 func NewAssetDomainRepository(db *gorm.DB) AssetDomainRepository {
 	return &assetDomainRepository{db: db}
+}
+
+func (r *assetDomainRepository) ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error) {
+	items := make([]AssetDomainNetworkItem, 0)
+	if err := r.db.WithContext(ctx).
+		Model(&entity.AssetConfigCenter{}).
+		Select("item_name, small_category").
+		Where("big_category = ?", "network").
+		Order("id ASC").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return uniqueNonEmptyAssetDomainNetworkItems(items), nil
 }
 
 func (r *assetDomainRepository) SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error {
@@ -156,10 +176,14 @@ func upsertAliveAssetDomainObservations(ctx context.Context, db *gorm.DB, observ
 				"is_alive":         true,
 				"first_alive_at":   observedAt,
 				"last_alive_at":    observedAt,
+				"region":           nil,
 				"http_status_code": nil,
 				"title":            nil,
 				"request":          nil,
 				"response":         nil,
+			}
+			if observation.Region != "" {
+				item["region"] = observation.Region
 			}
 			if observation.HTTPStatusCode > 0 {
 				item["http_status_code"] = observation.HTTPStatusCode
@@ -212,6 +236,14 @@ func updateAssetDomainObservationFields(ctx context.Context, db *gorm.DB, observ
 		return observation.HTTPStatusCode, true
 	}); ok {
 		updates["http_status_code"] = expr
+	}
+	if expr, ok := buildAssetDomainCaseExpr(observations, "region", func(observation AssetDomainObservation) (interface{}, bool) {
+		if observation.Region == "" {
+			return nil, false
+		}
+		return observation.Region, true
+	}); ok {
+		updates["region"] = expr
 	}
 	if expr, ok := buildAssetDomainCaseExpr(observations, "title", func(observation AssetDomainObservation) (interface{}, bool) {
 		if observation.Title == "" {
@@ -329,6 +361,24 @@ func uniqueNonEmptyAssetDomains(values []string) []string {
 			continue
 		}
 		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func uniqueNonEmptyAssetDomainNetworkItems(values []AssetDomainNetworkItem) []AssetDomainNetworkItem {
+	result := make([]AssetDomainNetworkItem, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.ItemName = strings.TrimSpace(value.ItemName)
+		value.SmallCategory = strings.TrimSpace(value.SmallCategory)
+		if value.ItemName == "" {
+			continue
+		}
+		if _, ok := seen[value.ItemName]; ok {
+			continue
+		}
+		seen[value.ItemName] = struct{}{}
 		result = append(result, value)
 	}
 	return result
