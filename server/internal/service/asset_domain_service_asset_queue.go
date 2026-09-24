@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -23,21 +24,34 @@ type assetDomainServiceAssetResultEvent struct {
 
 type assetDomainServiceAssetQueue struct {
 	service      *scanTaskService
+	state        *scanruntime.State
+	resolver     *assetDomainFingerprintTargetResolver
 	events       chan assetDomainServiceAssetResultEvent
 	once         sync.Once
 	wg           sync.WaitGroup
 	observations []repository.AssetDomainServiceAssetObservation
 	mu           sync.Mutex
+	resolverMu   sync.RWMutex
 }
 
-func newAssetDomainServiceAssetQueue(service *scanTaskService) *assetDomainServiceAssetQueue {
+func newAssetDomainServiceAssetQueue(service *scanTaskService, states ...*scanruntime.State) *assetDomainServiceAssetQueue {
+	var state *scanruntime.State
+	if len(states) > 0 {
+		state = states[0]
+	}
+	return newAssetDomainServiceAssetQueueWithResolver(service, state, nil)
+}
+
+func newAssetDomainServiceAssetQueueWithResolver(service *scanTaskService, state *scanruntime.State, resolver *assetDomainFingerprintTargetResolver) *assetDomainServiceAssetQueue {
 	if service == nil || service.assetDomainRepository == nil {
 		return nil
 	}
 
 	queue := &assetDomainServiceAssetQueue{
-		service: service,
-		events:  make(chan assetDomainServiceAssetResultEvent, assetDomainServiceAssetQueueBufferSize),
+		service:  service,
+		state:    state,
+		resolver: resolver,
+		events:   make(chan assetDomainServiceAssetResultEvent, assetDomainServiceAssetQueueBufferSize),
 	}
 	queue.wg.Add(1)
 	go queue.runWorker()
@@ -59,6 +73,15 @@ func (q *assetDomainServiceAssetQueue) CloseAndWait() {
 		close(q.events)
 	})
 	q.wg.Wait()
+}
+
+func (q *assetDomainServiceAssetQueue) SetTargetResolver(resolver *assetDomainFingerprintTargetResolver) {
+	if q == nil {
+		return
+	}
+	q.resolverMu.Lock()
+	q.resolver = resolver
+	q.resolverMu.Unlock()
 }
 
 func (q *assetDomainServiceAssetQueue) Observations() []repository.AssetDomainServiceAssetObservation {
@@ -89,6 +112,7 @@ func (q *assetDomainServiceAssetQueue) runWorker() {
 			}
 			observations := q.build(event)
 			q.record(observations)
+			recordAssetDomainFingerprintObservations(q.state, observations)
 			batch = append(batch, observations...)
 			if len(batch) >= assetDomainServiceAssetQueueBatchSize {
 				q.flush(batch)
@@ -105,7 +129,10 @@ func (q *assetDomainServiceAssetQueue) runWorker() {
 }
 
 func (q *assetDomainServiceAssetQueue) build(event assetDomainServiceAssetResultEvent) []repository.AssetDomainServiceAssetObservation {
-	observations, err := q.service.buildAssetDomainServiceAssetsFromPayload(context.Background(), event.payload)
+	q.resolverMu.RLock()
+	resolver := q.resolver
+	q.resolverMu.RUnlock()
+	observations, err := q.service.buildAssetDomainServiceAssetsFromPayloadWithResolver(context.Background(), event.payload, resolver)
 	if err != nil {
 		if q.service.logger != nil {
 			q.service.logger.Error("build asset domain service assets from scan result failed", "error", err)
@@ -137,6 +164,10 @@ func (q *assetDomainServiceAssetQueue) flush(batch []repository.AssetDomainServi
 }
 
 func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayload(ctx context.Context, payload map[string]interface{}) ([]repository.AssetDomainServiceAssetObservation, error) {
+	return s.buildAssetDomainServiceAssetsFromPayloadWithResolver(ctx, payload, nil)
+}
+
+func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayloadWithResolver(ctx context.Context, payload map[string]interface{}, resolver *assetDomainFingerprintTargetResolver) ([]repository.AssetDomainServiceAssetObservation, error) {
 	if len(payload) == 0 {
 		return nil, nil
 	}
@@ -161,6 +192,11 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayload(ctx context.C
 		scanruntime.AsString(payload["host"]),
 	)
 	domain := vulnerabilityAssetEndpoint(parseVulnerabilityAsset(payload, matchedAt))
+	if resolver != nil {
+		if originalDomain := resolver.Resolve(payload); originalDomain != "" {
+			domain = originalDomain
+		}
+	}
 	if domain == "" {
 		return nil, nil
 	}
@@ -176,6 +212,98 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayload(ctx context.C
 		})
 	}
 	return uniqueAssetDomainServiceAssetObservations(components), nil
+}
+
+type assetDomainFingerprintTargetResolver struct {
+	endpointToDomain map[string]string
+	hostToDomain     map[string]string
+}
+
+func newAssetDomainFingerprintTargetResolver(targets []assetDomainFingerprintTarget) *assetDomainFingerprintTargetResolver {
+	resolver := &assetDomainFingerprintTargetResolver{
+		endpointToDomain: make(map[string]string),
+		hostToDomain:     make(map[string]string),
+	}
+	for _, target := range targets {
+		domain := strings.TrimSpace(target.Domain)
+		if domain == "" {
+			continue
+		}
+		resolver.add(target.Input, domain)
+		resolver.add(target.FinalURL, domain)
+		resolver.add(target.Domain, domain)
+	}
+	return resolver
+}
+
+func (r *assetDomainFingerprintTargetResolver) add(value, domain string) {
+	endpoint, host := assetDomainFingerprintValueKeys(value)
+	if endpoint != "" {
+		addUniqueAssetDomainFingerprintAlias(r.endpointToDomain, endpoint, domain)
+	}
+	if host != "" {
+		addUniqueAssetDomainFingerprintAlias(r.hostToDomain, host, domain)
+	}
+}
+
+func (r *assetDomainFingerprintTargetResolver) Resolve(payload map[string]interface{}) string {
+	if r == nil {
+		return ""
+	}
+	for _, key := range []string{"input", "matched-at", "url", "host"} {
+		endpoint, host := assetDomainFingerprintValueKeys(scanruntime.AsString(payload[key]))
+		if endpoint != "" {
+			if domain := r.endpointToDomain[endpoint]; domain != "" {
+				return domain
+			}
+		}
+		if host != "" {
+			if domain := r.hostToDomain[host]; domain != "" {
+				return domain
+			}
+		}
+	}
+	return ""
+}
+
+func assetDomainFingerprintValueKeys(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	parsed, ok := parseEndpoint(value)
+	if !ok {
+		value = strings.ToLower(value)
+		return value, value
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	if host == "" {
+		return "", ""
+	}
+	port := strings.TrimSpace(parsed.Port())
+	if port == "" {
+		switch strings.ToLower(parsed.Scheme) {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		}
+	}
+	if port == "" {
+		return host, host
+	}
+	return net.JoinHostPort(host, port), host
+}
+
+func addUniqueAssetDomainFingerprintAlias(aliases map[string]string, key, domain string) {
+	if key == "" {
+		return
+	}
+	if current, ok := aliases[key]; ok && current != domain {
+		aliases[key] = ""
+		return
+	}
+	aliases[key] = domain
 }
 
 func assetDomainFingerprintComponentNames(payload map[string]interface{}, templateID string, info map[string]interface{}, tags []string) []string {

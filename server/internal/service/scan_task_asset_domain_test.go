@@ -9,8 +9,11 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"ManScan/server/internal/model/dto"
+	"ManScan/server/internal/model/entity"
+	"ManScan/server/internal/pkg/scanruntime"
 	"ManScan/server/internal/repository"
 )
 
@@ -82,7 +85,7 @@ func TestProbeAssetDomainLivenessUsesHTTPXProbe(t *testing.T) {
 	result, err := probeAssetDomainLiveness(context.Background(), dto.CreateScanTaskRequest{
 		ProbeConcurrency: 2,
 		Timeout:          3,
-	}, []string{target, target, "http://192.0.2.10"}, nil)
+	}, []string{target, target, "http://192.0.2.10"}, nil, nil)
 	if err != nil {
 		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
 	}
@@ -123,7 +126,7 @@ func TestProbeAssetDomainLivenessRecordsRedirectObservation(t *testing.T) {
 		Timeout:          3,
 		MaxRedirects:     3,
 		ResponseReadSize: 1024 * 1024,
-	}, []string{target}, nil)
+	}, []string{target}, nil, nil)
 	if err != nil {
 		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
 	}
@@ -143,6 +146,37 @@ func TestProbeAssetDomainLivenessRecordsRedirectObservation(t *testing.T) {
 	}
 	if !strings.Contains(observation.Response, "HTTP/1.1 200 OK") || !strings.Contains(observation.Response, "Final Title") {
 		t.Fatalf("Response = %q, want final response", observation.Response)
+	}
+	if len(result.FingerprintTargets) != 1 {
+		t.Fatalf("FingerprintTargets = %v, want exactly one target", result.FingerprintTargets)
+	}
+	if result.FingerprintTargets[0].Input != target {
+		t.Fatalf("FingerprintTargets[0].Input = %q, want original target %q", result.FingerprintTargets[0].Input, target)
+	}
+	if !strings.HasSuffix(result.FingerprintTargets[0].FinalURL, "/final") {
+		t.Fatalf("FingerprintTargets[0].FinalURL = %q, want final redirect URL", result.FingerprintTargets[0].FinalURL)
+	}
+}
+
+func TestProbeAssetDomainLivenessRecordsRequestStats(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	state := &scanruntime.State{}
+	if _, err := probeAssetDomainLiveness(context.Background(), dto.CreateScanTaskRequest{
+		ProbeConcurrency: 1,
+		Timeout:          3,
+	}, []string{server.URL}, nil, state); err != nil {
+		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
+	}
+
+	progress := state.SnapshotProgress()
+	if progress.TotalRequests != 0 || progress.Requests != 1 {
+		t.Fatalf("progress = %+v, want one pre-scan request counted without publishing total", progress)
 	}
 }
 
@@ -201,22 +235,227 @@ func TestAssetDomainProbeFinishedMessage(t *testing.T) {
 	}
 }
 
-func TestAssetDomainComponentSummary(t *testing.T) {
+func TestAssetDomainComponentCountSummary(t *testing.T) {
 	t.Parallel()
 
-	got := assetDomainComponentSummary([]repository.AssetDomainServiceAssetObservation{
+	got := assetDomainComponentCountSummary([]repository.AssetDomainServiceAssetObservation{
 		{Domain: "app.example.com:443", AppName: "nginx"},
 		{Domain: "api.example.com:443", AppName: "tomcat"},
 		{Domain: "app.example.com:443", AppName: "nginx"},
 	})
-	want := "识别到 2 个组件：nginx、tomcat"
+	want := "共识别到 2 个组件"
 	if got != want {
-		t.Fatalf("assetDomainComponentSummary() = %q, want %q", got, want)
+		t.Fatalf("assetDomainComponentCountSummary() = %q, want %q", got, want)
 	}
 
-	empty := assetDomainComponentSummary(nil)
-	if empty != "识别到 0 个组件" {
-		t.Fatalf("assetDomainComponentSummary(nil) = %q, want zero summary", empty)
+	empty := assetDomainComponentCountSummary(nil)
+	if empty != "共识别到 0 个组件" {
+		t.Fatalf("assetDomainComponentCountSummary(nil) = %q, want zero summary", empty)
+	}
+}
+
+func TestRecordAssetDomainFingerprintObservationsCountsUniqueTechResults(t *testing.T) {
+	t.Parallel()
+
+	state := &scanruntime.State{}
+	recordAssetDomainFingerprintObservations(state, []repository.AssetDomainServiceAssetObservation{
+		{Domain: "example.com:443", AppName: "nginx"},
+		{Domain: "example.com:443", AppName: "Nginx"},
+		{Domain: "example.com:443", AppName: "php"},
+	})
+
+	summary := state.SnapshotResultSummary()
+	if summary.TechCount != 2 {
+		t.Fatalf("TechCount = %d, want 2 unique fingerprint observations", summary.TechCount)
+	}
+	if summary.InfoCount != 0 {
+		t.Fatalf("InfoCount = %d, want fingerprint observations excluded from info count", summary.InfoCount)
+	}
+}
+
+func TestAssetDomainServiceAssetQueueStreamsFingerprintObservations(t *testing.T) {
+	t.Parallel()
+
+	state := &scanruntime.State{}
+	svc := &scanTaskService{
+		assetDomainRepository: &assetDomainRepositoryStub{},
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"nginx-detect": {
+					ID:       "nginx-detect",
+					Name:     "Nginx Detect",
+					Tags:     []string{"tech", "nginx", "http"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+	queue := newAssetDomainServiceAssetQueue(svc, state)
+	queue.Enqueue(assetDomainServiceAssetResultEvent{payload: map[string]interface{}{
+		"template-id":       "nginx-detect",
+		"matched-at":        "https://app.example.com:8443/login",
+		"host":              "app.example.com",
+		"port":              "8443",
+		"matcher-name":      "nginx",
+		"extracted-results": []interface{}{"nginx:1.24.0"},
+		"info": map[string]interface{}{
+			"name": "Nginx Detect",
+			"tags": []interface{}{"tech", "nginx", "http"},
+		},
+	}})
+	queue.CloseAndWait()
+
+	summary := state.SnapshotResultSummary()
+	if summary.TechCount != 1 {
+		t.Fatalf("TechCount = %d, want one streamed active fingerprint result", summary.TechCount)
+	}
+	events := state.FrontendEventsBefore(0, 10).Events
+	if len(events) == 0 || !strings.Contains(events[len(events)-1].Message, "nginx") {
+		t.Fatalf("events = %+v, want streamed nginx fingerprint event", events)
+	}
+}
+
+func TestAssetDomainFingerprintResultUsesOriginalTargetDomainAfterRedirect(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"openresty-detect": {
+					ID:       "openresty-detect",
+					Name:     "OpenResty Detect",
+					Tags:     []string{"tech", "openresty", "http"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+	resolver := newAssetDomainFingerprintTargetResolver([]assetDomainFingerprintTarget{{
+		Input:    "https://anquan.duxiaoman-int.com",
+		Domain:   "anquan.duxiaoman-int.com:443",
+		FinalURL: "https://sso.duxiaoman-int.com/login",
+	}})
+
+	observations, err := svc.buildAssetDomainServiceAssetsFromPayloadWithResolver(context.Background(), map[string]interface{}{
+		"template-id":  "openresty-detect",
+		"matched-at":   "https://sso.duxiaoman-int.com/login",
+		"host":         "sso.duxiaoman-int.com",
+		"port":         "443",
+		"matcher-name": "openresty",
+		"info": map[string]interface{}{
+			"name": "OpenResty Detect",
+			"tags": []interface{}{"tech", "openresty", "http"},
+		},
+	}, resolver)
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayloadWithResolver() error = %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations = %+v, want one component", observations)
+	}
+	if observations[0].Domain != "anquan.duxiaoman-int.com:443" {
+		t.Fatalf("observations[0].Domain = %q, want original target endpoint", observations[0].Domain)
+	}
+}
+
+func TestAssetDomainFingerprintResultPrefersOriginalInputForSharedRedirect(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"openresty-detect": {
+					ID:       "openresty-detect",
+					Name:     "OpenResty Detect",
+					Tags:     []string{"tech", "openresty", "http"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+	resolver := newAssetDomainFingerprintTargetResolver([]assetDomainFingerprintTarget{
+		{
+			Input:    "https://anquan.duxiaoman-int.com",
+			Domain:   "anquan.duxiaoman-int.com:443",
+			FinalURL: "https://sso.duxiaoman-int.com/login",
+		},
+		{
+			Input:    "https://baoxian.duxiaoman-int.com",
+			Domain:   "baoxian.duxiaoman-int.com:443",
+			FinalURL: "https://sso.duxiaoman-int.com/login",
+		},
+	})
+
+	observations, err := svc.buildAssetDomainServiceAssetsFromPayloadWithResolver(context.Background(), map[string]interface{}{
+		"template-id":  "openresty-detect",
+		"input":        "https://baoxian.duxiaoman-int.com",
+		"matched-at":   "https://sso.duxiaoman-int.com/login",
+		"host":         "sso.duxiaoman-int.com",
+		"port":         "443",
+		"matcher-name": "openresty",
+		"info": map[string]interface{}{
+			"name": "OpenResty Detect",
+			"tags": []interface{}{"tech", "openresty", "http"},
+		},
+	}, resolver)
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayloadWithResolver() error = %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations = %+v, want one component", observations)
+	}
+	if observations[0].Domain != "baoxian.duxiaoman-int.com:443" {
+		t.Fatalf("observations[0].Domain = %q, want original input endpoint", observations[0].Domain)
+	}
+}
+
+func TestStreamAssetDomainFingerprintTemplateResultsRecordsStats(t *testing.T) {
+	t.Parallel()
+
+	state := &scanruntime.State{}
+	statsTracker := &assetDomainFingerprintTemplateStatsTracker{}
+	streamAssetDomainFingerprintTemplateResults(strings.NewReader(strings.Join([]string{
+		`{"requests":"3","actual_requests":"2","total":"5","total_known":"1"}`,
+		`{"requests":"4","actual_requests":"3","total":"5","total_known":"1"}`,
+	}, "\n")), nil, state, statsTracker)
+
+	progress := state.SnapshotProgress()
+	if progress.TotalRequests != 5 || progress.Requests != 3 {
+		t.Fatalf("progress = %+v, want active fingerprint stats merged", progress)
+	}
+}
+
+type assetDomainRepositoryStub struct{}
+
+func (s *assetDomainRepositoryStub) List(context.Context, dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error) {
+	return &dto.PageResult[entity.AssetDomain]{}, nil
+}
+
+func (s *assetDomainRepositoryStub) ListNetworkItems(context.Context) ([]repository.AssetDomainNetworkItem, error) {
+	return nil, nil
+}
+
+func (s *assetDomainRepositoryStub) SyncObservations(context.Context, []repository.AssetDomainObservation, []string, time.Time) error {
+	return nil
+}
+
+func (s *assetDomainRepositoryStub) SyncServiceAssets(context.Context, []repository.AssetDomainServiceAssetObservation, []string, time.Time) error {
+	return nil
+}
+
+func TestStreamAssetDomainFingerprintTemplateStatsRecordsStderrStats(t *testing.T) {
+	t.Parallel()
+
+	state := &scanruntime.State{}
+	statsTracker := &assetDomainFingerprintTemplateStatsTracker{}
+	streamAssetDomainFingerprintTemplateStats(strings.NewReader(strings.Join([]string{
+		`[INF] loading templates`,
+		`{"requests":"10","actual_requests":"8","total":"1200","total_known":"1"}`,
+	}, "\n")), state, statsTracker)
+
+	progress := state.SnapshotProgress()
+	if progress.TotalRequests != 1200 || progress.Requests != 8 {
+		t.Fatalf("progress = %+v, want stderr active fingerprint stats merged", progress)
 	}
 }
 

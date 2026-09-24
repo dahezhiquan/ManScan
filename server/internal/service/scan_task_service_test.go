@@ -116,6 +116,26 @@ func TestBuildScanCLIArgsIncludesTemplateCapabilities(t *testing.T) {
 	}
 }
 
+func TestBuildScanCLIArgsExcludesFingerprintTagsWhenPreScanFingerprintRuns(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	args := buildScanCLIArgs(
+		dto.CreateScanTaskRequest{
+			Tags: []string{"spring", "tech"},
+		},
+		filepath.Join(rootDir, "runtime"),
+		filepath.Join(rootDir, "runtime", "targets.txt"),
+		filepath.Join(rootDir, "runtime", "resume.cfg"),
+		filepath.Join(rootDir, "responses"),
+		true,
+	)
+
+	if got := flagValue(args, "-etags"); got != "tech,detect,favicon" {
+		t.Fatalf("-etags = %q, want fingerprint tags excluded (args=%v)", got, args)
+	}
+}
+
 func TestBuildAssetDomainFingerprintTemplateCLIArgsUsesOnlyFingerprintTags(t *testing.T) {
 	t.Parallel()
 
@@ -138,8 +158,38 @@ func TestBuildAssetDomainFingerprintTemplateCLIArgsUsesOnlyFingerprintTags(t *te
 	if hasArg(args, "-id") {
 		t.Fatalf("args unexpectedly inherited vulnerability template id filter: %v", args)
 	}
+	if !hasArg(args, "-stats-json") || !hasArg(args, "-stats") {
+		t.Fatalf("args missing stats flags for request accounting: %v", args)
+	}
 	if !hasArg(args, "-fr") || flagValue(args, "-H") != "X-Test: yes" {
 		t.Fatalf("args = %v, want scan request transport options", args)
+	}
+}
+
+func TestCountSelectedVulnerabilityTemplatesExcludesFingerprintTemplates(t *testing.T) {
+	t.Parallel()
+
+	items := []dto.TemplateListItem{
+		{ID: "cve-1", Severity: "high", Tags: []string{"spring"}, Protocols: []string{"http"}},
+		{ID: "tech-1", Severity: "info", Tags: []string{"tech"}, Protocols: []string{"http"}},
+		{ID: "dns-1", Severity: "low", Tags: []string{"dns"}, Protocols: []string{"dns"}},
+		{ID: "cve-2", Severity: "medium", Tags: []string{"spring"}, Protocols: []string{"http"}},
+	}
+
+	got := countSelectedVulnerabilityTemplates(items, dto.CreateScanTaskRequest{
+		Tags:       []string{"spring", "tech"},
+		Protocols:  []string{"http"},
+		Severities: []string{"high", "medium", "info"},
+	}, true)
+	if got != 2 {
+		t.Fatalf("countSelectedVulnerabilityTemplates() = %d, want 2", got)
+	}
+
+	got = countSelectedVulnerabilityTemplates(items, dto.CreateScanTaskRequest{
+		IncludeIDs: []string{"cve-*"},
+	}, true)
+	if got != 2 {
+		t.Fatalf("countSelectedVulnerabilityTemplates() wildcard = %d, want 2", got)
 	}
 }
 

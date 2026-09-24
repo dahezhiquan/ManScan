@@ -1,3 +1,15 @@
+## 2026-09-24 15:23 主动指纹结果携带原始输入上下文
+
+- 变动目录：`pkg/output/`、`pkg/protocols/http/`
+- 变动文件：`pkg/output/output.go`、`pkg/protocols/http/operators.go`、`pkg/protocols/http/operators_test.go`
+- 具体修改内容：
+  - 在 `pkg/output/output.go` 的 `ResultEvent` 中新增 `input` JSON 字段，用于输出产生当前命中结果的原始扫描输入。
+  - 在 `pkg/protocols/http/operators.go` 中将 HTTP 协议执行时的 `MetaInput.Input` 写入内部事件，并在 HTTP 结果事件生成时透传到 `ResultEvent.Input`。
+  - 在 `pkg/protocols/http/operators_test.go` 中补充断言，验证 HTTP DSL 事件和最终结果事件都会保留原始输入目标。
+- 修改目的或影响：
+  - 主动指纹扫描结果可以同时保留原始输入目标与最终命中地址，服务端组件入库无需仅依赖 `matched-at` 反推原始资产。
+  - 多个原始目标跳转到同一个公共登录页或网关时，组件结果可优先按每条结果的 `input` 字段关联回对应原始目标，降低跨目标错误归属风险。
+
 ## 2026-09-23 19:10 域名组件自动更新复用预探测指纹
 
 - 变动目录：`pkg/protocols/common/automaticscan/`

@@ -185,6 +185,8 @@ type ResultEvent struct {
 	Scheme string `json:"scheme,omitempty"`
 	// URL is the Base URL of the host input on which match was found (if applicable).
 	URL string `json:"url,omitempty"`
+	// Input is the original input target that produced the result.
+	Input string `json:"input,omitempty"`
 	// Path is the path input on which match was found.
 	Path string `json:"path,omitempty"`
 	// Matched contains the matched input in its transformed form.

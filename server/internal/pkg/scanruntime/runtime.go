@@ -161,20 +161,21 @@ type State struct {
 	LogFile          *os.File
 	MatchLogFile     *os.File
 
-	mu                  sync.RWMutex
-	events              []TaskLogEvent
-	nextSeq             int64
-	progress            TaskProgressSnapshot
-	resultSummary       ResultSummary
-	matchedTemplate     map[string]struct{}
-	matchedResults      map[string]struct{}
-	lastProgressLog     progressLogState
-	lastStats           TaskProgressSnapshot
-	completedRequests   int64
-	lastLogicalRequests int64
-	mirroredErrors      int64
-	httpStatsBase       map[string]int
-	subscribers         map[chan TaskLogEvent]struct{}
+	mu                   sync.RWMutex
+	events               []TaskLogEvent
+	nextSeq              int64
+	progress             TaskProgressSnapshot
+	resultSummary        ResultSummary
+	matchedTemplate      map[string]struct{}
+	matchedResults       map[string]struct{}
+	lastProgressLog      progressLogState
+	lastStats            TaskProgressSnapshot
+	completedRequests    int64
+	lastLogicalRequests  int64
+	externalRequestTotal int64
+	mirroredErrors       int64
+	httpStatsBase        map[string]int
+	subscribers          map[chan TaskLogEvent]struct{}
 }
 
 func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir string) (*State, error) {
@@ -333,6 +334,58 @@ func (s *State) SnapshotProgress() TaskProgressSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.progress
+}
+
+// SetTemplateCount publishes the current loaded vulnerability template count.
+func (s *State) SetTemplateCount(count int64) {
+	if s == nil || count < 0 {
+		return
+	}
+	s.UpdateProgress(func(snapshot *TaskProgressSnapshot) {
+		snapshot.Templates = count
+		snapshot.LastUpdatedAt = time.Now()
+	})
+}
+
+// AddRequestStats merges request counters produced outside the main scanner
+// stats stream, such as server-side pre-scan probes.
+func (s *State) AddRequestStats(totalDelta, requestDelta, completedDelta int64, message string) {
+	if s == nil {
+		return
+	}
+	if totalDelta < 0 {
+		totalDelta = 0
+	}
+	if requestDelta < 0 {
+		requestDelta = 0
+	}
+	if completedDelta < 0 {
+		completedDelta = 0
+	}
+	if totalDelta == 0 && requestDelta == 0 && completedDelta == 0 {
+		return
+	}
+	if strings.TrimSpace(message) == "" {
+		message = "扫描进度更新"
+	}
+
+	s.UpdateProgress(func(snapshot *TaskProgressSnapshot) {
+		s.externalRequestTotal += totalDelta
+		s.completedRequests += completedDelta
+		snapshot.TotalRequests += totalDelta
+		snapshot.Requests += requestDelta
+		if snapshot.TotalRequests > 0 {
+			snapshot.Percent = NormalizeProgressPercent(
+				progressPercentFromCounts(s.completedRequests, snapshot.TotalRequests, snapshot.Percent),
+				s.completedRequests,
+				snapshot.TotalRequests,
+			)
+			snapshot.ProgressStatus = "running"
+		}
+		snapshot.LastMessage = message
+		snapshot.LastUpdatedAt = time.Now()
+		snapshot.FinishedStatus = "running"
+	})
 }
 
 func (s *State) RecordResult(templateID, templateName, severity string, tags []string, keys ...string) bool {
@@ -1219,8 +1272,9 @@ func HandleStatsJSONLine(line string, state *State) bool {
 		}
 		snapshot.Requests += requestDelta
 		if totalKnown {
-			if total > snapshot.TotalRequests {
-				snapshot.TotalRequests = total
+			totalWithExternal := state.externalRequestTotal + total
+			if totalWithExternal > snapshot.TotalRequests {
+				snapshot.TotalRequests = totalWithExternal
 			}
 			snapshot.ProgressStatus = "running"
 			snapshot.LastMessage = "扫描进度更新"
@@ -1231,7 +1285,7 @@ func HandleStatsJSONLine(line string, state *State) bool {
 		if hosts > snapshot.Hosts {
 			snapshot.Hosts = hosts
 		}
-		if templates > snapshot.Templates {
+		if templates > 0 {
 			snapshot.Templates = templates
 		}
 		snapshot.Errors = errorsCount

@@ -845,6 +845,41 @@ func TestHandleStatsJSONLineAccumulatesResumeSessionRequests(t *testing.T) {
 	}
 }
 
+func TestHandleStatsJSONLineKeepsExternalRequestStats(t *testing.T) {
+	t.Parallel()
+
+	state := &State{}
+	state.AddRequestStats(5, 3, 3, "扫描前探测")
+
+	if !HandleStatsJSONLine(`{"requests":"10","actual_requests":"8","total":"100","total_known":"1","percent":"10"}`, state) {
+		t.Fatalf("HandleStatsJSONLine() = false, want true")
+	}
+
+	progress := state.SnapshotProgress()
+	if progress.TotalRequests != 105 {
+		t.Fatalf("TotalRequests = %d, want external + scanner total 105", progress.TotalRequests)
+	}
+	if progress.Requests != 11 {
+		t.Fatalf("Requests = %d, want external + scanner actual requests 11", progress.Requests)
+	}
+}
+
+func TestHandleStatsJSONLineOverridesInitialTemplateCount(t *testing.T) {
+	t.Parallel()
+
+	state := &State{}
+	state.SetTemplateCount(10)
+
+	if !HandleStatsJSONLine(`{"templates":"7","requests":"1","actual_requests":"1","total":"20","total_known":"1"}`, state) {
+		t.Fatalf("HandleStatsJSONLine() = false, want true")
+	}
+
+	progress := state.SnapshotProgress()
+	if progress.Templates != 7 {
+		t.Fatalf("Templates = %d, want scanner stats to override initial count 7", progress.Templates)
+	}
+}
+
 func TestHandleStatsJSONLineDoesNotInferTotalBeforeItIsKnown(t *testing.T) {
 	t.Parallel()
 

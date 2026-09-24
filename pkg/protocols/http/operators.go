@@ -121,6 +121,7 @@ func (request *Request) responseToDSLMap(resp *http.Response, host, matched, raw
 		request.setHashOrDefault(data, k, strings.Join(v, " "))
 	}
 	data["host"] = host
+	data["input"] = host
 	data["type"] = request.Type().String()
 	data["matched"] = matched
 	request.setHashOrDefault(data, "request", rawReq)
@@ -194,6 +195,7 @@ func (request *Request) MakeResultEventItem(wrapped *output.InternalWrappedEvent
 		Port:             fields.Port,
 		Scheme:           fields.Scheme,
 		URL:              fields.URL,
+		Input:            types.ToString(wrapped.InternalEvent["input"]),
 		Path:             fields.Path,
 		Matched:          types.ToString(wrapped.InternalEvent["matched"]),
 		Metadata:         wrapped.OperatorsResult.PayloadValues,
