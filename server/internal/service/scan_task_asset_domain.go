@@ -909,7 +909,7 @@ func assetDomainRegion(domain string, networkRegions []assetDomainNetworkRegion)
 				return region.region
 			}
 		}
-		return "外网"
+		return "未知"
 	}
 	if assetDomainHasInternalSuffix(host) {
 		return "内网"

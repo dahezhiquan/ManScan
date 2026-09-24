@@ -13,7 +13,7 @@ import (
 )
 
 type AssetDomainRepository interface {
-	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error)
+	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[AssetDomainListRecord], error)
 	ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error)
 	SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error
 	SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error
@@ -41,6 +41,16 @@ type AssetDomainServiceAssetObservation struct {
 	Domain     string
 	AppName    string
 	AppVersion string
+}
+
+type AssetDomainListRecord struct {
+	entity.AssetDomain `gorm:"embedded"`
+	VulnerabilityCount int `gorm:"column:vulnerability_count"`
+	CriticalCount      int `gorm:"column:critical_count"`
+	HighCount          int `gorm:"column:high_count"`
+	MediumCount        int `gorm:"column:medium_count"`
+	LowCount           int `gorm:"column:low_count"`
+	ComponentCount     int `gorm:"column:component_count"`
 }
 
 func NewAssetDomainRepository(db *gorm.DB) AssetDomainRepository {
@@ -104,7 +114,7 @@ func (r *assetDomainRepository) SyncServiceAssets(ctx context.Context, observati
 	})
 }
 
-func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error) {
+func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[AssetDomainListRecord], error) {
 	page := query.Page
 	if page <= 0 {
 		page = 1
@@ -120,9 +130,28 @@ func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDom
 		return nil, err
 	}
 
-	items := make([]entity.AssetDomain, 0)
+	items := make([]AssetDomainListRecord, 0)
 	if err := r.applyListFilters(r.db.WithContext(ctx).Table("manscan_asset_domain AS a"), query).
-		Select("a.*").
+		Joins(`LEFT JOIN (
+			SELECT
+				asset_endpoint,
+				COUNT(*) AS vulnerability_count,
+				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS critical_count,
+				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'high' THEN 1 ELSE 0 END) AS high_count,
+				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'medium' THEN 1 ELSE 0 END) AS medium_count,
+				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'low' THEN 1 ELSE 0 END) AS low_count
+			FROM manscan_vulnerabilities
+			WHERE asset_endpoint IS NOT NULL AND asset_endpoint <> ''
+			GROUP BY asset_endpoint
+		) AS v ON v.asset_endpoint = a.domain`).
+		Joins("LEFT JOIN (SELECT domain, COUNT(*) AS component_count FROM manscan_asset_domain_service_assets WHERE domain <> '' AND is_alive = ? GROUP BY domain) AS c ON c.domain = a.domain", true).
+		Select(`a.*,
+			COALESCE(v.vulnerability_count, 0) AS vulnerability_count,
+			COALESCE(v.critical_count, 0) AS critical_count,
+			COALESCE(v.high_count, 0) AS high_count,
+			COALESCE(v.medium_count, 0) AS medium_count,
+			COALESCE(v.low_count, 0) AS low_count,
+			COALESCE(c.component_count, 0) AS component_count`).
 		Order("a.last_alive_at DESC").
 		Order("a.id DESC").
 		Offset((page - 1) * pageSize).
@@ -136,7 +165,7 @@ func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDom
 		totalPages = int((total + int64(pageSize) - 1) / int64(pageSize))
 	}
 
-	return &dto.PageResult[entity.AssetDomain]{
+	return &dto.PageResult[AssetDomainListRecord]{
 		Page:       page,
 		PageSize:   pageSize,
 		Total:      int(total),

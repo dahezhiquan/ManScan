@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"ManScan/server/internal/model/dto"
-	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/pkg/scanruntime"
 	"ManScan/server/internal/repository"
 )
@@ -200,7 +199,7 @@ func TestAssetDomainRegion(t *testing.T) {
 		{
 			name:   "ip outside network",
 			domain: "192.0.2.10:443",
-			want:   "外网",
+			want:   "未知",
 		},
 		{
 			name:   "domain with internal label suffix",
@@ -409,6 +408,65 @@ func TestAssetDomainFingerprintResultPrefersOriginalInputForSharedRedirect(t *te
 	}
 }
 
+func TestAssetDomainFingerprintVersionIgnoresProductNameFallback(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"apache-detect": {
+					ID:       "apache-detect",
+					Name:     "Apache Detect",
+					Tags:     []string{"tech", "apache"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+
+	observations, err := svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), map[string]interface{}{
+		"template-id":       "apache-detect",
+		"matched-at":        "https://www.dxmpay.com/",
+		"host":              "www.dxmpay.com",
+		"port":              "443",
+		"extracted-results": []interface{}{"Apache"},
+		"info": map[string]interface{}{
+			"name": "Apache Detect",
+			"tags": []interface{}{"tech", "apache"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayload() error = %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations = %+v, want one apache component", observations)
+	}
+	if observations[0].AppName != "apache" || observations[0].AppVersion != "" {
+		t.Fatalf("observation = %+v, want apache with empty version", observations[0])
+	}
+
+	observations, err = svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), map[string]interface{}{
+		"template-id":       "apache-detect",
+		"matched-at":        "https://www.dxmpay.com/",
+		"host":              "www.dxmpay.com",
+		"port":              "443",
+		"extracted-results": []interface{}{"Apache/2.4.57"},
+		"info": map[string]interface{}{
+			"name": "Apache Detect",
+			"tags": []interface{}{"tech", "apache"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayload() with version error = %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations with version = %+v, want one apache component", observations)
+	}
+	if observations[0].AppName != "apache" || observations[0].AppVersion != "2.4.57" {
+		t.Fatalf("observation with version = %+v, want apache 2.4.57", observations[0])
+	}
+}
+
 func TestStreamAssetDomainFingerprintTemplateResultsRecordsStats(t *testing.T) {
 	t.Parallel()
 
@@ -427,8 +485,8 @@ func TestStreamAssetDomainFingerprintTemplateResultsRecordsStats(t *testing.T) {
 
 type assetDomainRepositoryStub struct{}
 
-func (s *assetDomainRepositoryStub) List(context.Context, dto.ListAssetDomainsQuery) (*dto.PageResult[entity.AssetDomain], error) {
-	return &dto.PageResult[entity.AssetDomain]{}, nil
+func (s *assetDomainRepositoryStub) List(context.Context, dto.ListAssetDomainsQuery) (*dto.PageResult[repository.AssetDomainListRecord], error) {
+	return &dto.PageResult[repository.AssetDomainListRecord]{}, nil
 }
 
 func (s *assetDomainRepositoryStub) ListNetworkItems(context.Context) ([]repository.AssetDomainNetworkItem, error) {

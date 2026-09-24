@@ -25,7 +25,7 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 		t.Fatalf("gorm.Open() error = %v", err)
 	}
 
-	if err := db.AutoMigrate(&entity.AssetDomain{}); err != nil {
+	if err := db.AutoMigrate(&entity.AssetDomain{}, &entity.Vulnerability{}, &entity.AssetDomainServiceAsset{}); err != nil {
 		t.Fatalf("AutoMigrate() error = %v", err)
 	}
 
@@ -50,6 +50,80 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 			t.Fatalf("Create() error = %v", err)
 		}
 	}
+	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
+	endpoint := "app.example.com:443"
+	if err := db.Create(&[]entity.Vulnerability{
+		{
+			TemplateID:         "tpl-critical",
+			VulnerabilityName:  "Critical Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "unreviewed",
+			AssetEndpoint:      &endpoint,
+			Severity:           "critical",
+			VulnFingerprint:    "fingerprint-critical",
+		},
+		{
+			TemplateID:         "tpl-high",
+			VulnerabilityName:  "High Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "unreviewed",
+			AssetEndpoint:      &endpoint,
+			Severity:           "high",
+			VulnFingerprint:    "fingerprint-high",
+		},
+		{
+			TemplateID:         "tpl-medium",
+			VulnerabilityName:  "Medium Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "unreviewed",
+			AssetEndpoint:      &endpoint,
+			Severity:           "medium",
+			VulnFingerprint:    "fingerprint-medium",
+		},
+		{
+			TemplateID:         "tpl-low",
+			VulnerabilityName:  "Low Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "unreviewed",
+			AssetEndpoint:      &endpoint,
+			Severity:           "low",
+			VulnFingerprint:    "fingerprint-low",
+		},
+	}).Error; err != nil {
+		t.Fatalf("Create vulnerabilities error = %v", err)
+	}
+	if err := db.Create(&[]entity.AssetDomainServiceAsset{
+		{
+			Domain:       endpoint,
+			AppName:      "nginx",
+			AppVersion:   "",
+			FirstFoundAt: now,
+			LastFoundAt:  now,
+			IsAlive:      true,
+		},
+		{
+			Domain:       endpoint,
+			AppName:      "apache",
+			AppVersion:   "",
+			FirstFoundAt: now,
+			LastFoundAt:  now,
+			IsAlive:      false,
+		},
+	}).Error; err != nil {
+		t.Fatalf("Create service assets error = %v", err)
+	}
 
 	repo := NewAssetDomainRepository(db)
 	page, err := repo.List(context.Background(), dto.ListAssetDomainsQuery{
@@ -69,6 +143,17 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 
 	if got := page.Items[0]; got.Domain != "app.example.com:443" || !got.IsAlive {
 		t.Fatalf("item = %+v, want filtered app domain with alive state", got)
+	}
+	if got := page.Items[0]; got.VulnerabilityCount != 4 || got.CriticalCount != 1 || got.HighCount != 1 || got.MediumCount != 1 || got.LowCount != 1 || got.ComponentCount != 1 {
+		t.Fatalf(
+			"counts = vulnerability:%d critical:%d high:%d medium:%d low:%d component:%d, want vulnerability:4 critical:1 high:1 medium:1 low:1 component:1",
+			got.VulnerabilityCount,
+			got.CriticalCount,
+			got.HighCount,
+			got.MediumCount,
+			got.LowCount,
+			got.ComponentCount,
+		)
 	}
 }
 

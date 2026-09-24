@@ -1491,7 +1491,13 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
         "http_status_code": 200,
         "request": "GET / HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
         "response": "HTTP/1.1 200 OK\r\n\r\n<html>Example App</html>",
-        "is_alive": true
+        "is_alive": true,
+        "vulnerability_count": 2,
+        "critical_count": 1,
+        "high_count": 1,
+        "medium_count": 0,
+        "low_count": 0,
+        "component_count": 3
       }
     ]
   }
@@ -1500,6 +1506,9 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 
 - 说明：
   - `request`、`response` 分别表示该域名资产最近一次探测保存的请求与响应原文；没有记录时返回空字符串。
+  - `vulnerability_count` 表示漏洞表中 `asset_endpoint` 等于当前域名资产 `domain` 的记录数量。
+  - `critical_count`、`high_count`、`medium_count`、`low_count` 表示上述关联漏洞中各严重等级的数量，按漏洞表 `severity` 字段统计。
+  - `component_count` 表示域名组件表中 `domain` 等于当前域名资产 `domain` 且 `is_alive = true` 的组件数量。
   - 列表默认按最近存活时间和 ID 倒序排序。
   - 当前后端表结构没有 `organization`、`scan_task`、`business_system` 字段，因此这些前端筛选项不会作为服务端查询条件。
 

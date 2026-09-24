@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"ManScan/server/internal/model/dto"
-	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/repository"
 )
 
@@ -40,26 +39,32 @@ func (s *assetDomainService) List(ctx context.Context, query dto.ListAssetDomain
 	}, nil
 }
 
-func toAssetDomainListItem(item entity.AssetDomain) dto.AssetDomainListItem {
+func toAssetDomainListItem(item repository.AssetDomainListRecord) dto.AssetDomainListItem {
 	return dto.AssetDomainListItem{
-		ID:             item.ID,
-		Domain:         item.Domain,
-		AssetAddress:   item.Domain,
-		Owner:          derefString(item.Owner),
-		Title:          derefString(item.Title),
-		FirstAliveAt:   item.FirstAliveAt,
-		LastAliveAt:    item.LastAliveAt,
-		Region:         derefString(item.Region),
-		HasForm:        item.HasForm,
-		HasUpload:      item.HasUpload,
-		HasAdmin:       item.HasAdmin,
-		HasUCLogin:     item.HasUCLogin,
-		HasBaiduLogin:  item.HasBaiduLogin,
-		ScreenshotPath: derefString(item.ScreenshotPath),
-		ManualNote:     derefString(item.ManualNote),
-		HTTPStatusCode: item.HTTPStatusCode,
-		Request:        derefString(item.Request),
-		Response:       derefString(item.Response),
-		IsAlive:        item.IsAlive,
+		ID:                 item.ID,
+		Domain:             item.Domain,
+		AssetAddress:       item.Domain,
+		Owner:              derefString(item.Owner),
+		Title:              derefString(item.Title),
+		FirstAliveAt:       item.FirstAliveAt,
+		LastAliveAt:        item.LastAliveAt,
+		Region:             derefString(item.Region),
+		HasForm:            item.HasForm,
+		HasUpload:          item.HasUpload,
+		HasAdmin:           item.HasAdmin,
+		HasUCLogin:         item.HasUCLogin,
+		HasBaiduLogin:      item.HasBaiduLogin,
+		ScreenshotPath:     derefString(item.ScreenshotPath),
+		ManualNote:         derefString(item.ManualNote),
+		HTTPStatusCode:     item.HTTPStatusCode,
+		Request:            derefString(item.Request),
+		Response:           derefString(item.Response),
+		IsAlive:            item.IsAlive,
+		VulnerabilityCount: item.VulnerabilityCount,
+		CriticalCount:      item.CriticalCount,
+		HighCount:          item.HighCount,
+		MediumCount:        item.MediumCount,
+		LowCount:           item.LowCount,
+		ComponentCount:     item.ComponentCount,
 	}
 }

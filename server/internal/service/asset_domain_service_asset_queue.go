@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"net"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,8 @@ const (
 	assetDomainServiceAssetQueueBatchSize    = 100
 	assetDomainServiceAssetQueueFlushTimeout = time.Second
 )
+
+var assetDomainComponentVersionTokenPattern = regexp.MustCompile(`(?i)^v?\d+(?:[._-]\d+)*(?:[-+._~]?[0-9a-z]+)*$`)
 
 type assetDomainServiceAssetResultEvent struct {
 	payload map[string]interface{}
@@ -349,7 +352,7 @@ func assetDomainFingerprintExtractedVersions(payload map[string]interface{}, com
 	for _, extracted := range extractedResults {
 		appName, appVersion := splitAssetDomainComponentVersion(extracted)
 		appName = normalizeAssetDomainComponentName(appName)
-		appVersion = strings.TrimSpace(appVersion)
+		appVersion = normalizeAssetDomainComponentVersion(appVersion)
 		if appName != "" && appVersion != "" {
 			if _, ok := componentSet[appName]; ok {
 				versions[appName] = appVersion
@@ -357,13 +360,32 @@ func assetDomainFingerprintExtractedVersions(payload map[string]interface{}, com
 			continue
 		}
 		if len(componentNames) == 1 {
-			value := strings.TrimSpace(extracted)
-			if value != "" {
-				versions[componentNames[0]] = value
+			version := normalizeAssetDomainComponentVersion(extracted)
+			if version != "" {
+				versions[componentNames[0]] = version
 			}
 		}
 	}
 	return versions
+}
+
+func normalizeAssetDomainComponentVersion(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), `"'`)
+	if value == "" {
+		return ""
+	}
+	if assetDomainComponentVersionTokenPattern.MatchString(value) {
+		return value
+	}
+	for _, separator := range []string{"/", " "} {
+		if index := strings.LastIndex(value, separator); index >= 0 && index+1 < len(value) {
+			candidate := strings.Trim(strings.TrimSpace(value[index+1:]), `"'`)
+			if assetDomainComponentVersionTokenPattern.MatchString(candidate) {
+				return candidate
+			}
+		}
+	}
+	return ""
 }
 
 func uniqueComponentNames(values []string) []string {
