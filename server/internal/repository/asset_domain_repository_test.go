@@ -30,7 +30,9 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 	}
 
 	title := "Example App"
+	highTitle := "High Only App"
 	region := "internal"
+	highRegion := "external"
 	items := []entity.AssetDomain{
 		{
 			ID:      1,
@@ -44,6 +46,13 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 			Domain:  "static.example.com:443",
 			IsAlive: false,
 		},
+		{
+			ID:      3,
+			Domain:  "high.example.com:443",
+			Title:   &highTitle,
+			Region:  &highRegion,
+			IsAlive: true,
+		},
 	}
 	for i := range items {
 		if err := db.Create(&items[i]).Error; err != nil {
@@ -52,6 +61,7 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 	}
 	now := time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC)
 	endpoint := "app.example.com:443"
+	highEndpoint := "high.example.com:443"
 	if err := db.Create(&[]entity.Vulnerability{
 		{
 			TemplateID:         "tpl-critical",
@@ -101,6 +111,18 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 			Severity:           "low",
 			VulnFingerprint:    "fingerprint-low",
 		},
+		{
+			TemplateID:         "tpl-high-only",
+			VulnerabilityName:  "High Only Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "unreviewed",
+			AssetEndpoint:      &highEndpoint,
+			Severity:           "high",
+			VulnFingerprint:    "fingerprint-high-only",
+		},
 	}).Error; err != nil {
 		t.Fatalf("Create vulnerabilities error = %v", err)
 	}
@@ -120,6 +142,14 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 			FirstFoundAt: now,
 			LastFoundAt:  now,
 			IsAlive:      false,
+		},
+		{
+			Domain:       highEndpoint,
+			AppName:      "tomcat",
+			AppVersion:   "",
+			FirstFoundAt: now,
+			LastFoundAt:  now,
+			IsAlive:      true,
 		},
 	}).Error; err != nil {
 		t.Fatalf("Create service assets error = %v", err)
@@ -154,6 +184,35 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 			got.LowCount,
 			got.ComponentCount,
 		)
+	}
+
+	page, err = repo.List(context.Background(), dto.ListAssetDomainsQuery{
+		Page:             1,
+		PageSize:         10,
+		Title:            "high only",
+		RiskLevels:       []string{"high"},
+		HasVulnerability: boolPointer(true),
+		HasComponent:     boolPointer(true),
+	})
+	if err != nil {
+		t.Fatalf("List() with title/risk/existence filters error = %v", err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].Domain != "high.example.com:443" {
+		t.Fatalf("filtered page = %+v, want high-only domain", page)
+	}
+
+	page, err = repo.List(context.Background(), dto.ListAssetDomainsQuery{
+		Page:             1,
+		PageSize:         10,
+		RiskLevels:       []string{"info"},
+		HasVulnerability: boolPointer(false),
+		HasComponent:     boolPointer(false),
+	})
+	if err != nil {
+		t.Fatalf("List() with empty risk/existence filters error = %v", err)
+	}
+	if page.Total != 1 || len(page.Items) != 1 || page.Items[0].Domain != "static.example.com:443" {
+		t.Fatalf("empty risk filtered page = %+v, want static domain", page)
 	}
 }
 

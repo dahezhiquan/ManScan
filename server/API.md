@@ -1456,8 +1456,12 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 | `page_size` | `int` | 否 | 每页数量，范围 `1-100`，默认 `10` |
 | `keyword` | `string` | 否 | 按域名或站点标题模糊搜索 |
 | `owner` | `string` | 否 | 按负责人模糊筛选 |
+| `title` | `string` | 否 | 按站点标题模糊筛选 |
 | `region` | `string` | 否 | 按区域模糊筛选 |
 | `asset_address` | `string` | 否 | 按资产地址模糊筛选，当前对应 `domain` 字段 |
+| `risk_level` | `string` / `string[]` | 否 | 按最高风险等级筛选，支持 `critical`、`high`、`medium`、`low`、`info`，支持逗号分隔和多参数 |
+| `has_vulnerability` | `bool` | 否 | 按是否存在漏洞筛选，`true` 表示 `vulnerability_count > 0`，`false` 表示 `vulnerability_count = 0` |
+| `has_component` | `bool` | 否 | 按是否存在存活组件筛选，`true` 表示 `component_count > 0`，`false` 表示 `component_count = 0` |
 | `is_alive` | `bool` | 否 | 按存活状态筛选 |
 
 - 响应格式：
@@ -1481,6 +1485,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
         "first_alive_at": "2026-09-22T10:00:00+08:00",
         "last_alive_at": "2026-09-22T11:00:00+08:00",
         "region": "internal",
+        "risk_level": "critical",
         "has_form": true,
         "has_upload": false,
         "has_admin": false,
@@ -1508,16 +1513,18 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
   - `request`、`response` 分别表示该域名资产最近一次探测保存的请求与响应原文；没有记录时返回空字符串。
   - `vulnerability_count` 表示漏洞表中 `asset_endpoint` 等于当前域名资产 `domain` 的记录数量。
   - `critical_count`、`high_count`、`medium_count`、`low_count` 表示上述关联漏洞中各严重等级的数量，按漏洞表 `severity` 字段统计。
+  - `risk_level` 表示当前资产的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
   - `component_count` 表示域名组件表中 `domain` 等于当前域名资产 `domain` 且 `is_alive = true` 的组件数量。
+  - `title`、`region` 为模糊筛选；`risk_level=high` 仅返回最高风险等级为高危的资产，存在严重漏洞的资产会归入 `critical`。
   - 列表默认按最近存活时间和 ID 倒序排序。
   - 当前后端表结构没有 `organization`、`scan_task`、`business_system` 字段，因此这些前端筛选项不会作为服务端查询条件。
 
 - 错误码说明：
-  - `40001`：分页参数非法，或 `is_alive` 不是布尔值
+  - `40001`：分页参数非法，或 `is_alive`、`has_vulnerability`、`has_component` 不是布尔值
   - `50001`：获取域名资产清单失败
 
 - 使用示例：
 
 ```bash
-curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&is_alive=true"
+curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&title=Portal&region=internal&risk_level=high&has_vulnerability=true&has_component=true"
 ```

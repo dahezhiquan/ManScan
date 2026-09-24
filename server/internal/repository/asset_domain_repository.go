@@ -124,27 +124,14 @@ func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDom
 		pageSize = 10
 	}
 
-	baseQuery := r.applyListFilters(r.db.WithContext(ctx).Table("manscan_asset_domain AS a"), query)
+	baseQuery := r.applyListFilters(r.withAssetDomainListStats(r.db.WithContext(ctx).Table("manscan_asset_domain AS a")), query)
 	var total int64
 	if err := baseQuery.Count(&total).Error; err != nil {
 		return nil, err
 	}
 
 	items := make([]AssetDomainListRecord, 0)
-	if err := r.applyListFilters(r.db.WithContext(ctx).Table("manscan_asset_domain AS a"), query).
-		Joins(`LEFT JOIN (
-			SELECT
-				asset_endpoint,
-				COUNT(*) AS vulnerability_count,
-				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS critical_count,
-				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'high' THEN 1 ELSE 0 END) AS high_count,
-				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'medium' THEN 1 ELSE 0 END) AS medium_count,
-				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'low' THEN 1 ELSE 0 END) AS low_count
-			FROM manscan_vulnerabilities
-			WHERE asset_endpoint IS NOT NULL AND asset_endpoint <> ''
-			GROUP BY asset_endpoint
-		) AS v ON v.asset_endpoint = a.domain`).
-		Joins("LEFT JOIN (SELECT domain, COUNT(*) AS component_count FROM manscan_asset_domain_service_assets WHERE domain <> '' AND is_alive = ? GROUP BY domain) AS c ON c.domain = a.domain", true).
+	if err := r.applyListFilters(r.withAssetDomainListStats(r.db.WithContext(ctx).Table("manscan_asset_domain AS a")), query).
 		Select(`a.*,
 			COALESCE(v.vulnerability_count, 0) AS vulnerability_count,
 			COALESCE(v.critical_count, 0) AS critical_count,
@@ -174,6 +161,23 @@ func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDom
 	}, nil
 }
 
+func (r *assetDomainRepository) withAssetDomainListStats(db *gorm.DB) *gorm.DB {
+	return db.
+		Joins(`LEFT JOIN (
+			SELECT
+				asset_endpoint,
+				COUNT(*) AS vulnerability_count,
+				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END) AS critical_count,
+				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'high' THEN 1 ELSE 0 END) AS high_count,
+				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'medium' THEN 1 ELSE 0 END) AS medium_count,
+				SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'low' THEN 1 ELSE 0 END) AS low_count
+			FROM manscan_vulnerabilities
+			WHERE asset_endpoint IS NOT NULL AND asset_endpoint <> ''
+			GROUP BY asset_endpoint
+		) AS v ON v.asset_endpoint = a.domain`).
+		Joins("LEFT JOIN (SELECT domain, COUNT(*) AS component_count FROM manscan_asset_domain_service_assets WHERE domain <> '' AND is_alive = ? GROUP BY domain) AS c ON c.domain = a.domain", true)
+}
+
 func (r *assetDomainRepository) applyListFilters(db *gorm.DB, query dto.ListAssetDomainsQuery) *gorm.DB {
 	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
 		like := "%" + escapeLikeValue(strings.ToLower(keyword)) + "%"
@@ -186,16 +190,63 @@ func (r *assetDomainRepository) applyListFilters(db *gorm.DB, query dto.ListAsse
 	if strings.TrimSpace(query.Owner) != "" {
 		db = applyLikeAnyFilter(db, "a.owner", []string{query.Owner})
 	}
+	if strings.TrimSpace(query.Title) != "" {
+		db = applyLikeAnyFilter(db, "a.title", []string{query.Title})
+	}
 	if strings.TrimSpace(query.Region) != "" {
 		db = applyLikeAnyFilter(db, "a.region", []string{query.Region})
 	}
 	if strings.TrimSpace(query.AssetAddress) != "" {
 		db = applyLikeAnyFilter(db, "a.domain", []string{query.AssetAddress})
 	}
+	if len(query.RiskLevels) > 0 {
+		db = applyAssetDomainRiskLevelFilter(db, query.RiskLevels)
+	}
+	if query.HasVulnerability != nil {
+		if *query.HasVulnerability {
+			db = db.Where("COALESCE(v.vulnerability_count, 0) > 0")
+		} else {
+			db = db.Where("COALESCE(v.vulnerability_count, 0) = 0")
+		}
+	}
+	if query.HasComponent != nil {
+		if *query.HasComponent {
+			db = db.Where("COALESCE(c.component_count, 0) > 0")
+		} else {
+			db = db.Where("COALESCE(c.component_count, 0) = 0")
+		}
+	}
 	if query.IsAlive != nil {
 		db = db.Where("a.is_alive = ?", *query.IsAlive)
 	}
 	return db
+}
+
+func applyAssetDomainRiskLevelFilter(db *gorm.DB, values []string) *gorm.DB {
+	levels := normalizeFilterValues(values)
+	if len(levels) == 0 {
+		return db
+	}
+
+	conditions := make([]string, 0, len(levels))
+	for _, level := range levels {
+		switch level {
+		case "critical":
+			conditions = append(conditions, "COALESCE(v.critical_count, 0) > 0")
+		case "high":
+			conditions = append(conditions, "COALESCE(v.critical_count, 0) = 0 AND COALESCE(v.high_count, 0) > 0")
+		case "medium":
+			conditions = append(conditions, "COALESCE(v.critical_count, 0) = 0 AND COALESCE(v.high_count, 0) = 0 AND COALESCE(v.medium_count, 0) > 0")
+		case "low":
+			conditions = append(conditions, "COALESCE(v.critical_count, 0) = 0 AND COALESCE(v.high_count, 0) = 0 AND COALESCE(v.medium_count, 0) = 0 AND COALESCE(v.low_count, 0) > 0")
+		case "info":
+			conditions = append(conditions, "COALESCE(v.vulnerability_count, 0) = 0")
+		}
+	}
+	if len(conditions) == 0 {
+		return db
+	}
+	return db.Where("(" + strings.Join(conditions, " OR ") + ")")
 }
 
 func upsertAssetDomainServiceAssets(ctx context.Context, db *gorm.DB, observations []AssetDomainServiceAssetObservation, observedAt time.Time) error {

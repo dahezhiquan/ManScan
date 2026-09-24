@@ -3,13 +3,17 @@ package dto
 import "time"
 
 type ListAssetDomainsQuery struct {
-	Page         int
-	PageSize     int
-	Keyword      string
-	Owner        string
-	Region       string
-	AssetAddress string
-	IsAlive      *bool
+	Page             int
+	PageSize         int
+	Keyword          string
+	Owner            string
+	Title            string
+	Region           string
+	AssetAddress     string
+	RiskLevels       []string
+	HasVulnerability *bool
+	HasComponent     *bool
+	IsAlive          *bool
 }
 
 type AssetDomainListItem struct {
@@ -21,6 +25,7 @@ type AssetDomainListItem struct {
 	FirstAliveAt       *time.Time `json:"first_alive_at"`
 	LastAliveAt        *time.Time `json:"last_alive_at"`
 	Region             string     `json:"region"`
+	RiskLevel          string     `json:"risk_level"`
 	HasForm            bool       `json:"has_form"`
 	HasUpload          bool       `json:"has_upload"`
 	HasAdmin           bool       `json:"has_admin"`

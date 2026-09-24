@@ -37,14 +37,32 @@ func (h *assetDomainHandler) List(c *gin.Context) {
 		response.Fail(c, errcode.InvalidParams, "is_alive 参数必须是布尔值")
 		return
 	}
+	hasVulnerability, hasHasVulnerability, err := parseOptionalBoolQuery(c.Query("has_vulnerability"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, "has_vulnerability 参数必须是布尔值")
+		return
+	}
+	hasComponent, hasHasComponent, err := parseOptionalBoolQuery(c.Query("has_component"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, "has_component 参数必须是布尔值")
+		return
+	}
 
 	query := dto.ListAssetDomainsQuery{
 		Page:         page,
 		PageSize:     pageSize,
 		Keyword:      c.Query("keyword"),
 		Owner:        c.Query("owner"),
+		Title:        c.Query("title"),
 		Region:       c.Query("region"),
 		AssetAddress: c.Query("asset_address"),
+		RiskLevels:   parseMultiValueQuery(c, "risk_level"),
+	}
+	if hasHasVulnerability {
+		query.HasVulnerability = &hasVulnerability
+	}
+	if hasHasComponent {
+		query.HasComponent = &hasComponent
 	}
 	if hasIsAlive {
 		query.IsAlive = &isAlive

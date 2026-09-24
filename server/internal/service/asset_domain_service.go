@@ -49,6 +49,7 @@ func toAssetDomainListItem(item repository.AssetDomainListRecord) dto.AssetDomai
 		FirstAliveAt:       item.FirstAliveAt,
 		LastAliveAt:        item.LastAliveAt,
 		Region:             derefString(item.Region),
+		RiskLevel:          assetDomainRiskLevel(item),
 		HasForm:            item.HasForm,
 		HasUpload:          item.HasUpload,
 		HasAdmin:           item.HasAdmin,
@@ -66,5 +67,22 @@ func toAssetDomainListItem(item repository.AssetDomainListRecord) dto.AssetDomai
 		MediumCount:        item.MediumCount,
 		LowCount:           item.LowCount,
 		ComponentCount:     item.ComponentCount,
+	}
+}
+
+func assetDomainRiskLevel(item repository.AssetDomainListRecord) string {
+	switch {
+	case item.CriticalCount > 0:
+		return "critical"
+	case item.HighCount > 0:
+		return "high"
+	case item.MediumCount > 0:
+		return "medium"
+	case item.LowCount > 0:
+		return "low"
+	case item.VulnerabilityCount > 0:
+		return "unknown"
+	default:
+		return "info"
 	}
 }

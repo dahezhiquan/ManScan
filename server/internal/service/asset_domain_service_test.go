@@ -38,4 +38,13 @@ func TestToAssetDomainListItemIncludesRequestAndResponse(t *testing.T) {
 	if item.CriticalCount != 1 || item.HighCount != 2 || item.MediumCount != 3 || item.LowCount != 4 {
 		t.Fatalf("severity counts = critical:%d high:%d medium:%d low:%d, want critical:1 high:2 medium:3 low:4", item.CriticalCount, item.HighCount, item.MediumCount, item.LowCount)
 	}
+	if item.RiskLevel != "critical" {
+		t.Fatalf("RiskLevel = %q, want critical", item.RiskLevel)
+	}
+	if got := assetDomainRiskLevel(repository.AssetDomainListRecord{VulnerabilityCount: 1}); got != "unknown" {
+		t.Fatalf("assetDomainRiskLevel(unknown severity) = %q, want unknown", got)
+	}
+	if got := assetDomainRiskLevel(repository.AssetDomainListRecord{}); got != "info" {
+		t.Fatalf("assetDomainRiskLevel(empty) = %q, want info", got)
+	}
 }
