@@ -226,16 +226,20 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gorm.Open() error = %v", err)
 	}
-	if err := db.AutoMigrate(&entity.AssetDomain{}); err != nil {
+	if err := db.AutoMigrate(&entity.AssetDomain{}, &entity.AssetDomainTitleHistory{}); err != nil {
 		t.Fatalf("AutoMigrate() error = %v", err)
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX uk_asset_domain_domain ON manscan_asset_domain(domain)").Error; err != nil {
 		t.Fatalf("Create unique index error = %v", err)
 	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_domain_history_title ON manscan_asset_domain_title_history(domain, history_title)").Error; err != nil {
+		t.Fatalf("Create title history unique index error = %v", err)
+	}
 
 	firstAliveAt := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
 	lastAliveAt := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
 	observedAt := time.Date(2026, 9, 23, 10, 0, 0, 0, time.UTC)
+	observedDate := assetDomainTitleAliveDate(observedAt)
 	title := "Existing Title"
 	existingStatusCode := uint(418)
 	existingRequest := "GET /old HTTP/1.1\r\nHost: app.example.com\r\n\r\n"
@@ -251,6 +255,15 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 		LastAliveAt:    &lastAliveAt,
 	}).Error; err != nil {
 		t.Fatalf("Create() error = %v", err)
+	}
+	if err := db.Create(&entity.AssetDomainTitleHistory{
+		Domain:              "app.example.com:443",
+		HistoryTitle:        "Existing Title",
+		FirstTitleCreatedAt: firstAliveAt,
+		LatestTitleAliveAt:  assetDomainTitleAliveDate(lastAliveAt),
+		IsAlive:             true,
+	}).Error; err != nil {
+		t.Fatalf("Create existing title history error = %v", err)
 	}
 	oldStatusCode := uint(200)
 	oldRequest := "GET / HTTP/1.1\r\nHost: old.example.com\r\n\r\n"
@@ -354,6 +367,44 @@ func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	if old.HTTPStatusCode == nil || *old.HTTPStatusCode != oldStatusCode || old.Request == nil || *old.Request != oldRequest || old.Response == nil || *old.Response != oldResponse {
 		t.Fatalf("old observation = %+v, want retained observation fields", old)
 	}
+
+	var titleHistories []entity.AssetDomainTitleHistory
+	if err := db.Order("domain ASC, history_title ASC").Find(&titleHistories).Error; err != nil {
+		t.Fatalf("Find title histories error = %v", err)
+	}
+	byTitleKey := make(map[string]entity.AssetDomainTitleHistory, len(titleHistories))
+	for _, item := range titleHistories {
+		byTitleKey[item.Domain+"\x00"+item.HistoryTitle] = item
+	}
+	apiTitle := byTitleKey["api.example.com:8443\x00API"]
+	if !apiTitle.IsAlive || !apiTitle.FirstTitleCreatedAt.Equal(observedAt) || !apiTitle.LatestTitleAliveAt.Equal(observedDate) {
+		t.Fatalf("api title history = %+v, want alive new history at observed time/date", apiTitle)
+	}
+	finalTitle := byTitleKey["app.example.com:443\x00Final Title"]
+	if !finalTitle.IsAlive || !finalTitle.FirstTitleCreatedAt.Equal(observedAt) || !finalTitle.LatestTitleAliveAt.Equal(observedDate) {
+		t.Fatalf("final title history = %+v, want alive new title history", finalTitle)
+	}
+	existingTitle := byTitleKey["app.example.com:443\x00Existing Title"]
+	if existingTitle.IsAlive || !existingTitle.FirstTitleCreatedAt.Equal(firstAliveAt) {
+		t.Fatalf("existing title history = %+v, want retained first time and marked not alive", existingTitle)
+	}
+
+	secondObservedAt := observedAt.Add(24 * time.Hour)
+	if err := repo.SyncObservations(context.Background(), []AssetDomainObservation{
+		{
+			Domain: "app.example.com:443",
+			Title:  "Final Title",
+		},
+	}, []string{"app.example.com:443"}, secondObservedAt); err != nil {
+		t.Fatalf("SyncObservations() second error = %v", err)
+	}
+	var repeatedTitle entity.AssetDomainTitleHistory
+	if err := db.Where("domain = ? AND history_title = ?", "app.example.com:443", "Final Title").First(&repeatedTitle).Error; err != nil {
+		t.Fatalf("Find repeated title history error = %v", err)
+	}
+	if !repeatedTitle.IsAlive || !repeatedTitle.FirstTitleCreatedAt.Equal(observedAt) || !repeatedTitle.LatestTitleAliveAt.Equal(assetDomainTitleAliveDate(secondObservedAt)) {
+		t.Fatalf("repeated title history = %+v, want retained first time and refreshed latest date", repeatedTitle)
+	}
 }
 
 func TestAssetDomainRepositorySyncObservationsInsertUsesFieldWhitelist(t *testing.T) {
@@ -370,11 +421,14 @@ func TestAssetDomainRepositorySyncObservationsInsertUsesFieldWhitelist(t *testin
 	if err != nil {
 		t.Fatalf("gorm.Open() error = %v", err)
 	}
-	if err := db.AutoMigrate(&entity.AssetDomain{}); err != nil {
+	if err := db.AutoMigrate(&entity.AssetDomain{}, &entity.AssetDomainTitleHistory{}); err != nil {
 		t.Fatalf("AutoMigrate() error = %v", err)
 	}
 	if err := db.Exec("CREATE UNIQUE INDEX uk_asset_domain_domain ON manscan_asset_domain(domain)").Error; err != nil {
 		t.Fatalf("Create unique index error = %v", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_domain_history_title ON manscan_asset_domain_title_history(domain, history_title)").Error; err != nil {
+		t.Fatalf("Create title history unique index error = %v", err)
 	}
 
 	statements = statements[:0]

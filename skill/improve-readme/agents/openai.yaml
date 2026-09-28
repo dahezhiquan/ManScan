@@ -1,0 +1,4 @@
+interface:
+  display_name: "README Improver"
+  short_description: "Incrementally improve Chinese README docs"
+  default_prompt: "Use $improve-readme to improve this repo's README.md in Chinese, preserving valid existing content whenever possible."

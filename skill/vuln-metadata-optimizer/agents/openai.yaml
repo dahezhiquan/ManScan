@@ -1,0 +1,3 @@
+interface:
+  display_name: "漏洞元信息优化"
+  short_description: "优化漏洞模板 info 元信息"

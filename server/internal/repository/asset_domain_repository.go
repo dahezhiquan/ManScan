@@ -84,6 +84,9 @@ func (r *assetDomainRepository) SyncObservations(ctx context.Context, observatio
 		if err := upsertAliveAssetDomainObservations(ctx, tx, observations, observedAt); err != nil {
 			return err
 		}
+		if err := syncAssetDomainTitleHistory(ctx, tx, observations, observedAt); err != nil {
+			return err
+		}
 		aliveDomains := assetDomainObservationDomains(observations)
 		notAliveDomains := assetDomainDifference(checkedDomains, aliveDomains)
 		if len(notAliveDomains) == 0 {
@@ -404,6 +407,73 @@ func upsertAliveAssetDomainObservations(ctx context.Context, db *gorm.DB, observ
 		}
 	}
 	return nil
+}
+
+func syncAssetDomainTitleHistory(ctx context.Context, db *gorm.DB, observations []AssetDomainObservation, observedAt time.Time) error {
+	observations = assetDomainObservationsWithTitle(observations)
+	if len(observations) == 0 {
+		return nil
+	}
+
+	aliveDate := assetDomainTitleAliveDate(observedAt)
+	items := make([]map[string]interface{}, 0, len(observations))
+	for _, observation := range observations {
+		items = append(items, map[string]interface{}{
+			"domain":                 observation.Domain,
+			"history_title":          observation.Title,
+			"first_title_created_at": observedAt,
+			"latest_title_alive_at":  aliveDate,
+			"is_alive":               true,
+		})
+	}
+	if err := db.WithContext(ctx).
+		Table("manscan_asset_domain_title_history").
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "domain"}, {Name: "history_title"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"latest_title_alive_at": aliveDate,
+				"is_alive":              true,
+			}),
+		}).
+		Create(&items).Error; err != nil {
+		return err
+	}
+
+	for _, observation := range observations {
+		if err := db.WithContext(ctx).
+			Model(&entity.AssetDomainTitleHistory{}).
+			Where("domain = ? AND history_title <> ?", observation.Domain, observation.Title).
+			Update("is_alive", false).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func assetDomainObservationsWithTitle(values []AssetDomainObservation) []AssetDomainObservation {
+	result := make([]AssetDomainObservation, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Domain = strings.TrimSpace(value.Domain)
+		value.Title = strings.TrimSpace(value.Title)
+		if value.Domain == "" || value.Title == "" {
+			continue
+		}
+		key := value.Domain + "\x00" + value.Title
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func assetDomainTitleAliveDate(value time.Time) time.Time {
+	if value.IsZero() {
+		value = time.Now()
+	}
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, value.Location())
 }
 
 func updateAssetDomainObservationFields(ctx context.Context, db *gorm.DB, observations []AssetDomainObservation, domains []string) error {

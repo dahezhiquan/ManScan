@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vuln Page Extractor"
+  short_description: "Fetch advisory pages and extract structured vulnerability data"
+  default_prompt: "Use $vuln-page-extractor to fetch one or more advisory URLs, classify each response, and extract the vulnerability details."
