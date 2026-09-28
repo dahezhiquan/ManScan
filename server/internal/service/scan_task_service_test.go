@@ -164,6 +164,16 @@ func TestBuildAssetDomainFingerprintTemplateCLIArgsUsesOnlyFingerprintTags(t *te
 	if !hasArg(args, "-fr") || flagValue(args, "-H") != "X-Test: yes" {
 		t.Fatalf("args = %v, want scan request transport options", args)
 	}
+
+	args = buildAssetDomainFingerprintTemplateCLIArgs(
+		dto.CreateScanTaskRequest{},
+		"/tmp/task",
+		"/tmp/task/fingerprint-targets.txt",
+		true,
+	)
+	if got := flagValue(args, "-ept"); got != "http,headless" {
+		t.Fatalf("-ept = %q, want http/headless excluded for non-http fingerprint pass (args=%v)", got, args)
+	}
 }
 
 func TestCountSelectedVulnerabilityTemplatesExcludesFingerprintTemplates(t *testing.T) {

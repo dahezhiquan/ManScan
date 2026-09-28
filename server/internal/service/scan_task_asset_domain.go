@@ -93,7 +93,10 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		state.Append("info", "asset_domain_wappalyzer_finished", "Wappalyzer 被动指纹识别完成，"+assetDomainComponentCountSummary(probeResult.ServiceAssets))
 	}
 	if serviceAssetQueue != nil {
-		serviceAssetQueue.SetTargetResolver(newAssetDomainFingerprintTargetResolver(probeResult.FingerprintTargets))
+		serviceAssetQueue.SetTargetResolver(newAssetDomainFingerprintTargetResolver(append(
+			append([]assetDomainFingerprintTarget(nil), probeResult.FingerprintTargets...),
+			probeResult.UnresponsiveFingerprintTargets...,
+		)))
 	}
 	if len(probeResult.CheckedDomains) == 0 {
 		return nil
@@ -140,18 +143,20 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		if state != nil {
 			state.Append("info", "asset_domain_fingerprint_template_started", "开始进行 ManScan 智能主动指纹识别")
 		}
-		activeServiceAssets, err := s.runAssetDomainFingerprintTemplates(ctx, request, probeResult.FingerprintTargets, filepath.Dir(fingerprintCachePath), state)
-		if err != nil {
+		activeServiceAssets, aliveErr := s.runAssetDomainFingerprintTemplates(ctx, request, probeResult.FingerprintTargets, filepath.Dir(fingerprintCachePath), state, false)
+		unresponsiveServiceAssets, unresponsiveErr := s.runAssetDomainFingerprintTemplates(ctx, request, probeResult.UnresponsiveFingerprintTargets, filepath.Dir(fingerprintCachePath), state, true)
+		if err := firstNonNilError(aliveErr, unresponsiveErr); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
 			if s.logger != nil {
-				s.logger.Error("run asset domain fingerprint templates failed", "target_count", len(probeResult.FingerprintTargets), "error", err)
+				s.logger.Error("run asset domain fingerprint templates failed", "target_count", len(probeResult.FingerprintTargets)+len(probeResult.UnresponsiveFingerprintTargets), "error", err)
 			}
 			if state != nil {
 				state.Append("warn", "asset_domain_fingerprint_template_failed", "扫描前域名组件指纹模板识别失败，已继续后续扫描")
 			}
 		} else {
+			activeServiceAssets = append(activeServiceAssets, unresponsiveServiceAssets...)
 			if serviceAssetQueue != nil {
 				serviceAssetQueue.record(activeServiceAssets)
 			}
@@ -172,8 +177,17 @@ func assetDomainProbeHostCounts(result assetDomainLivenessProbeResult) (int, int
 	return aliveCount, notAliveCount
 }
 
+func firstNonNilError(values ...error) error {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
 func assetDomainProbeFinishedMessage(aliveCount, notAliveCount int) string {
-	return fmt.Sprintf("扫描前域名资产存活 & 指纹探测完成，本次扫描存活 %d 个，不存活 %d 个", aliveCount, notAliveCount)
+	return fmt.Sprintf("扫描前域名资产存活 & 指纹探测完成，本次扫描存活 %d 个", aliveCount)
 }
 
 func recordAssetDomainFingerprintObservations(state *scanruntime.State, values []repository.AssetDomainServiceAssetObservation) {
@@ -194,11 +208,12 @@ func assetDomainComponentCountSummary(values []repository.AssetDomainServiceAsse
 }
 
 type assetDomainLivenessProbeResult struct {
-	Observations       []repository.AssetDomainObservation
-	CheckedDomains     []string
-	ServiceAssets      []repository.AssetDomainServiceAssetObservation
-	Fingerprints       []assetDomainFingerprintCacheEntry
-	FingerprintTargets []assetDomainFingerprintTarget
+	Observations                   []repository.AssetDomainObservation
+	CheckedDomains                 []string
+	ServiceAssets                  []repository.AssetDomainServiceAssetObservation
+	Fingerprints                   []assetDomainFingerprintCacheEntry
+	FingerprintTargets             []assetDomainFingerprintTarget
+	UnresponsiveFingerprintTargets []assetDomainFingerprintTarget
 }
 
 type assetDomainFingerprintTarget struct {
@@ -304,24 +319,28 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 		probeResult.ServiceAssets = append(probeResult.ServiceAssets, result.ServiceAssets...)
 		probeResult.Fingerprints = append(probeResult.Fingerprints, result.Fingerprints...)
 		probeResult.FingerprintTargets = append(probeResult.FingerprintTargets, result.FingerprintTargets...)
+		probeResult.UnresponsiveFingerprintTargets = append(probeResult.UnresponsiveFingerprintTargets, result.UnresponsiveFingerprintTargets...)
 	}
 	probeResult.ServiceAssets = uniqueAssetDomainServiceAssetObservations(probeResult.ServiceAssets)
 	probeResult.Fingerprints = uniqueAssetDomainFingerprintCacheEntries(probeResult.Fingerprints)
 	probeResult.FingerprintTargets = uniqueAssetDomainFingerprintTargets(probeResult.FingerprintTargets)
+	probeResult.UnresponsiveFingerprintTargets = uniqueAssetDomainFingerprintTargets(probeResult.UnresponsiveFingerprintTargets)
 	return probeResult, nil
 }
 
 type assetDomainProbeTargetResult struct {
-	Observations       []repository.AssetDomainObservation
-	CheckedDomains     []string
-	ServiceAssets      []repository.AssetDomainServiceAssetObservation
-	Fingerprints       []assetDomainFingerprintCacheEntry
-	FingerprintTargets []assetDomainFingerprintTarget
+	Observations                   []repository.AssetDomainObservation
+	CheckedDomains                 []string
+	ServiceAssets                  []repository.AssetDomainServiceAssetObservation
+	Fingerprints                   []assetDomainFingerprintCacheEntry
+	FingerprintTargets             []assetDomainFingerprintTarget
+	UnresponsiveFingerprintTargets []assetDomainFingerprintTarget
 }
 
 type assetDomainFingerprintCacheEntry struct {
 	Target     string                                 `json:"target"`
 	Domain     string                                 `json:"domain"`
+	HTTPAlive  bool                                   `json:"http_alive"`
 	Components []assetDomainFingerprintCacheComponent `json:"components"`
 }
 
@@ -399,6 +418,7 @@ func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Clien
 			result.Fingerprints = append(result.Fingerprints, assetDomainFingerprintCacheEntry{
 				Target:     target,
 				Domain:     domain,
+				HTTPAlive:  true,
 				Components: assetDomainFingerprintCacheComponents(components),
 			})
 		}
@@ -409,7 +429,27 @@ func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Clien
 		})
 		return result, nil
 	}
+	if len(result.CheckedDomains) > 0 {
+		domain := firstNonEmpty(assetDomainFingerprintDomainFromTarget(target), result.CheckedDomains[0])
+		result.Fingerprints = append(result.Fingerprints, assetDomainFingerprintCacheEntry{
+			Target:    target,
+			Domain:    domain,
+			HTTPAlive: false,
+		})
+		result.UnresponsiveFingerprintTargets = append(result.UnresponsiveFingerprintTargets, assetDomainFingerprintTarget{
+			Input:  target,
+			Domain: domain,
+		})
+	}
 	return result, nil
+}
+
+func assetDomainFingerprintDomainFromTarget(target string) string {
+	endpoint, host := assetDomainFingerprintValueKeys(target)
+	if endpoint != "" && endpoint != host {
+		return endpoint
+	}
+	return host
 }
 
 func newAssetDomainWappalyzerHTTPClient(request dto.CreateScanTaskRequest) *retryablehttp.Client {
@@ -492,7 +532,7 @@ func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.C
 	}, nil
 }
 
-func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context, request dto.CreateScanTaskRequest, fingerprintTargets []assetDomainFingerprintTarget, taskDir string, state *scanruntime.State) ([]repository.AssetDomainServiceAssetObservation, error) {
+func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context, request dto.CreateScanTaskRequest, fingerprintTargets []assetDomainFingerprintTarget, taskDir string, state *scanruntime.State, excludeHTTPTemplates bool) ([]repository.AssetDomainServiceAssetObservation, error) {
 	fingerprintTargets = uniqueAssetDomainFingerprintTargets(fingerprintTargets)
 	if len(fingerprintTargets) == 0 || s.assetDomainRepository == nil {
 		return nil, nil
@@ -508,7 +548,7 @@ func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context
 	}
 
 	executable, baseArgs := resolveManScanCommand(s.rootDir)
-	args := append(baseArgs, buildAssetDomainFingerprintTemplateCLIArgs(request, taskDir, targetsFile)...)
+	args := append(baseArgs, buildAssetDomainFingerprintTemplateCLIArgs(request, taskDir, targetsFile, excludeHTTPTemplates)...)
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Dir = s.rootDir
 	prepareTaskCommand(cmd)
@@ -553,7 +593,7 @@ func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context
 	return queue.Observations(), waitErr
 }
 
-func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile string) []string {
+func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile string, excludeHTTPTemplates ...bool) []string {
 	args := []string{
 		"-l", targetsFile,
 		"-j",
@@ -562,6 +602,9 @@ func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskReques
 		"-stats",
 		"-nc",
 		"--tags", "tech,detect,favicon",
+	}
+	if len(excludeHTTPTemplates) > 0 && excludeHTTPTemplates[0] {
+		args = append(args, "-ept", "http,headless")
 	}
 
 	appendBool := func(enabled bool, flag string) {

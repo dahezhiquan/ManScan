@@ -5,6 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"ManScan/pkg/protocols/common/contextargs"
+	"ManScan/pkg/protocols/dns"
+	"ManScan/pkg/protocols/headless"
+	httpprotocol "ManScan/pkg/protocols/http"
+	"ManScan/pkg/protocols/network"
 	"ManScan/pkg/templates"
 	"github.com/stretchr/testify/require"
 )
@@ -48,8 +53,38 @@ func TestLoadAssetDomainFingerprintCache(t *testing.T) {
 	t.Setenv(assetDomainFingerprintCacheEnv, cachePath)
 
 	cache := loadAssetDomainFingerprintCache()
-	require.Len(t, cache[assetDomainFingerprintCacheKey("https://app.example.com/login")], 1)
-	require.Len(t, cache[assetDomainFingerprintCacheKey("app.example.com:443")], 1)
+	require.Len(t, cache[assetDomainFingerprintCacheKey("https://app.example.com/login")].Components, 1)
+	require.Len(t, cache[assetDomainFingerprintCacheKey("app.example.com:443")].Components, 1)
 	_, ok := cache[assetDomainFingerprintCacheKey("https://empty.example.com/")]
 	require.True(t, ok, "empty component cache should still mark wappalyzer as already probed")
+}
+
+func TestCachedHTTPProbeFailed(t *testing.T) {
+	httpAlive := true
+	httpDown := false
+	service := &Service{fingerprintCache: map[string]assetDomainFingerprintCacheState{
+		assetDomainFingerprintCacheKey("https://alive.example.com"): {
+			HTTPAlive:      httpAlive,
+			HTTPAliveKnown: true,
+		},
+		assetDomainFingerprintCacheKey("down.example.com:3306"): {
+			HTTPAlive:      httpDown,
+			HTTPAliveKnown: true,
+		},
+		assetDomainFingerprintCacheKey("legacy.example.com"): {},
+	}}
+
+	require.False(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "https://alive.example.com"}))
+	require.True(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "down.example.com:3306"}))
+	require.False(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "legacy.example.com"}))
+}
+
+func TestIsHTTPFingerprintTemplate(t *testing.T) {
+	require.True(t, isHTTPFingerprintTemplate(&templates.Template{RequestsHTTP: []*httpprotocol.Request{{}}}))
+	require.True(t, isHTTPFingerprintTemplate(&templates.Template{RequestsHeadless: []*headless.Request{{}}}))
+	require.True(t, isHTTPFingerprintTemplate(&templates.Template{
+		RequestsDNS:  []*dns.Request{{}},
+		RequestsHTTP: []*httpprotocol.Request{{}},
+	}))
+	require.False(t, isHTTPFingerprintTemplate(&templates.Template{RequestsNetwork: []*network.Request{{}}}))
 }

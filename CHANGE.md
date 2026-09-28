@@ -1,3 +1,18 @@
+## 2026-09-28 16:33 HTTP 不存活目标保留非 HTTP 指纹识别
+
+- 变动目录：`pkg/protocols/common/automaticscan/`、`server/internal/service/`
+- 变动文件：`pkg/protocols/common/automaticscan/automaticscan.go`、`pkg/protocols/common/automaticscan/automaticscan_test.go`、`server/internal/service/scan_task_asset_domain.go`、`server/internal/service/scan_task_asset_domain_test.go`、`server/internal/service/scan_task_service_test.go`
+- 具体修改内容：
+  - 在 `server/internal/service/scan_task_asset_domain.go` 中为扫描前 HTTP 探测不存活的目标保留原始输入作为非 HTTP 主动指纹目标，并写入 `http_alive=false` 的指纹缓存标记。
+  - 非自动扫描场景下，HTTP 存活目标继续按原逻辑执行完整 `tech,detect,favicon` 主动指纹；HTTP 不存活目标额外执行一次排除 `http,headless` 协议的主动指纹子进程，用于覆盖 TCP/MySQL 等非 HTTP 服务识别。
+  - 非自动扫描的请求总量由两个主动指纹子进程分别上报并累计：存活目标按全量指纹模板统计，不存活目标按排除 HTTP/headless 后的模板统计，再与主漏洞扫描请求总量合并，避免将不存活目标按 HTTP 全量模板重复估算。
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中读取 `http_alive` 缓存状态；自动扫描命中 HTTP 不存活缓存时跳过重复 Wappalyzer 请求，并在 detection templates 阶段过滤 HTTP/headless 指纹模板，避免无效 HTTP 请求。
+  - 调整自动扫描请求总量估算，使 HTTP 不存活目标不再计入被过滤掉的 HTTP/headless detection templates 请求数。
+  - 补充服务端前置探测、主动指纹 CLI 参数和自动扫描缓存/模板过滤的回归测试。
+- 修改目的或影响：
+  - HTTP 探测失败不再导致非自动扫描完全跳过该目标的主动指纹识别，非 HTTP 服务仍可通过对应协议指纹模板识别组件。
+  - 自动扫描在已确认 HTTP 不存活的目标上不再继续执行 HTTP 指纹探测模板，减少无谓请求，同时保留非 HTTP 指纹识别和后续按识别结果映射漏洞模板的能力。
+
 ## 2026-09-24 15:23 主动指纹结果携带原始输入上下文
 
 - 变动目录：`pkg/output/`、`pkg/protocols/http/`

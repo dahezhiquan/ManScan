@@ -25,6 +25,7 @@ import (
 	"ManScan/pkg/protocols/http/httpclientpool"
 	"ManScan/pkg/scan"
 	"ManScan/pkg/templates"
+	templateTypes "ManScan/pkg/templates/types"
 	"ManScan/pkg/utils/yaml"
 	"github.com/logrusorgru/aurora/v4"
 	"github.com/pkg/errors"
@@ -64,16 +65,17 @@ type Service struct {
 	templateDirs       []string // root Template Directories
 	technologyMappings map[string]string
 	techTemplates      []*templates.Template
-	fingerprintCache   map[string][]assetDomainFingerprintCacheComponent
+	fingerprintCache   map[string]assetDomainFingerprintCacheState
 	totalGate          *totalGate
 	ServiceOpts        Options
 	hasResults         *atomic.Bool
 }
 
 type mappedTarget struct {
-	input                *contextargs.MetaInput
-	finalTemplates       []*templates.Template
-	usedCachedWappalyzer bool
+	input                      *contextargs.MetaInput
+	finalTemplates             []*templates.Template
+	usedCachedWappalyzer       bool
+	skipHTTPDetectionTemplates bool
 }
 
 type assetDomainFingerprintCacheComponent struct {
@@ -85,7 +87,14 @@ type assetDomainFingerprintCacheComponent struct {
 type assetDomainFingerprintCacheEntry struct {
 	Target     string                                 `json:"target"`
 	Domain     string                                 `json:"domain"`
+	HTTPAlive  *bool                                  `json:"http_alive"`
 	Components []assetDomainFingerprintCacheComponent `json:"components"`
+}
+
+type assetDomainFingerprintCacheState struct {
+	Components     []assetDomainFingerprintCacheComponent
+	HTTPAlive      bool
+	HTTPAliveKnown bool
 }
 
 type totalGate struct {
@@ -312,7 +321,8 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 		tagsFromWappalyzer = s.getTagsUsingWappalyzer(input)
 	}
 	// get tags using detection templates
-	tagsFromDetectTemplates, matched := s.getTagsUsingDetectionTemplates(input)
+	skipHTTPDetectionTemplates := s.cachedHTTPProbeFailed(input)
+	tagsFromDetectTemplates, matched := s.getTagsUsingDetectionTemplates(input, skipHTTPDetectionTemplates)
 	if matched > 0 {
 		s.hasResults.Store(true)
 	}
@@ -338,16 +348,16 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 
 	if len(finalTags) == 0 {
 		gologger.Warning().Msgf("Skipping automatic scan since no vulnerability tags were found on %v\n", input.Input)
-		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer}
+		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 	}
 
 	finalTemplates, err := LoadTemplatesWithTags(s.ServiceOpts, s.templateDirs, finalTags, false)
 	if err != nil {
 		gologger.Error().Msgf("%v Error loading templates: %s\n", input.Input, err)
-		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer}
+		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 	}
 	s.opts.Logger.Info().Msgf("%s 已加载漏洞模版数量：%d", input.Input, len(finalTemplates))
-	return mappedTarget{input: input, finalTemplates: finalTemplates, usedCachedWappalyzer: usedCachedWappalyzer}
+	return mappedTarget{input: input, finalTemplates: finalTemplates, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 }
 
 func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
@@ -364,8 +374,13 @@ func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
 		}
 	}
 	total := wappalyzerTargets
-	for _, template := range s.techTemplates {
-		total += int64(template.TotalRequests) * int64(s.target.Count())
+	for _, target := range targets {
+		for _, template := range s.techTemplates {
+			if target.skipHTTPDetectionTemplates && isHTTPFingerprintTemplate(template) {
+				continue
+			}
+			total += int64(template.TotalRequests)
+		}
 	}
 	for _, target := range targets {
 		for _, template := range target.finalTemplates {
@@ -397,7 +412,7 @@ func mappedTemplateCount(targets []mappedTarget) int64 {
 	return int64(len(templateIDs))
 }
 
-func loadAssetDomainFingerprintCache() map[string][]assetDomainFingerprintCacheComponent {
+func loadAssetDomainFingerprintCache() map[string]assetDomainFingerprintCacheState {
 	path := strings.TrimSpace(os.Getenv(assetDomainFingerprintCacheEnv))
 	if path == "" {
 		return nil
@@ -411,9 +426,16 @@ func loadAssetDomainFingerprintCache() map[string][]assetDomainFingerprintCacheC
 		return nil
 	}
 
-	cache := make(map[string][]assetDomainFingerprintCacheComponent, len(entries)*2)
+	cache := make(map[string]assetDomainFingerprintCacheState, len(entries)*2)
 	for _, entry := range entries {
 		components := dedupeAssetDomainFingerprintCacheComponents(entry.Components)
+		state := assetDomainFingerprintCacheState{
+			Components: components,
+		}
+		if entry.HTTPAlive != nil {
+			state.HTTPAlive = *entry.HTTPAlive
+			state.HTTPAliveKnown = true
+		}
 		for _, key := range []string{
 			assetDomainFingerprintCacheKey(entry.Target),
 			assetDomainFingerprintCacheKey(entry.Domain),
@@ -421,7 +443,7 @@ func loadAssetDomainFingerprintCache() map[string][]assetDomainFingerprintCacheC
 			if key == "" {
 				continue
 			}
-			cache[key] = components
+			cache[key] = state
 		}
 	}
 	return cache
@@ -590,13 +612,13 @@ func (s *Service) getTagsUsingCachedWappalyzer(input *contextargs.MetaInput) ([]
 		return nil, false
 	}
 
-	components, ok := s.fingerprintCache[assetDomainFingerprintCacheKey(input.Input)]
+	state, ok := s.fingerprintCache[assetDomainFingerprintCacheKey(input.Input)]
 	if !ok {
 		return nil, false
 	}
 
 	normalized := make(map[string]struct{})
-	for _, component := range components {
+	for _, component := range state.Components {
 		appName := normalizeAppName(component.AppName)
 		if appName == "" {
 			continue
@@ -621,11 +643,20 @@ func (s *Service) getTagsUsingCachedWappalyzer(input *contextargs.MetaInput) ([]
 	return sliceutil.Dedupe(items), true
 }
 
+func (s *Service) cachedHTTPProbeFailed(input *contextargs.MetaInput) bool {
+	if s == nil || input == nil || len(s.fingerprintCache) == 0 {
+		return false
+	}
+	state, ok := s.fingerprintCache[assetDomainFingerprintCacheKey(input.Input)]
+	return ok && state.HTTPAliveKnown && !state.HTTPAlive
+}
+
 // getTagsUsingDetectionTemplates returns tags using detection templates
-func (s *Service) getTagsUsingDetectionTemplates(input *contextargs.MetaInput) ([]string, int) {
+func (s *Service) getTagsUsingDetectionTemplates(input *contextargs.MetaInput, skipHTTPTemplates ...bool) ([]string, int) {
 	ctx := context.Background()
 
 	ctxArgs := contextargs.NewWithInput(ctx, input.Input)
+	skipHTTP := len(skipHTTPTemplates) > 0 && skipHTTPTemplates[0]
 
 	// execute tech detection templates on target
 	tags := map[string]struct{}{}
@@ -634,6 +665,9 @@ func (s *Service) getTagsUsingDetectionTemplates(input *contextargs.MetaInput) (
 	counter := atomic.Uint32{}
 
 	for _, t := range s.techTemplates {
+		if skipHTTP && isHTTPFingerprintTemplate(t) {
+			continue
+		}
 		sg.Add()
 		go func(template *templates.Template) {
 			defer sg.Done()
@@ -688,6 +722,17 @@ func (s *Service) getTagsUsingDetectionTemplates(input *contextargs.MetaInput) (
 	}
 	sg.Wait()
 	return mapsutil.GetKeys(tags), int(counter.Load())
+}
+
+func isHTTPFingerprintTemplate(template *templates.Template) bool {
+	if template == nil {
+		return false
+	}
+	templateType := template.Type()
+	return templateType == templateTypes.HTTPProtocol ||
+		templateType == templateTypes.HeadlessProtocol ||
+		template.HasHTTPRequest() ||
+		template.HasHeadlessRequest()
 }
 
 // normalizeAppName normalizes app name

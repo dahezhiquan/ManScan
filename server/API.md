@@ -814,7 +814,7 @@ data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进
 
 ```text
 event: event
-data: {"task_id":1,"seq":3,"level":"info","type":"asset_domain_probe_finished","message":"扫描前域名资产存活 & 指纹探测完成，本次扫描存活 1 个，不存活 0 个","task":{"id":1,"status":"running","critical_count":0,"high_count":0,"medium_count":0,"low_count":0,"info_count":0,"tech_count":0,"plugin_count":0,"target_count":1,"alive_hosts":1,"unresponsive_hosts":0},"progress":{"hosts":0,"alive_hosts":1,"unresponsive_hosts":0,"requests":1,"matched":0,"errors":0,"progress_status":"calculating","last_updated_at":"2026-06-09T21:00:02+08:00","last_message":"扫描前域名资产存活 & 指纹探测完成，本次扫描存活 1 个，不存活 0 个","last_event_seq":3,"finished":false,"finished_status":"running"},"nextOffset":3}
+data: {"task_id":1,"seq":3,"level":"info","type":"asset_domain_probe_finished","message":"扫描前域名资产存活 & 指纹探测完成，本次扫描存活 1 个","task":{"id":1,"status":"running","critical_count":0,"high_count":0,"medium_count":0,"low_count":0,"info_count":0,"tech_count":0,"plugin_count":0,"target_count":1,"alive_hosts":1,"unresponsive_hosts":0},"progress":{"hosts":0,"alive_hosts":1,"unresponsive_hosts":0,"requests":1,"matched":0,"errors":0,"progress_status":"calculating","last_updated_at":"2026-06-09T21:00:02+08:00","last_message":"扫描前域名资产存活 & 指纹探测完成，本次扫描存活 1 个，不存活 0 个","last_event_seq":3,"finished":false,"finished_status":"running"},"nextOffset":3}
 ```
 
 - `result` 事件示例：

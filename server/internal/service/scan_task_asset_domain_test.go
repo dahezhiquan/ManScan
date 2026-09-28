@@ -98,6 +98,33 @@ func TestProbeAssetDomainLivenessUsesHTTPXProbe(t *testing.T) {
 	}
 }
 
+func TestProbeAssetDomainLivenessKeepsNonHTTPFingerprintTargetsForHTTPDown(t *testing.T) {
+	t.Parallel()
+
+	target := "192.0.2.10:3306"
+	result, err := probeAssetDomainLiveness(context.Background(), dto.CreateScanTaskRequest{
+		ProbeConcurrency: 1,
+		Timeout:          1,
+		Retries:          0,
+	}, []string{target}, nil, nil)
+	if err != nil {
+		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
+	}
+
+	if len(result.Observations) != 0 {
+		t.Fatalf("Observations = %v, want no HTTP alive observations", result.Observations)
+	}
+	if len(result.UnresponsiveFingerprintTargets) != 1 {
+		t.Fatalf("UnresponsiveFingerprintTargets = %v, want one non-http fingerprint target", result.UnresponsiveFingerprintTargets)
+	}
+	if result.UnresponsiveFingerprintTargets[0].Input != target {
+		t.Fatalf("UnresponsiveFingerprintTargets[0].Input = %q, want original target", result.UnresponsiveFingerprintTargets[0].Input)
+	}
+	if len(result.Fingerprints) != 1 || result.Fingerprints[0].HTTPAlive {
+		t.Fatalf("Fingerprints = %+v, want http_alive=false cache marker", result.Fingerprints)
+	}
+}
+
 func TestProbeAssetDomainLivenessRecordsRedirectObservation(t *testing.T) {
 	t.Parallel()
 
@@ -250,7 +277,7 @@ func TestAssetDomainProbeFinishedMessage(t *testing.T) {
 	t.Parallel()
 
 	got := assetDomainProbeFinishedMessage(3, 2)
-	want := "扫描前域名资产存活 & 指纹探测完成，本次扫描存活 3 个，不存活 2 个"
+	want := "扫描前域名资产存活 & 指纹探测完成，本次扫描存活 3 个"
 	if got != want {
 		t.Fatalf("assetDomainProbeFinishedMessage() = %q, want %q", got, want)
 	}
@@ -660,14 +687,35 @@ func TestStreamAssetDomainFingerprintTemplateStatsRecordsStderrStats(t *testing.
 	}
 }
 
+func TestAssetDomainFingerprintStatsAccumulateAcrossTargetGroups(t *testing.T) {
+	t.Parallel()
+
+	state := &scanruntime.State{}
+	streamAssetDomainFingerprintTemplateStats(strings.NewReader(
+		`{"requests":"4","actual_requests":"3","total":"6","total_known":"1"}`,
+	), state, &assetDomainFingerprintTemplateStatsTracker{})
+	streamAssetDomainFingerprintTemplateStats(strings.NewReader(
+		`{"requests":"2","actual_requests":"2","total":"3","total_known":"1"}`,
+	), state, &assetDomainFingerprintTemplateStatsTracker{})
+
+	progress := state.SnapshotProgress()
+	if progress.TotalRequests != 9 {
+		t.Fatalf("TotalRequests = %d, want alive and non-http target-group totals 9", progress.TotalRequests)
+	}
+	if progress.Requests != 5 {
+		t.Fatalf("Requests = %d, want accumulated fingerprint requests 5", progress.Requests)
+	}
+}
+
 func TestWriteAssetDomainFingerprintCacheUsesSnakeCaseComponents(t *testing.T) {
 	t.Parallel()
 
 	cachePath := t.TempDir() + "/fingerprints.json"
 	err := writeAssetDomainFingerprintCache(cachePath, []assetDomainFingerprintCacheEntry{
 		{
-			Target: "https://app.example.com/",
-			Domain: "app.example.com:443",
+			Target:    "https://app.example.com/",
+			Domain:    "app.example.com:443",
+			HTTPAlive: true,
 			Components: []assetDomainFingerprintCacheComponent{
 				{
 					Domain:     "app.example.com:443",
@@ -702,5 +750,8 @@ func TestWriteAssetDomainFingerprintCacheUsesSnakeCaseComponents(t *testing.T) {
 	}
 	if _, ok := component["AppName"]; ok {
 		t.Fatalf("component = %v, must not use Go field names", component)
+	}
+	if payload[0]["http_alive"] != true {
+		t.Fatalf("http_alive = %v, want true", payload[0]["http_alive"])
 	}
 }
