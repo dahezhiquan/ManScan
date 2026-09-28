@@ -84,6 +84,11 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		}
 		return nil
 	}
+	aliveCount, notAliveCount := assetDomainProbeHostCounts(probeResult)
+	if state != nil {
+		state.SetAssetHostCounts(aliveCount, notAliveCount)
+		state.Append("info", "asset_domain_probe_finished", assetDomainProbeFinishedMessage(aliveCount, notAliveCount))
+	}
 	if state != nil {
 		state.Append("info", "asset_domain_wappalyzer_finished", "Wappalyzer 被动指纹识别完成，"+assetDomainComponentCountSummary(probeResult.ServiceAssets))
 	}
@@ -91,9 +96,6 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		serviceAssetQueue.SetTargetResolver(newAssetDomainFingerprintTargetResolver(probeResult.FingerprintTargets))
 	}
 	if len(probeResult.CheckedDomains) == 0 {
-		if state != nil {
-			state.Append("info", "asset_domain_probe_finished", assetDomainProbeFinishedMessage(0, 0))
-		}
 		return nil
 	}
 
@@ -145,15 +147,16 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			state.Append("info", "asset_domain_fingerprint_template_finished", "智能主动指纹识别完成，"+assetDomainComponentCountSummary(activeServiceAssets))
 		}
 	}
-	if state != nil {
-		aliveCount := len(probeResult.Observations)
-		notAliveCount := len(probeResult.CheckedDomains) - aliveCount
-		if notAliveCount < 0 {
-			notAliveCount = 0
-		}
-		state.Append("info", "asset_domain_probe_finished", assetDomainProbeFinishedMessage(aliveCount, notAliveCount))
-	}
 	return nil
+}
+
+func assetDomainProbeHostCounts(result assetDomainLivenessProbeResult) (int, int) {
+	aliveCount := len(result.Observations)
+	notAliveCount := len(result.CheckedDomains) - aliveCount
+	if notAliveCount < 0 {
+		notAliveCount = 0
+	}
+	return aliveCount, notAliveCount
 }
 
 func assetDomainProbeFinishedMessage(aliveCount, notAliveCount int) string {
@@ -192,8 +195,11 @@ type assetDomainFingerprintTarget struct {
 }
 
 type assetDomainNetworkRegion struct {
-	prefix netip.Prefix
-	region string
+	prefix  netip.Prefix
+	start   netip.Addr
+	end     netip.Addr
+	isRange bool
+	region  string
 }
 
 func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) (assetDomainLivenessProbeResult, error) {
@@ -886,16 +892,64 @@ func writeAssetDomainFingerprintCache(path string, fingerprints []assetDomainFin
 func buildAssetDomainNetworkRegions(items []repository.AssetDomainNetworkItem) []assetDomainNetworkRegion {
 	regions := make([]assetDomainNetworkRegion, 0, len(items))
 	for _, item := range items {
-		prefix, err := netip.ParsePrefix(strings.TrimSpace(item.ItemName))
-		if err != nil {
+		networkRegion, ok := parseAssetDomainNetworkRegion(item)
+		if !ok {
 			continue
 		}
-		regions = append(regions, assetDomainNetworkRegion{
-			prefix: prefix.Masked(),
-			region: strings.TrimSpace(item.SmallCategory),
-		})
+		regions = append(regions, networkRegion)
 	}
 	return regions
+}
+
+func parseAssetDomainNetworkRegion(item repository.AssetDomainNetworkItem) (assetDomainNetworkRegion, bool) {
+	itemName := strings.TrimSpace(item.ItemName)
+	region := strings.TrimSpace(item.SmallCategory)
+	if itemName == "" {
+		return assetDomainNetworkRegion{}, false
+	}
+
+	if prefix, err := netip.ParsePrefix(itemName); err == nil {
+		return assetDomainNetworkRegion{
+			prefix: prefix.Masked(),
+			region: region,
+		}, true
+	}
+
+	start, end, ok := parseAssetDomainIPv4LastOctetRange(itemName)
+	if !ok {
+		return assetDomainNetworkRegion{}, false
+	}
+	return assetDomainNetworkRegion{
+		start:   start,
+		end:     end,
+		isRange: true,
+		region:  region,
+	}, true
+}
+
+func parseAssetDomainIPv4LastOctetRange(value string) (netip.Addr, netip.Addr, bool) {
+	parts := strings.Split(strings.TrimSpace(value), "-")
+	if len(parts) != 2 {
+		return netip.Addr{}, netip.Addr{}, false
+	}
+
+	start, err := netip.ParseAddr(strings.TrimSpace(parts[0]))
+	if err != nil || !start.Is4() {
+		return netip.Addr{}, netip.Addr{}, false
+	}
+
+	endOctet, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || endOctet < 0 || endOctet > 255 {
+		return netip.Addr{}, netip.Addr{}, false
+	}
+
+	octets := start.As4()
+	octets[3] = byte(endOctet)
+	end := netip.AddrFrom4(octets)
+	if start.Compare(end) > 0 {
+		return netip.Addr{}, netip.Addr{}, false
+	}
+	return start, end, true
 }
 
 func assetDomainRegion(domain string, networkRegions []assetDomainNetworkRegion) string {
@@ -905,7 +959,7 @@ func assetDomainRegion(domain string, networkRegions []assetDomainNetworkRegion)
 	}
 	if addr, err := netip.ParseAddr(host); err == nil {
 		for _, region := range networkRegions {
-			if region.prefix.Contains(addr) {
+			if region.contains(addr) {
 				return region.region
 			}
 		}
@@ -915,6 +969,14 @@ func assetDomainRegion(domain string, networkRegions []assetDomainNetworkRegion)
 		return "内网"
 	}
 	return "外网"
+}
+
+func (r assetDomainNetworkRegion) contains(addr netip.Addr) bool {
+	if r.isRange {
+		return addr.Is4() && r.start.IsValid() && r.end.IsValid() &&
+			r.start.Compare(addr) <= 0 && r.end.Compare(addr) >= 0
+	}
+	return r.prefix.Contains(addr)
 }
 
 func assetDomainHost(domain string) string {

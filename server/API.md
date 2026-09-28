@@ -650,10 +650,14 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
       "info_count": 3,
       "tech_count": 4,
       "plugin_count": 50,
-      "target_count": 1
+      "target_count": 1,
+      "alive_hosts": 1,
+      "unresponsive_hosts": 0
     },
     "progress": {
       "hosts": 1,
+      "alive_hosts": 1,
+      "unresponsive_hosts": 0,
       "templates": 50,
       "total_requests": 100,
       "requests": 10,
@@ -675,6 +679,8 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
   - `progress.requests` 表示扫描进程实际发出的请求数，会排除项目缓存、模板聚类等没有真实出网的请求。
   - `progress.total_requests` 表示本次任务按模板和目标预估的逻辑请求总数。
   - `progress.percent` 表示逻辑扫描完成度，不直接用 `requests / total_requests` 计算，因此缓存或聚类节省大量请求时，进度仍会按扫描执行进度平滑推进。
+  - `task.alive_hosts` 和 `task.unresponsive_hosts` 表示扫描前资产存活探测结果；探测完成后会立即通过任务详情、日志接口和 SSE 推送，已探测到的 `0` 也会明确返回。
+  - `progress.alive_hosts` 和 `progress.unresponsive_hosts` 是同一组存活探测统计的进度快照字段；探测尚未完成时字段不返回。
   - 自动模版映射的指纹识别阶段中，`progress_status` 为 `calculating`，此时 `total_requests` 和 `percent` 不返回，`last_message` 仍为“扫描进度更新”；全部目标完成指纹识别并得到映射模版后，`progress_status` 变为 `running`，再开始返回稳定的预估总请求数和完成度。单个目标完成映射后，其漏洞模版可以先行执行。
   - `progress.matched` 表示服务端保留的去重后结果数量。
 
@@ -723,9 +729,13 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
       "info_count": 3,
       "tech_count": 4,
       "plugin_count": 50,
-      "target_count": 1
+      "target_count": 1,
+      "alive_hosts": 1,
+      "unresponsive_hosts": 0
     },
     "progress": {
+      "alive_hosts": 1,
+      "unresponsive_hosts": 0,
       "requests": 10,
       "matched": 1,
       "errors": 0,
@@ -781,6 +791,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=
   - 首个事件为 `snapshot`
   - 后续事件为 `event`
   - `progress` 与 `result` 类型事件会额外携带最新的 `task` 统计快照，便于前端实时刷新漏洞数、指纹数、目标数和插件数
+  - `asset_domain_probe_finished` 类型事件会额外携带最新的 `task` 和 `progress` 快照，前端可在扫描前资产存活探测结束后立即刷新存活主机数和无响应主机数
   - `result` 类型事件中的 `event.tags` 为该命中结果的模板标签，包含 `tech`、`detect` 或 `favicon` 任一标签时计入 `tech_count`
   - 开启 `matcher_status` 后产生的 `match_failure` 事件只用于展示匹配失败调试信息，不会触发漏洞命中统计刷新
   - 任务结束后发送 `complete`
@@ -796,7 +807,14 @@ data: {"task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medi
 
 ```text
 event: event
-data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1},"progress":{"hosts":1,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"progress_status":"running","last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":2}
+data: {"task_id":1,"seq":2,"level":"info","type":"progress","message":"扫描进度更新","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":3,"tech_count":4,"plugin_count":50,"target_count":1,"alive_hosts":1,"unresponsive_hosts":0},"progress":{"hosts":1,"alive_hosts":1,"unresponsive_hosts":0,"templates":50,"total_requests":100,"requests":10,"matched":1,"errors":0,"percent":10,"progress_status":"running","last_updated_at":"2026-06-09T21:01:00+08:00","last_message":"扫描进度更新","last_event_seq":2,"finished":false,"finished_status":"running"},"nextOffset":2}
+```
+
+`asset_domain_probe_finished` 事件示例：
+
+```text
+event: event
+data: {"task_id":1,"seq":3,"level":"info","type":"asset_domain_probe_finished","message":"扫描前域名资产存活 & 指纹探测完成，本次扫描存活 1 个，不存活 0 个","task":{"id":1,"status":"running","critical_count":0,"high_count":0,"medium_count":0,"low_count":0,"info_count":0,"tech_count":0,"plugin_count":0,"target_count":1,"alive_hosts":1,"unresponsive_hosts":0},"progress":{"hosts":0,"alive_hosts":1,"unresponsive_hosts":0,"requests":1,"matched":0,"errors":0,"progress_status":"calculating","last_updated_at":"2026-06-09T21:00:02+08:00","last_message":"扫描前域名资产存活 & 指纹探测完成，本次扫描存活 1 个，不存活 0 个","last_event_seq":3,"finished":false,"finished_status":"running"},"nextOffset":3}
 ```
 
 - `result` 事件示例：

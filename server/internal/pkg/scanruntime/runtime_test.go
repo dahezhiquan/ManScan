@@ -947,6 +947,43 @@ func TestTaskProgressSnapshotMarshalKeepsKnownZeroPercent(t *testing.T) {
 	}
 }
 
+func TestSetAssetHostCountsPublishesKnownZeroValues(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewState(106, "task-106", "runtime-task", 5, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	state.SetAssetHostCounts(3, 0)
+
+	progress := state.SnapshotProgress()
+	if progress.AliveHosts == nil || *progress.AliveHosts != 3 {
+		t.Fatalf("AliveHosts = %v, want 3", progress.AliveHosts)
+	}
+	if progress.UnresponsiveHosts == nil || *progress.UnresponsiveHosts != 0 {
+		t.Fatalf("UnresponsiveHosts = %v, want explicit zero", progress.UnresponsiveHosts)
+	}
+
+	summary := state.SnapshotResultSummary()
+	if summary.AliveHosts == nil || *summary.AliveHosts != 3 {
+		t.Fatalf("summary AliveHosts = %v, want 3", summary.AliveHosts)
+	}
+	if summary.UnresponsiveHosts == nil || *summary.UnresponsiveHosts != 0 {
+		t.Fatalf("summary UnresponsiveHosts = %v, want explicit zero", summary.UnresponsiveHosts)
+	}
+
+	encoded, err := json.Marshal(progress)
+	if err != nil {
+		t.Fatalf("marshal progress: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"alive_hosts":3`) ||
+		!strings.Contains(string(encoded), `"unresponsive_hosts":0`) {
+		t.Fatalf("host counts missing from progress JSON: %s", encoded)
+	}
+}
+
 func TestAppendEventWritesMatchLog(t *testing.T) {
 	t.Parallel()
 

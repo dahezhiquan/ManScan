@@ -1705,6 +1705,8 @@ func applyRuntimeResultSummary(summary *dto.ScanTaskSummary, result scanruntime.
 	summary.TechCount = result.TechCount
 	summary.PluginCount = result.PluginCount
 	summary.TargetCount = result.TargetCount
+	summary.AliveHosts = result.AliveHosts
+	summary.UnresponsiveHosts = result.UnresponsiveHosts
 }
 
 func applyRuntimeResultSummaryToListItem(item *dto.ScanTaskListItem, result scanruntime.ResultSummary) {
@@ -1774,7 +1776,20 @@ func (s *scanTaskService) buildTaskSummary(ctx context.Context, task *entity.Sca
 	if deduped, ok := s.loadDedupedResultSummaryFromMatchLog(task.ID, summary.TargetCount); ok {
 		applyRuntimeResultSummary(&summary, mergeResultSummaryCounts(deduped, entityResultRequestSummary(result)))
 	}
+	applyProgressHostCounts(&summary, s.getProgress(ctx, task.ID, task.Status))
 	return summary, nil
+}
+
+func applyProgressHostCounts(summary *dto.ScanTaskSummary, progress scanruntime.TaskProgressSnapshot) {
+	if summary == nil {
+		return
+	}
+	if progress.AliveHosts != nil {
+		summary.AliveHosts = progress.AliveHosts
+	}
+	if progress.UnresponsiveHosts != nil {
+		summary.UnresponsiveHosts = progress.UnresponsiveHosts
+	}
 }
 
 func (s *scanTaskService) findTaskResult(ctx context.Context, taskID int64) (*entity.ScanTaskResult, error) {

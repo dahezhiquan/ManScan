@@ -450,11 +450,11 @@ func (h *scanTaskHandler) Stream(c *gin.Context) {
 				"event":      event,
 				"nextOffset": currentOffset,
 			}
-			if event.Type == "progress" && progressSnapshot != nil {
+			if (event.Type == "progress" || event.Type == "asset_domain_probe_finished") && progressSnapshot != nil {
 				progress = progressSnapshot()
 				payload["progress"] = progress
 			}
-			if (event.Type == "progress" || event.Type == "result") && taskSnapshot != nil {
+			if (event.Type == "progress" || event.Type == "result" || event.Type == "asset_domain_probe_finished") && taskSnapshot != nil {
 				payload["task"] = taskSnapshot()
 			}
 			if err := sendSSE("event", payload); err != nil {

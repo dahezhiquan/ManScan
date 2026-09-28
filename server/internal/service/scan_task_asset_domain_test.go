@@ -184,6 +184,8 @@ func TestAssetDomainRegion(t *testing.T) {
 
 	networkRegions := buildAssetDomainNetworkRegions([]repository.AssetDomainNetworkItem{
 		{ItemName: "10.0.0.0/8", SmallCategory: "生产内网"},
+		{ItemName: "113.204.105.41-100", SmallCategory: "公网业务段"},
+		{ItemName: "203.0.113.100-41", SmallCategory: "反向无效段"},
 		{ItemName: "invalid-cidr", SmallCategory: "无效网段"},
 	})
 	tests := []struct {
@@ -197,8 +199,28 @@ func TestAssetDomainRegion(t *testing.T) {
 			want:   "生产内网",
 		},
 		{
+			name:   "ip in last octet range",
+			domain: "113.204.105.41:443",
+			want:   "公网业务段",
+		},
+		{
+			name:   "ip at last octet range end",
+			domain: "113.204.105.100:443",
+			want:   "公网业务段",
+		},
+		{
+			name:   "ip outside last octet range",
+			domain: "113.204.105.101:443",
+			want:   "未知",
+		},
+		{
 			name:   "ip outside network",
 			domain: "192.0.2.10:443",
+			want:   "未知",
+		},
+		{
+			name:   "reversed last octet range ignored",
+			domain: "203.0.113.50:443",
 			want:   "未知",
 		},
 		{
@@ -231,6 +253,26 @@ func TestAssetDomainProbeFinishedMessage(t *testing.T) {
 	want := "扫描前域名资产存活 & 指纹探测完成，本次扫描存活 3 个，不存活 2 个"
 	if got != want {
 		t.Fatalf("assetDomainProbeFinishedMessage() = %q, want %q", got, want)
+	}
+}
+
+func TestAssetDomainProbeHostCounts(t *testing.T) {
+	t.Parallel()
+
+	alive, notAlive := assetDomainProbeHostCounts(assetDomainLivenessProbeResult{
+		Observations:   []repository.AssetDomainObservation{{Domain: "a.example.com"}, {Domain: "b.example.com"}},
+		CheckedDomains: []string{"a.example.com", "b.example.com", "c.example.com"},
+	})
+	if alive != 2 || notAlive != 1 {
+		t.Fatalf("assetDomainProbeHostCounts() = (%d, %d), want (2, 1)", alive, notAlive)
+	}
+
+	alive, notAlive = assetDomainProbeHostCounts(assetDomainLivenessProbeResult{
+		Observations:   []repository.AssetDomainObservation{{Domain: "a.example.com"}, {Domain: "a.example.com"}},
+		CheckedDomains: []string{"a.example.com"},
+	})
+	if alive != 2 || notAlive != 0 {
+		t.Fatalf("assetDomainProbeHostCounts() negative remainder = (%d, %d), want (2, 0)", alive, notAlive)
 	}
 }
 

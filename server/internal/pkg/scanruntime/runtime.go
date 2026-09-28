@@ -27,19 +27,21 @@ const (
 var ansiLogPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 type TaskProgressSnapshot struct {
-	Hosts          int64     `json:"hosts"`
-	Templates      int64     `json:"templates"`
-	TotalRequests  int64     `json:"total_requests,omitempty"`
-	Requests       int64     `json:"requests"`
-	Matched        int64     `json:"matched"`
-	Errors         int64     `json:"errors"`
-	Percent        float64   `json:"percent,omitempty"`
-	ProgressStatus string    `json:"progress_status"`
-	LastUpdatedAt  time.Time `json:"last_updated_at"`
-	LastMessage    string    `json:"last_message,omitempty"`
-	LastEventSeq   int64     `json:"last_event_seq"`
-	Finished       bool      `json:"finished"`
-	FinishedStatus string    `json:"finished_status,omitempty"`
+	Hosts             int64     `json:"hosts"`
+	AliveHosts        *int64    `json:"alive_hosts,omitempty"`
+	UnresponsiveHosts *int64    `json:"unresponsive_hosts,omitempty"`
+	Templates         int64     `json:"templates"`
+	TotalRequests     int64     `json:"total_requests,omitempty"`
+	Requests          int64     `json:"requests"`
+	Matched           int64     `json:"matched"`
+	Errors            int64     `json:"errors"`
+	Percent           float64   `json:"percent,omitempty"`
+	ProgressStatus    string    `json:"progress_status"`
+	LastUpdatedAt     time.Time `json:"last_updated_at"`
+	LastMessage       string    `json:"last_message,omitempty"`
+	LastEventSeq      int64     `json:"last_event_seq"`
+	Finished          bool      `json:"finished"`
+	FinishedStatus    string    `json:"finished_status,omitempty"`
 }
 
 // MarshalJSON omits total and percent while the automatic fingerprint
@@ -47,19 +49,21 @@ type TaskProgressSnapshot struct {
 // once the total has become known.
 func (p TaskProgressSnapshot) MarshalJSON() ([]byte, error) {
 	type progressSnapshotJSON struct {
-		Hosts          int64     `json:"hosts"`
-		Templates      int64     `json:"templates"`
-		TotalRequests  *int64    `json:"total_requests,omitempty"`
-		Requests       int64     `json:"requests"`
-		Matched        int64     `json:"matched"`
-		Errors         int64     `json:"errors"`
-		Percent        *float64  `json:"percent,omitempty"`
-		ProgressStatus string    `json:"progress_status"`
-		LastUpdatedAt  time.Time `json:"last_updated_at"`
-		LastMessage    string    `json:"last_message,omitempty"`
-		LastEventSeq   int64     `json:"last_event_seq"`
-		Finished       bool      `json:"finished"`
-		FinishedStatus string    `json:"finished_status,omitempty"`
+		Hosts             int64     `json:"hosts"`
+		AliveHosts        *int64    `json:"alive_hosts,omitempty"`
+		UnresponsiveHosts *int64    `json:"unresponsive_hosts,omitempty"`
+		Templates         int64     `json:"templates"`
+		TotalRequests     *int64    `json:"total_requests,omitempty"`
+		Requests          int64     `json:"requests"`
+		Matched           int64     `json:"matched"`
+		Errors            int64     `json:"errors"`
+		Percent           *float64  `json:"percent,omitempty"`
+		ProgressStatus    string    `json:"progress_status"`
+		LastUpdatedAt     time.Time `json:"last_updated_at"`
+		LastMessage       string    `json:"last_message,omitempty"`
+		LastEventSeq      int64     `json:"last_event_seq"`
+		Finished          bool      `json:"finished"`
+		FinishedStatus    string    `json:"finished_status,omitempty"`
 	}
 
 	known := p.Finished || p.ProgressStatus == "running" || p.ProgressStatus == "finished" ||
@@ -74,19 +78,21 @@ func (p TaskProgressSnapshot) MarshalJSON() ([]byte, error) {
 	}
 
 	return json.Marshal(progressSnapshotJSON{
-		Hosts:          p.Hosts,
-		Templates:      p.Templates,
-		TotalRequests:  totalRequests,
-		Requests:       p.Requests,
-		Matched:        p.Matched,
-		Errors:         p.Errors,
-		Percent:        percent,
-		ProgressStatus: p.ProgressStatus,
-		LastUpdatedAt:  p.LastUpdatedAt,
-		LastMessage:    p.LastMessage,
-		LastEventSeq:   p.LastEventSeq,
-		Finished:       p.Finished,
-		FinishedStatus: p.FinishedStatus,
+		Hosts:             p.Hosts,
+		AliveHosts:        p.AliveHosts,
+		UnresponsiveHosts: p.UnresponsiveHosts,
+		Templates:         p.Templates,
+		TotalRequests:     totalRequests,
+		Requests:          p.Requests,
+		Matched:           p.Matched,
+		Errors:            p.Errors,
+		Percent:           percent,
+		ProgressStatus:    p.ProgressStatus,
+		LastUpdatedAt:     p.LastUpdatedAt,
+		LastMessage:       p.LastMessage,
+		LastEventSeq:      p.LastEventSeq,
+		Finished:          p.Finished,
+		FinishedStatus:    p.FinishedStatus,
 	})
 }
 
@@ -106,16 +112,18 @@ type TaskLogsPage struct {
 }
 
 type ResultSummary struct {
-	CriticalCount int
-	HighCount     int
-	MediumCount   int
-	LowCount      int
-	InfoCount     int
-	TechCount     int
-	PluginCount   int
-	TargetCount   int
-	TotalRequests int64
-	RealRequests  int64
+	CriticalCount     int
+	HighCount         int
+	MediumCount       int
+	LowCount          int
+	InfoCount         int
+	TechCount         int
+	PluginCount       int
+	TargetCount       int
+	TotalRequests     int64
+	RealRequests      int64
+	AliveHosts        *int64
+	UnresponsiveHosts *int64
 }
 
 type progressLogState struct {
@@ -347,6 +355,30 @@ func (s *State) SetTemplateCount(count int64) {
 	})
 }
 
+// SetAssetHostCounts publishes the result of the pre-scan asset liveness probe.
+func (s *State) SetAssetHostCounts(aliveCount, unresponsiveCount int) {
+	if s == nil {
+		return
+	}
+	if aliveCount < 0 {
+		aliveCount = 0
+	}
+	if unresponsiveCount < 0 {
+		unresponsiveCount = 0
+	}
+
+	alive := int64(aliveCount)
+	unresponsive := int64(unresponsiveCount)
+	s.mu.Lock()
+	s.progress.AliveHosts = &alive
+	s.progress.UnresponsiveHosts = &unresponsive
+	s.progress.LastUpdatedAt = time.Now()
+	s.resultSummary.AliveHosts = &alive
+	s.resultSummary.UnresponsiveHosts = &unresponsive
+	s.writeProgressSnapshotLocked()
+	s.mu.Unlock()
+}
+
 // AddRequestStats merges request counters produced outside the main scanner
 // stats stream, such as server-side pre-scan probes.
 func (s *State) AddRequestStats(totalDelta, requestDelta, completedDelta int64, message string) {
@@ -493,6 +525,8 @@ func (s *State) SnapshotResultSummary() ResultSummary {
 	summary.PluginCount = int(s.progress.Templates)
 	summary.TotalRequests = s.progress.TotalRequests
 	summary.RealRequests = s.progress.Requests
+	summary.AliveHosts = s.progress.AliveHosts
+	summary.UnresponsiveHosts = s.progress.UnresponsiveHosts
 	return summary
 }
 
