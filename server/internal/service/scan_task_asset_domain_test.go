@@ -314,6 +314,97 @@ func TestRecordAssetDomainFingerprintObservationsCountsUniqueTechResults(t *test
 	}
 }
 
+func TestSyncAliveAssetDomainsBeforeScanDefersServiceAssetStaleMarking(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	repo := &assetDomainRepositoryStub{}
+	svc := &scanTaskService{assetDomainRepository: repo}
+	state := &scanruntime.State{}
+	queue := newAssetDomainServiceAssetQueue(svc, state)
+	defer queue.CloseAndWait()
+
+	if err := svc.syncAliveAssetDomainsBeforeScan(context.Background(), dto.CreateScanTaskRequest{
+		AutomaticScan:    true,
+		ProbeConcurrency: 1,
+		Timeout:          3,
+	}, []string{server.URL}, state, "", queue); err != nil {
+		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
+	}
+
+	if len(repo.syncServiceAssetCheckedDomains) != 1 {
+		t.Fatalf("SyncServiceAssets calls = %d, want 1", len(repo.syncServiceAssetCheckedDomains))
+	}
+	if len(repo.syncObservationCheckedDomains) != 1 {
+		t.Fatalf("SyncObservations calls = %d, want 1", len(repo.syncObservationCheckedDomains))
+	}
+	if got := repo.syncObservationCheckedDomains[0]; len(got) != 0 {
+		t.Fatalf("pre-scan SyncObservations checkedDomains = %v, want nil/empty to defer stale marking", got)
+	}
+	if got := repo.syncServiceAssetCheckedDomains[0]; len(got) != 0 {
+		t.Fatalf("pre-scan SyncServiceAssets checkedDomains = %v, want nil/empty to defer stale marking", got)
+	}
+	if checked := queue.CheckedDomains(); len(checked) != 1 || !strings.Contains(checked[0], ":") {
+		t.Fatalf("queue.CheckedDomains() = %v, want probed endpoint recorded", checked)
+	}
+}
+
+func TestSyncFinishedAssetDomainObservationsMarksStaleForCompletedTask(t *testing.T) {
+	t.Parallel()
+
+	repo := &assetDomainRepositoryStub{}
+	svc := &scanTaskService{assetDomainRepository: repo}
+	queue := newAssetDomainServiceAssetQueue(svc)
+	queue.RecordCheckedDomains([]string{"app.example.com:443", "down.example.com:443"})
+	queue.RecordDomainObservations([]repository.AssetDomainObservation{{
+		Domain:         "app.example.com:443",
+		HTTPStatusCode: http.StatusOK,
+	}})
+	queue.CloseAndWait()
+
+	svc.syncFinishedAssetDomainObservations(queue, nil)
+
+	if len(repo.syncObservationCheckedDomains) != 1 {
+		t.Fatalf("SyncObservations calls = %d, want 1", len(repo.syncObservationCheckedDomains))
+	}
+	if got := repo.syncObservationCheckedDomains[0]; len(got) != 2 {
+		t.Fatalf("final SyncObservations checkedDomains = %v, want completed checked domains", got)
+	}
+	if got := repo.syncObservationValues[0]; len(got) != 1 || got[0].Domain != "app.example.com:443" {
+		t.Fatalf("final SyncObservations observations = %+v, want recorded alive observation", got)
+	}
+}
+
+func TestSyncFinishedAssetDomainServiceAssetsMarksStaleForCompletedTask(t *testing.T) {
+	t.Parallel()
+
+	repo := &assetDomainRepositoryStub{}
+	svc := &scanTaskService{assetDomainRepository: repo}
+	queue := newAssetDomainServiceAssetQueue(svc)
+	queue.RecordCheckedDomains([]string{"app.example.com:443"})
+	queue.record([]repository.AssetDomainServiceAssetObservation{{
+		Domain:  "app.example.com:443",
+		AppName: "nginx",
+	}})
+	queue.CloseAndWait()
+
+	svc.syncFinishedAssetDomainServiceAssets(queue, nil)
+
+	if len(repo.syncServiceAssetCheckedDomains) != 1 {
+		t.Fatalf("SyncServiceAssets calls = %d, want 1", len(repo.syncServiceAssetCheckedDomains))
+	}
+	if got := repo.syncServiceAssetCheckedDomains[0]; len(got) != 1 || got[0] != "app.example.com:443" {
+		t.Fatalf("final SyncServiceAssets checkedDomains = %v, want completed checked domain", got)
+	}
+	if got := repo.syncServiceAssetObservations[0]; len(got) != 1 || got[0].AppName != "nginx" {
+		t.Fatalf("final SyncServiceAssets observations = %+v, want recorded nginx observation", got)
+	}
+}
+
 func TestAssetDomainServiceAssetQueueStreamsFingerprintObservations(t *testing.T) {
 	t.Parallel()
 
@@ -525,21 +616,31 @@ func TestStreamAssetDomainFingerprintTemplateResultsRecordsStats(t *testing.T) {
 	}
 }
 
-type assetDomainRepositoryStub struct{}
+type assetDomainRepositoryStub struct {
+	networkItems                   []repository.AssetDomainNetworkItem
+	syncObservationValues          [][]repository.AssetDomainObservation
+	syncObservationCheckedDomains  [][]string
+	syncServiceAssetObservations   [][]repository.AssetDomainServiceAssetObservation
+	syncServiceAssetCheckedDomains [][]string
+}
 
 func (s *assetDomainRepositoryStub) List(context.Context, dto.ListAssetDomainsQuery) (*dto.PageResult[repository.AssetDomainListRecord], error) {
 	return &dto.PageResult[repository.AssetDomainListRecord]{}, nil
 }
 
 func (s *assetDomainRepositoryStub) ListNetworkItems(context.Context) ([]repository.AssetDomainNetworkItem, error) {
-	return nil, nil
+	return s.networkItems, nil
 }
 
-func (s *assetDomainRepositoryStub) SyncObservations(context.Context, []repository.AssetDomainObservation, []string, time.Time) error {
+func (s *assetDomainRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetDomainObservation, checkedDomains []string, _ time.Time) error {
+	s.syncObservationValues = append(s.syncObservationValues, append([]repository.AssetDomainObservation(nil), observations...))
+	s.syncObservationCheckedDomains = append(s.syncObservationCheckedDomains, append([]string(nil), checkedDomains...))
 	return nil
 }
 
-func (s *assetDomainRepositoryStub) SyncServiceAssets(context.Context, []repository.AssetDomainServiceAssetObservation, []string, time.Time) error {
+func (s *assetDomainRepositoryStub) SyncServiceAssets(_ context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, _ time.Time) error {
+	s.syncServiceAssetObservations = append(s.syncServiceAssetObservations, append([]repository.AssetDomainServiceAssetObservation(nil), observations...))
+	s.syncServiceAssetCheckedDomains = append(s.syncServiceAssetCheckedDomains, append([]string(nil), checkedDomains...))
 	return nil
 }
 

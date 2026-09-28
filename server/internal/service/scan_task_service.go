@@ -879,7 +879,8 @@ func (s *scanTaskService) finishSuccessTask(taskID int64, runtime *scanTaskRunti
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
-	runtime.closeResultQueues()
+	runtime.closeVulnerabilityQueue()
+	s.closeAssetDomainServiceAssetQueue(runtime, true)
 	s.archiveStoredResponses(taskID, runtime.state)
 
 	state := runtime.state
@@ -890,6 +891,57 @@ func (s *scanTaskService) finishSuccessTask(taskID int64, runtime *scanTaskRunti
 	_ = s.repository.UpdateStatus(context.Background(), taskID, "success", nil, &finishedAt)
 	s.cleanupResumeFile(taskID)
 	s.releaseState(taskID, runtime)
+}
+
+func (s *scanTaskService) closeAssetDomainServiceAssetQueue(runtime *scanTaskRuntime, syncStale bool) {
+	if runtime == nil || runtime.assetDomainServiceAssetQueue == nil {
+		return
+	}
+	queue := runtime.assetDomainServiceAssetQueue
+	queue.CloseAndWait()
+	if syncStale {
+		s.syncFinishedAssetDomainObservations(queue, runtime.state)
+		s.syncFinishedAssetDomainServiceAssets(queue, runtime.state)
+	}
+	runtime.assetDomainServiceAssetQueue = nil
+}
+
+func (s *scanTaskService) syncFinishedAssetDomainObservations(queue *assetDomainServiceAssetQueue, state *scanruntime.State) {
+	if s.assetDomainRepository == nil || queue == nil {
+		return
+	}
+	checkedDomains := queue.CheckedDomains()
+	if len(checkedDomains) == 0 {
+		return
+	}
+	observations := queue.DomainObservations()
+	if err := s.assetDomainRepository.SyncObservations(context.Background(), observations, checkedDomains, time.Now()); err != nil {
+		if s.logger != nil {
+			s.logger.Error("sync finished asset domain observations failed", "alive_domain_count", len(observations), "checked_domain_count", len(checkedDomains), "error", err)
+		}
+		if state != nil {
+			state.Append("warn", "asset_domain_final_sync_failed", "扫描完成，但同步域名资产最终存活状态失败")
+		}
+	}
+}
+
+func (s *scanTaskService) syncFinishedAssetDomainServiceAssets(queue *assetDomainServiceAssetQueue, state *scanruntime.State) {
+	if s.assetDomainRepository == nil || queue == nil {
+		return
+	}
+	checkedDomains := queue.CheckedDomains()
+	if len(checkedDomains) == 0 {
+		return
+	}
+	observations := queue.Observations()
+	if err := s.assetDomainRepository.SyncServiceAssets(context.Background(), observations, checkedDomains, time.Now()); err != nil {
+		if s.logger != nil {
+			s.logger.Error("sync finished asset domain service assets failed", "service_asset_count", len(observations), "checked_domain_count", len(checkedDomains), "error", err)
+		}
+		if state != nil {
+			state.Append("warn", "asset_domain_service_asset_final_sync_failed", "扫描完成，但同步域名组件最终存活状态失败")
+		}
+	}
 }
 
 func (s *scanTaskService) finishCancelledTask(taskID int64, runtime *scanTaskRuntime, startedAt *time.Time) {

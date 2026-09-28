@@ -98,8 +98,11 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	if len(probeResult.CheckedDomains) == 0 {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
-	if err := s.assetDomainRepository.SyncObservations(ctx, probeResult.Observations, probeResult.CheckedDomains, time.Now()); err != nil {
+	if err := s.assetDomainRepository.SyncObservations(ctx, probeResult.Observations, nil, time.Now()); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
@@ -111,7 +114,12 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		}
 		return nil
 	}
-	if err := s.assetDomainRepository.SyncServiceAssets(ctx, probeResult.ServiceAssets, probeResult.CheckedDomains, time.Now()); err != nil {
+	if serviceAssetQueue != nil {
+		serviceAssetQueue.RecordDomainObservations(probeResult.Observations)
+		serviceAssetQueue.RecordCheckedDomains(probeResult.CheckedDomains)
+		serviceAssetQueue.record(probeResult.ServiceAssets)
+	}
+	if err := s.assetDomainRepository.SyncServiceAssets(ctx, probeResult.ServiceAssets, nil, time.Now()); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
@@ -143,8 +151,13 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			if state != nil {
 				state.Append("warn", "asset_domain_fingerprint_template_failed", "扫描前域名组件指纹模板识别失败，已继续后续扫描")
 			}
-		} else if state != nil {
-			state.Append("info", "asset_domain_fingerprint_template_finished", "智能主动指纹识别完成，"+assetDomainComponentCountSummary(activeServiceAssets))
+		} else {
+			if serviceAssetQueue != nil {
+				serviceAssetQueue.record(activeServiceAssets)
+			}
+			if state != nil {
+				state.Append("info", "asset_domain_fingerprint_template_finished", "智能主动指纹识别完成，"+assetDomainComponentCountSummary(activeServiceAssets))
+			}
 		}
 	}
 	return nil

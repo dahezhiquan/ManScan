@@ -26,15 +26,17 @@ type assetDomainServiceAssetResultEvent struct {
 }
 
 type assetDomainServiceAssetQueue struct {
-	service      *scanTaskService
-	state        *scanruntime.State
-	resolver     *assetDomainFingerprintTargetResolver
-	events       chan assetDomainServiceAssetResultEvent
-	once         sync.Once
-	wg           sync.WaitGroup
-	observations []repository.AssetDomainServiceAssetObservation
-	mu           sync.Mutex
-	resolverMu   sync.RWMutex
+	service            *scanTaskService
+	state              *scanruntime.State
+	resolver           *assetDomainFingerprintTargetResolver
+	events             chan assetDomainServiceAssetResultEvent
+	once               sync.Once
+	wg                 sync.WaitGroup
+	domainObservations []repository.AssetDomainObservation
+	observations       []repository.AssetDomainServiceAssetObservation
+	checkedDomains     []string
+	mu                 sync.Mutex
+	resolverMu         sync.RWMutex
 }
 
 func newAssetDomainServiceAssetQueue(service *scanTaskService, states ...*scanruntime.State) *assetDomainServiceAssetQueue {
@@ -97,6 +99,50 @@ func (q *assetDomainServiceAssetQueue) Observations() []repository.AssetDomainSe
 	observations := make([]repository.AssetDomainServiceAssetObservation, 0, len(q.observations))
 	observations = append(observations, q.observations...)
 	return uniqueAssetDomainServiceAssetObservations(observations)
+}
+
+func (q *assetDomainServiceAssetQueue) RecordDomainObservations(observations []repository.AssetDomainObservation) {
+	if q == nil || len(observations) == 0 {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.domainObservations = uniqueAssetDomainObservations(append(q.domainObservations, observations...))
+}
+
+func (q *assetDomainServiceAssetQueue) DomainObservations() []repository.AssetDomainObservation {
+	if q == nil {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	observations := make([]repository.AssetDomainObservation, 0, len(q.domainObservations))
+	observations = append(observations, q.domainObservations...)
+	return uniqueAssetDomainObservations(observations)
+}
+
+func (q *assetDomainServiceAssetQueue) RecordCheckedDomains(domains []string) {
+	if q == nil || len(domains) == 0 {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.checkedDomains = uniqueNonEmptyStrings(append(q.checkedDomains, domains...))
+}
+
+func (q *assetDomainServiceAssetQueue) CheckedDomains() []string {
+	if q == nil {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	domains := make([]string, 0, len(q.checkedDomains))
+	domains = append(domains, q.checkedDomains...)
+	return uniqueNonEmptyStrings(domains)
 }
 
 func (q *assetDomainServiceAssetQueue) runWorker() {
@@ -164,6 +210,23 @@ func (q *assetDomainServiceAssetQueue) flush(batch []repository.AssetDomainServi
 	if err := q.service.assetDomainRepository.SyncServiceAssets(context.Background(), batch, nil, time.Now()); err != nil && q.service.logger != nil {
 		q.service.logger.Error("batch sync asset domain service assets failed", "count", len(batch), "error", err)
 	}
+}
+
+func uniqueAssetDomainObservations(values []repository.AssetDomainObservation) []repository.AssetDomainObservation {
+	result := make([]repository.AssetDomainObservation, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Domain = strings.TrimSpace(value.Domain)
+		if value.Domain == "" {
+			continue
+		}
+		if _, ok := seen[value.Domain]; ok {
+			continue
+		}
+		seen[value.Domain] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayload(ctx context.Context, payload map[string]interface{}) ([]repository.AssetDomainServiceAssetObservation, error) {

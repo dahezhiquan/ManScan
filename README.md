@@ -33,7 +33,7 @@
 
 ### 前置条件
 
-- Go 版本需满足 `go.mod` 中声明的 `1.25.7`
+- Go 版本需满足 `go.mod` 中声明的 `1.26.0`
 - 建议本地具备稳定网络，以便首次下载依赖和模板
 - 如果要运行 headless 模板，需要本机可用的 Chrome 或 Chromium 环境
 
@@ -94,6 +94,8 @@ go run ./examples/with_speed_control
 - `examples/advanced`：演示线程安全引擎和并发扫描
 - `examples/with_speed_control`：演示运行时速率与并发控制
 
+这些示例使用仓库中预设的公网测试目标，运行前请确认网络连通性，并确保测试行为符合目标站点的授权范围。
+
 ## 🌐 服务端启动
 
 `server/` 提供了基于 Gin 和 GORM 的 HTTP 服务，当前已经支持模板列表、模板详情、扫描任务创建、扫描任务分页、扫描进度和日志流等接口。
@@ -106,12 +108,9 @@ go run ./examples/with_speed_control
 
 ### 1. 初始化数据库
 
-仓库提供了 SQL 脚本作为初始化参考：
+仓库在 [`docs/SQL/`](./docs/SQL/) 中提供了服务端涉及的建表脚本，覆盖扫描任务、任务结果、漏洞、域名资产、主机端口和配置中心等数据表。请根据当前服务端使用的功能执行对应的 `create_manscan_*.sql` 脚本，不要只初始化扫描任务表和任务结果表。
 
-- `docs/SQL/create_manscan_scan_tasks.sql`
-- `docs/SQL/create_manscan_task_results.sql`
-
-建议在执行前先核对脚本与当前服务端实现是否一致，尤其是在数据库字段有新增调整时。
+执行前请先核对脚本与当前服务端实现是否一致，尤其是在数据库字段有新增调整时。
 
 ### 2. 准备配置文件
 
@@ -125,6 +124,8 @@ mysql:
   port: 3306
   database: manscan_scan
 ```
+
+`config.yaml` 仅用于本地服务端配置，密码等敏感信息不要提交到版本库。仓库根目录的 `*.yaml` 默认会被 Git 忽略；生产环境请使用独立配置文件，并通过 `MANSCAN_CONFIG_FILE` 指定。
 
 可用环境变量：
 
@@ -231,13 +232,14 @@ data/
 - `data/templates/`：模板安装和更新后的默认目录
 - `data/cache/`：resume、crash、reporting 去重缓存
 - `data/runtime/`：服务端扫描任务的事件日志、进度快照和目标文件
+- `data/tmp/runtime/`：CLI 或 SDK 扫描过程中的临时运行目录
 - `data/responses/`：启用 `-store-resp` 后的请求响应落盘目录
 - `data/reports/`：JSON、JSONL、Markdown、SARIF、PDF 等默认报告目录
 
-如果需要切换默认数据根目录，可以设置：
+CLI 和 SDK 会通过 `MANSCAN_DATA_ROOT` 指定 ManScan 的工作根目录，默认数据目录仍然是该目录下的 `data/`。例如：
 
 ```bash
-MANSCAN_DATA_ROOT=/path/to/custom-data ./bin/nuclei -target https://example.com
+MANSCAN_DATA_ROOT=/path/to/manscan-root ./bin/nuclei -target https://example.com
 ```
 
 ## 🛠 开发规范
@@ -328,7 +330,7 @@ CLI 已内置多组调试参数，下面列出最常用的一批：
 - `MANSCAN_TEMPLATES_DIR`：显式覆盖服务端模板目录
 - `MANSCAN_CONFIG_FILE`：指定服务端配置文件
 - `MANSCAN_SERVER_ADDR`：覆盖服务端监听地址
-- `MANSCAN_DATA_ROOT`：覆盖默认 `data/` 根目录
+- `MANSCAN_DATA_ROOT`：指定 CLI/SDK 的工作根目录；默认运行数据写入该目录下的 `data/`
 
 ## ❓ 常见问题
 
@@ -339,7 +341,7 @@ CLI 已内置多组调试参数，下面列出最常用的一批：
 解决：
 
 - 运行 `go version` 检查本地版本
-- 升级到 `go.mod` 声明的 `1.25.7`
+- 升级到 `go.mod` 声明的 `1.26.0`
 - 然后重新执行 `go mod download` 和 `go build -o ./bin/nuclei ./cmd/nuclei`
 
 ### 2. 扫描时提示模板不存在或版本不正确
@@ -362,7 +364,7 @@ CLI 已内置多组调试参数，下面列出最常用的一批：
 
 - 这属于正常行为
 - 详细用途可查看 [`DATA.md`](./DATA.md)
-- 如需改位置，可设置 `MANSCAN_DATA_ROOT`
+- 如需更换 CLI/SDK 的工作根目录，可设置 `MANSCAN_DATA_ROOT`；实际数据目录为该目录下的 `data/`
 
 ### 4. `go run ./server/cmd/server` 启动失败
 
