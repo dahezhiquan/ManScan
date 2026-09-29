@@ -97,12 +97,21 @@ func (p TaskProgressSnapshot) MarshalJSON() ([]byte, error) {
 }
 
 type TaskLogEvent struct {
-	Seq     int64     `json:"seq"`
-	Time    time.Time `json:"time"`
-	Level   string    `json:"level"`
-	Type    string    `json:"type"`
-	Message string    `json:"message"`
-	Tags    []string  `json:"tags,omitempty"`
+	Seq        int64     `json:"seq"`
+	Time       time.Time `json:"time"`
+	Level      string    `json:"level"`
+	Type       string    `json:"type"`
+	Message    string    `json:"message"`
+	Tags       []string  `json:"tags,omitempty"`
+	ResultKey  string    `json:"result_key,omitempty"`
+	TemplateID string    `json:"template_id,omitempty"`
+	Severity   string    `json:"severity,omitempty"`
+}
+
+type ResultLogMetadata struct {
+	ResultKey  string
+	TemplateID string
+	Severity   string
 }
 
 type TaskLogsPage struct {
@@ -279,14 +288,20 @@ func (s *State) Append(level, eventType, message string) {
 }
 
 // AppendResult records a match event with normalized template tags.
-func (s *State) AppendResult(message string, tags []string) {
-	s.AppendEvent(TaskLogEvent{
+func (s *State) AppendResult(message string, tags []string, metadata ...ResultLogMetadata) {
+	event := TaskLogEvent{
 		Time:    time.Now(),
 		Level:   "match",
 		Type:    "result",
 		Message: message,
 		Tags:    NormalizeResultTags(tags),
-	})
+	}
+	if len(metadata) > 0 {
+		event.ResultKey = strings.TrimSpace(metadata[0].ResultKey)
+		event.TemplateID = strings.TrimSpace(metadata[0].TemplateID)
+		event.Severity = normalizeResultSeverity(metadata[0].Severity)
+	}
+	s.AppendEvent(event)
 }
 
 func (s *State) AppendEvent(event TaskLogEvent) {
@@ -493,6 +508,86 @@ func IsInfoSeverity(severity string) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeResultSeverity(severity string) string {
+	return strings.ToLower(strings.TrimSpace(severity))
+}
+
+func BuildFingerprintResultKey(domain, component string) string {
+	return buildStableResultKey("fingerprint", domain, component)
+}
+
+func ResultLogMetadataFromJSONPayload(payload map[string]interface{}, tags []string) ResultLogMetadata {
+	templateID := FirstNonEmpty(strings.TrimSpace(AsString(payload["template-id"])), "unknown-template")
+	severity := ""
+	if infoValue, ok := payload["info"].(map[string]interface{}); ok {
+		severity = AsString(infoValue["severity"])
+	}
+	if severity == "" {
+		severity = AsString(payload["severity"])
+	}
+	if severity == "" {
+		severity = "unknown"
+	}
+	return ResultLogMetadata{
+		ResultKey:  ResultKeyFromJSONPayload(payload, tags),
+		TemplateID: templateID,
+		Severity:   severity,
+	}
+}
+
+func ResultKeyFromJSONPayload(payload map[string]interface{}, tags []string) string {
+	kind := "vulnerability"
+	if HasFingerprintTag(tags) {
+		kind = "fingerprint"
+	}
+	templateID := FirstNonEmpty(strings.TrimSpace(AsString(payload["template-id"])), "unknown-template")
+	input := FirstNonEmpty(
+		AsString(payload["input"]),
+		AsString(payload["host-input"]),
+	)
+	matchedAt := FirstNonEmpty(
+		AsString(payload["matched-at"]),
+		AsString(payload["url"]),
+		AsString(payload["host"]),
+	)
+	matcherName := FirstNonEmpty(
+		AsString(payload["matcher-name"]),
+		AsString(payload["extractor-name"]),
+	)
+	return buildStableResultKey(
+		kind,
+		templateID,
+		input,
+		matchedAt,
+		matcherName,
+		resultKeyValue(payload["extracted-results"]),
+	)
+}
+
+func buildStableResultKey(kind string, parts ...string) string {
+	values := make([]string, 0, len(parts)+1)
+	values = append(values, normalizeResultKeyPart(kind))
+	for _, part := range parts {
+		values = append(values, normalizeResultKeyPart(part))
+	}
+	return strings.Join(values, "\x1f")
+}
+
+func normalizeResultKeyPart(value string) string {
+	return strings.TrimSpace(strings.ReplaceAll(value, "\x1f", " "))
+}
+
+func resultKeyValue(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(encoded)
 }
 
 // NormalizeResultTags trims, lowercases and deduplicates result tags.
@@ -853,7 +948,7 @@ func loadExistingResultMessages(path string) map[string]struct{} {
 		if !strings.EqualFold(event.Level, "match") || !strings.EqualFold(event.Type, "result") {
 			continue
 		}
-		key := strings.TrimSpace(event.Message)
+		key := strings.TrimSpace(event.ResultKey)
 		if key == "" {
 			continue
 		}
@@ -879,7 +974,10 @@ func ReadResultSummaryFromMatchLog(path string, targetCount int) (ResultSummary,
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			continue
 		}
-		key := frontendResultEventKey(event)
+		if !strings.EqualFold(event.Level, "match") || !strings.EqualFold(event.Type, "result") {
+			continue
+		}
+		key := strings.TrimSpace(event.ResultKey)
 		if key == "" {
 			continue
 		}
@@ -888,15 +986,15 @@ func ReadResultSummaryFromMatchLog(path string, targetCount int) (ResultSummary,
 		}
 		seenResults[key] = struct{}{}
 
-		_, severity := parseResultMessageLabels(key)
 		if HasFingerprintTag(event.Tags) {
 			summary.TechCount++
 			continue
 		}
+		severity := normalizeResultSeverity(event.Severity)
 		if IsInfoSeverity(severity) {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(severity)) {
+		switch severity {
 		case "critical":
 			summary.CriticalCount++
 		case "high":
@@ -911,33 +1009,6 @@ func ReadResultSummaryFromMatchLog(path string, targetCount int) (ResultSummary,
 		return ResultSummary{}, false, err
 	}
 	return summary, len(seenResults) > 0, nil
-}
-
-func parseResultMessageLabels(message string) (string, string) {
-	message = strings.TrimSpace(message)
-	if !strings.HasPrefix(message, "[") {
-		return "", ""
-	}
-
-	labels := make([]string, 0, 3)
-	remaining := message
-	for strings.HasPrefix(remaining, "[") {
-		end := strings.Index(remaining, "]")
-		if end <= 0 {
-			break
-		}
-		labels = append(labels, strings.TrimSpace(remaining[1:end]))
-		remaining = strings.TrimSpace(remaining[end+1:])
-	}
-	if len(labels) == 0 {
-		return "", ""
-	}
-	templateName := labels[0]
-	severity := ""
-	if len(labels) > 1 {
-		severity = labels[1]
-	}
-	return templateName, severity
 }
 
 func writeLogLine(file *os.File, encoded []byte) {
@@ -1089,10 +1160,11 @@ func HandleJSONResultLineWithResultHandler(line string, state *State, resultHand
 		tags = ResultTagsFromInfo(infoValue)
 	}
 	message := FormatJSONResultMessage(payload)
-	if !state.RecordResult(FirstNonEmpty(templateID, "unknown-template"), templateName, severityText, tags, message) {
+	metadata := ResultLogMetadataFromJSONPayload(payload, tags)
+	if !state.RecordResult(FirstNonEmpty(templateID, "unknown-template"), templateName, severityText, tags, metadata.ResultKey) {
 		return true
 	}
-	state.AppendResult(message, tags)
+	state.AppendResult(message, tags, metadata)
 	if resultHandler != nil {
 		resultHandler(payload)
 	}
@@ -1409,7 +1481,7 @@ func frontendResultEventKey(event TaskLogEvent) string {
 		}
 		return ""
 	}
-	return strings.TrimSpace(event.Message)
+	return strings.TrimSpace(event.ResultKey)
 }
 
 func appendLatestFrontendEvent(events []TaskLogEvent, seenResults map[string]struct{}, indexedResults map[string]int, matched, limit int, event TaskLogEvent) ([]TaskLogEvent, int) {

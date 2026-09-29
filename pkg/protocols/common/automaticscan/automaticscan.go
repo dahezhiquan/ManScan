@@ -322,7 +322,7 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 	finalTags = sliceutil.Dedupe(finalTags)
 	finalTags = filterAutomaticScanExecutionTags(finalTags)
 
-	s.opts.Logger.Info().Msgf("%s 已完成自动指纹识别：%s", input.Input, strings.Join(finalTags, ", "))
+	s.opts.Logger.Info().Msgf("%s 已完成自动指纹识别：%s", input.Input, automaticFingerprintTagsMessage(finalTags))
 
 	if len(finalTags) == 0 {
 		gologger.Warning().Msgf("Skipping automatic scan since no vulnerability tags were found on %v\n", input.Input)
@@ -415,6 +415,13 @@ func filterAutomaticScanExecutionTags(tags []string) []string {
 		filtered = append(filtered, tag)
 	}
 	return filtered
+}
+
+func automaticFingerprintTagsMessage(tags []string) string {
+	if len(tags) == 0 {
+		return "未发现"
+	}
+	return strings.Join(tags, ", ")
 }
 
 func filterHTTPBasedTemplates(values []*templates.Template) []*templates.Template {

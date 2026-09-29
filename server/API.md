@@ -760,7 +760,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
   - `direction=forward` 用于按序向后读取增量日志，返回 `seq > offset` 的事件；`next_offset` 表示本次已处理的最大 `seq`，下一次请求可直接作为 `offset` 传回。
   - `direction=before` 用于向前翻旧日志，返回 `seq < offset` 的最近一页可见事件；当 `offset=0` 时返回当前尾部最近一页；`next_offset` 表示本页最早可见事件的 `seq`，下一次请求可直接作为 `offset` 继续翻更早日志。
   - 运行中任务也支持 `direction=before`，可用于浏览器刷新后从尾部向前回补历史日志。
-  - `result` 类型事件可能包含 `tags` 字段，用于记录该命中结果的模板标签。
+  - `result` 类型事件可能包含 `tags`、`result_key`、`template_id`、`severity` 字段：`tags` 用于记录该命中结果的模板标签；`result_key` 为后端生成的不透明结构化去重键，前端只应作为稳定标识使用，不应解析其内部格式；`template_id` 和 `severity` 分别表示命中模板 ID 与严重级别。
   - 当任务开启 `matcher_status` 时，模板匹配失败会以 `level=info`、`type=match_failure` 输出为调试日志；这类事件不计入 `progress.matched`，不写入漏洞结果。
 
 - 错误码说明：
@@ -793,6 +793,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=
   - `progress` 与 `result` 类型事件会额外携带最新的 `task` 统计快照，便于前端实时刷新漏洞数、指纹数、目标数和插件数
   - `asset_domain_probe_finished` 类型事件会额外携带最新的 `task` 和 `progress` 快照，前端可在扫描前资产存活探测结束后立即刷新存活主机数和无响应主机数
   - `result` 类型事件中的 `event.tags` 为该命中结果的模板标签，包含 `tech`、`detect` 或 `favicon` 任一标签时计入 `tech_count`
+  - `result` 类型事件中的 `event.result_key` 为后端生成的不透明结构化去重键，历史统计恢复、实时日志去重和续传补发均以该字段为准；`event.template_id` 与 `event.severity` 用于结构化统计分类。
   - 开启 `matcher_status` 后产生的 `match_failure` 事件只用于展示匹配失败调试信息，不会触发漏洞命中统计刷新
   - 任务结束后发送 `complete`
 
@@ -821,7 +822,7 @@ data: {"task_id":1,"seq":3,"level":"info","type":"asset_domain_probe_finished","
 
 ```text
 event: event
-data: {"task_id":1,"seq":3,"level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":4,"tech_count":4,"plugin_count":50,"target_count":1},"event":{"seq":3,"time":"2026-06-09T21:01:02+08:00","level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","tags":["cve"]},"nextOffset":3}
+data: {"task_id":1,"seq":3,"level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","task":{"id":1,"status":"running","critical_count":0,"high_count":1,"medium_count":2,"low_count":0,"info_count":4,"tech_count":4,"plugin_count":50,"target_count":1},"event":{"seq":3,"time":"2026-06-09T21:01:02+08:00","level":"match","type":"result","message":"[HTTP 安全响应头缺失][strict-transport-security] 命中 [http://example.com/]","tags":["cve"],"result_key":"vulnerability\\u001fhttp-missing-security-headers\\u001fhttps://example.com\\u001fhttps://example.com\\u001fstrict-transport-security\\u001f","template_id":"http-missing-security-headers","severity":"high"},"nextOffset":3}
 ```
 
 - `match_failure` 事件示例：

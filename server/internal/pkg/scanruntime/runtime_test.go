@@ -143,10 +143,10 @@ func TestBuildFrontendEventsBeforeKeepsLatestDuplicateResult(t *testing.T) {
 	t.Parallel()
 
 	events := []TaskLogEvent{
-		{Seq: 1, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com"},
+		{Seq: 1, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com", ResultKey: "demo"},
 		{Seq: 2, Level: "info", Type: "progress", Message: "扫描进度更新"},
-		{Seq: 3, Level: "match", Type: "result", Message: "[other][info] 命中 http://example.com"},
-		{Seq: 4, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com"},
+		{Seq: 3, Level: "match", Type: "result", Message: "[other][info] 命中 http://example.com", ResultKey: "other"},
+		{Seq: 4, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com", ResultKey: "demo"},
 	}
 
 	page := buildFrontendEventsBefore(events, 0, 10)
@@ -261,10 +261,10 @@ func TestReadFrontendLogEventsBeforeFromFileKeepsLatestDuplicateResult(t *testin
 	path := filepath.Join(dir, "events.jsonl")
 	now := time.Now()
 	events := []TaskLogEvent{
-		{Seq: 1, Time: now, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com"},
+		{Seq: 1, Time: now, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com", ResultKey: "demo"},
 		{Seq: 2, Time: now, Level: "info", Type: "progress", Message: "扫描进度更新"},
-		{Seq: 3, Time: now, Level: "match", Type: "result", Message: "[other][info] 命中 http://example.com"},
-		{Seq: 4, Time: now, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com"},
+		{Seq: 3, Time: now, Level: "match", Type: "result", Message: "[other][info] 命中 http://example.com", ResultKey: "other"},
+		{Seq: 4, Time: now, Level: "match", Type: "result", Message: "[demo][info] 命中 http://example.com", ResultKey: "demo"},
 	}
 	writeTaskLogEvents(t, path, events)
 
@@ -566,6 +566,19 @@ func TestHandleJSONResultLineDeduplicatesRepeatedMatches(t *testing.T) {
 	if got := bytes.Count(data, []byte{'\n'}); got != 1 {
 		t.Fatalf("match.log lines = %d, want 1", got)
 	}
+	var event TaskLogEvent
+	if err := json.Unmarshal(bytes.TrimSpace(data), &event); err != nil {
+		t.Fatalf("Unmarshal(match.log event) error = %v", err)
+	}
+	if event.ResultKey == "" {
+		t.Fatalf("ResultKey is empty in match.log event: %+v", event)
+	}
+	if event.TemplateID != "http-missing-security-headers" {
+		t.Fatalf("TemplateID = %q, want http-missing-security-headers", event.TemplateID)
+	}
+	if event.Severity != "medium" {
+		t.Fatalf("Severity = %q, want medium", event.Severity)
+	}
 }
 
 func TestHandleJSONResultLineCallsResultHandlerForNewMatchesOnly(t *testing.T) {
@@ -782,10 +795,11 @@ func TestReadResultSummaryFromMatchLogDeduplicatesMatches(t *testing.T) {
 	path := filepath.Join(dir, "match.log")
 	now := time.Now()
 	events := []TaskLogEvent{
-		{Seq: 1, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/"},
-		{Seq: 2, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/"},
-		{Seq: 3, Time: now, Level: "match", Type: "result", Message: "[任意文件读取][high] 命中 http://example.com/"},
-		{Seq: 4, Time: now, Level: "match", Type: "result", Message: "[Nginx Detect][info] 命中 http://example.com/", Tags: []string{"detect"}},
+		{Seq: 1, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/", ResultKey: "security-header", Severity: "info"},
+		{Seq: 2, Time: now, Level: "match", Type: "result", Message: "[HTTP 安全响应头缺失][info][strict-transport-security] 命中 http://example.com/", ResultKey: "security-header", Severity: "info"},
+		{Seq: 3, Time: now, Level: "match", Type: "result", Message: "[任意文件读取][high] 命中 http://example.com/", ResultKey: "file-read", Severity: "high"},
+		{Seq: 4, Time: now, Level: "match", Type: "result", Message: "[Nginx Detect][info] 命中 http://example.com/", Tags: []string{"detect"}, ResultKey: "nginx", Severity: "info"},
+		{Seq: 5, Time: now, Level: "match", Type: "result", Message: "[历史无结构化字段][high] 命中 http://legacy.example.com/"},
 	}
 	writeTaskLogEvents(t, path, events)
 

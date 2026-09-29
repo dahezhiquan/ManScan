@@ -195,11 +195,15 @@ func recordAssetDomainFingerprintObservations(state *scanruntime.State, values [
 		return
 	}
 	for _, value := range uniqueAssetDomainServiceAssetObservations(values) {
-		key := "asset-domain-fingerprint\x00" + value.Domain + "\x00" + normalizeAssetDomainComponentName(value.AppName)
+		key := scanruntime.BuildFingerprintResultKey(value.Domain, normalizeAssetDomainComponentName(value.AppName))
 		if !state.RecordResult("asset-domain-fingerprint", value.AppName, "info", []string{"tech"}, key) {
 			continue
 		}
-		state.AppendResult(fmt.Sprintf("[域名组件指纹识别][info][%s] 命中 %s", value.AppName, value.Domain), []string{"tech"})
+		state.AppendResult(
+			fmt.Sprintf("[域名组件指纹识别][info][%s] 命中 %s", value.AppName, value.Domain),
+			[]string{"tech"},
+			scanruntime.ResultLogMetadata{ResultKey: key, TemplateID: "asset-domain-fingerprint", Severity: "info"},
+		)
 	}
 }
 

@@ -28,6 +28,12 @@ func TestFilterAutomaticScanExecutionTags(t *testing.T) {
 	require.Equal(t, []string{"python", "uvicorn"}, tags)
 }
 
+func TestAutomaticFingerprintTagsMessage(t *testing.T) {
+	require.Equal(t, "nginx, php", automaticFingerprintTagsMessage([]string{"nginx", "php"}))
+	require.Equal(t, "未发现", automaticFingerprintTagsMessage(nil))
+	require.Equal(t, "未发现", automaticFingerprintTagsMessage([]string{}))
+}
+
 func TestMappedTemplateCountDeduplicatesAcrossTargets(t *testing.T) {
 	targets := []mappedTarget{
 		{finalTemplates: []*templates.Template{

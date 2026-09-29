@@ -1,3 +1,14 @@
+## 2026-09-29 11:09 自动指纹识别空结果显示未发现
+
+- 变动目录：`pkg/protocols/common/automaticscan/`
+- 变动文件：`pkg/protocols/common/automaticscan/automaticscan.go`、`pkg/protocols/common/automaticscan/automaticscan_test.go`
+- 具体修改内容：
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中调整自动指纹识别完成日志的 tags 展示逻辑：当最终没有任何识别结果时，输出 `<target> 已完成自动指纹识别：未发现`，不再在冒号后保留空内容。
+  - 在 `pkg/protocols/common/automaticscan/automaticscan_test.go` 中新增日志 tags 文案格式回归测试，覆盖非空 tags、nil tags 和空切片场景。
+- 修改目的或影响：
+  - 前端扫描日志在目标未识别到指纹时能够展示明确的“未发现”，避免出现空白结果造成理解困惑。
+  - 这次修改只影响自动指纹识别日志文案，不改变指纹识别、模版选择和漏洞扫描执行逻辑。
+
 ## 2026-09-28 20:40 非 HTTP 服务漏洞探测跳过 HTTP 模版
 
 - 变动目录：`pkg/protocols/common/assetdomainfingerprint/`、`pkg/protocols/common/automaticscan/`、`pkg/protocols/`、`pkg/core/`、`internal/runner/`、`internal/server/`、`lib/`
