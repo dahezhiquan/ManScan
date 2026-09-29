@@ -23,6 +23,7 @@ data/
 
 - 只有在对应功能被触发时，相关子目录和文件才会真正创建。
 - 如果用户显式通过命令行参数或环境变量指定了其他路径，则以用户指定路径为准。
+- 默认路径由 `pkg/catalog/config` 统一管理；`MANSCAN_DATA_ROOT` 可影响仓库根目录发现结果，最终默认数据目录仍是该根目录下的 `data/`。
 
 ## 默认一定会涉及的目录和文件
 
@@ -127,6 +128,8 @@ data/
 
 ## 扫描任务运行时目录
 
+服务端扫描任务会在 `data/runtime/<task-id>/` 下维护任务级运行态。该目录用于前端日志、SSE 订阅、进度恢复、暂停恢复和扫描子进程输入输出衔接。
+
 ### `data/runtime/<task-id>/targets.txt`
 
 - 触发条件：通过 `server` 创建扫描任务并进入执行阶段时。
@@ -134,12 +137,42 @@ data/
   - 保存当前任务整理后的目标列表。
   - 供扫描子进程通过 `-l` 参数读取。
 
+### `data/runtime/<task-id>/asset-domain-fingerprints.json`
+
+- 触发条件：服务端扫描任务执行扫描前域名资产存活与 Wappalyzer 指纹探测后。
+- 作用：
+  - 保存扫描前探测得到的目标、域名、`http_alive` 状态和 Wappalyzer 组件。
+  - 通过 `MANSCAN_ASSET_DOMAIN_FINGERPRINT_CACHE` 传给扫描子进程。
+  - 自动模版映射阶段命中缓存时复用 Wappalyzer 组件，避免重复发起同类 HTTP 指纹请求。
+  - 漏洞执行阶段命中 `http_alive=false` 时跳过 HTTP/headless 模版，同时保留 network、ssl、dns 等非 HTTP 模版执行。
+
+### `data/runtime/<task-id>/asset-domain-fingerprint-targets.txt`
+
+- 触发条件：非自动扫描任务在扫描前执行 ManScan 主动指纹模板识别时。
+- 作用：
+  - 保存本轮主动指纹子进程需要处理的目标列表。
+  - HTTP 存活目标会按完整 `tech,detect,favicon` 指纹模板执行。
+  - HTTP 不存活目标会按排除 `http,headless` 协议后的指纹模板执行，以覆盖 TCP/MySQL 等非 HTTP 服务识别。
+
+说明：
+
+- 当前实现会复用同一路径分别写入“HTTP 存活目标”和“HTTP 不存活目标”两批主动指纹目标；两批子进程顺序执行，每批内部仍按 CLI 并发参数处理目标和模板。
+
+### `data/runtime/<task-id>/asset-domain-fingerprint-error.log`
+
+- 触发条件：非自动扫描任务执行扫描前主动指纹模板识别时。
+- 作用：
+  - 保存主动指纹子进程通过 `-elog` 输出的错误日志。
+  - 用于排查扫描前组件识别阶段的模板执行或请求错误。
+
 ### `data/runtime/<task-id>/progress.json`
 
 - 触发条件：扫描任务初始化运行时状态后。
 - 作用：
   - 保存当前任务的进度快照。
   - 包括主机数、模板数、预估总请求数、已完成请求数、错误数和完成状态等字段。
+  - 自动模版映射阶段在总请求数尚未确定时会保持 `calculating` 状态；全部目标完成映射后再写入稳定的总量和完成度。
+  - 扫描前存活探测会写入 `alive_hosts`、`unresponsive_hosts` 等主机统计字段，供前端展示。
 
 ### `data/runtime/<task-id>/events.jsonl`
 
@@ -147,6 +180,14 @@ data/
 - 作用：
   - 按 JSONL 持续记录任务事件。
   - 供扫描详情页日志列表与 SSE 实时日志流读取。
+  - 自动指纹识别 tags、自动映射加载漏洞模版数量、HTTP 状态码统计、响应归档状态等会以结构化事件形式进入该文件。
+
+### `data/runtime/<task-id>/match.log`
+
+- 触发条件：扫描任务产生前端需要展示或去重的命中结果时。
+- 作用：
+  - 保存已命中结果的日志记录。
+  - 服务端恢复任务状态时会读取该文件重建命中去重集合，避免暂停恢复或进程重启后重复计数。
 
 ### `data/runtime/<task-id>/error.log`
 
@@ -162,6 +203,18 @@ data/
   - 保存扫描过程中真实发出的请求数。
   - HTTP 请求会排除项目缓存命中的情况，只统计实际出网请求。
 
+### `data/runtime/<task-id>/resume.cfg`
+
+- 触发条件：
+  - 服务端扫描任务被暂停时。
+  - 服务端恢复已暂停任务并将断点文件传给扫描子进程时。
+- 作用：
+  - 保存任务级暂停恢复断点。
+  - 恢复扫描时作为 `-resume` 参数传入扫描子进程。
+- 生命周期：
+  - 任务成功、失败、取消后会尝试清理。
+  - 暂停状态下会保留，供后续恢复。
+
 ## 响应落盘目录
 
 ### `data/responses/`
@@ -176,6 +229,22 @@ data/
 说明：
 
 - 其中的子目录和文件名会随 host、template、协议类型等运行上下文变化。
+
+### `data/responses/<task-id>/`
+
+- 触发条件：通过 `server` 创建扫描任务并启用响应落盘时。
+- 作用：
+  - 保存当前任务产生的请求/响应文件。
+  - 目录名使用任务 ID，便于后端按任务归档和下载。
+
+### `data/responses/<task-id>.zip`
+
+- 触发条件：服务端任务结束、失败或取消，且 `data/responses/<task-id>/` 存在时。
+- 作用：
+  - 保存该任务请求/响应目录的 ZIP 归档。
+  - 供任务详情中的请求/响应压缩包下载能力使用。
+- 注意：
+  - 暂停任务不会立即归档，避免恢复后继续写入响应目录时出现归档过期。
 
 ## 报告目录
 
@@ -258,6 +327,7 @@ data/
 - 响应落盘放到 `data/responses/`
 - 扫描任务运行时文件放到 `data/runtime/`
 - 报告放到 `data/reports/`
+- 扫描前域名指纹缓存、任务暂停断点、任务日志、任务进度和响应归档都以任务 ID 维度落在 `data/runtime/` 与 `data/responses/` 下
 - 统计文件放到 `data/stats/`
 
 这样可以把运行期产物全部收敛到仓库内，便于排查、备份、清理和按目录分类管理。

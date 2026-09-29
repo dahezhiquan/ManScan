@@ -2,6 +2,139 @@
 
 本文简要概述 ManScan 引擎的架构。随着引擎持续演进，本文档也会保持更新。
 
+## 当前整体架构
+
+ManScan 当前同时保留 CLI/SDK 扫描引擎能力，并在 `server` 目录下提供面向前端的扫描任务服务。整体调用链可以理解为：
+
+```text
+前端 / API
+  -> server/internal/handler
+  -> server/internal/service
+  -> server/internal/repository
+  -> 扫描任务运行态 data/runtime/<task-id>/
+  -> ManScan 扫描子进程 cmd/nuclei
+  -> internal/runner
+  -> pkg/catalog/loader + pkg/templates
+  -> pkg/core.Engine
+  -> pkg/protocols/*
+  -> pkg/output / server 结果队列 / 数据库存储
+```
+
+服务端遵循 Handler、Service、Repository 分层。Handler 只处理 HTTP 请求绑定和统一响应；Service 负责任务编排、状态切换、子进程生命周期、扫描前资产探测、结果入库和响应归档；Repository 负责数据库读写。
+
+扫描任务创建后，服务端会创建 `scanruntime.State`，在 `data/runtime/<task-id>/` 下维护 `events.jsonl`、`progress.json`、`match.log`、`error.log` 等运行态文件，并通过 SSE 和日志分页接口向前端提供实时进度与历史日志。
+
+## 服务端扫描任务编排
+
+服务端扫描任务的主流程位于 `server/internal/service/scan_task_service.go`：
+
+1. `Create` 规范化请求参数，创建任务记录，初始化运行态和结果队列。
+2. `launchTask` 为每个任务启动独立 goroutine，进入 `runTask`。
+3. `executeTaskPlan` 负责扫描前准备、预探测、生成目标文件、组装 CLI 参数并启动扫描子进程。
+4. 子进程 stdout/stderr 由 `scanruntime` 流式解析，结果事件进入漏洞队列和域名组件队列。
+5. 任务结束时根据状态写入任务结果、关闭队列、同步资产组件、归档响应文件并清理断点。
+
+任务暂停、取消和恢复通过 `scanTaskRuntime` 协调：
+
+- 暂停会先请求扫描子进程安全退出，并保留 `data/runtime/<task-id>/resume.cfg`。
+- 恢复会重新构建运行态，复用原任务配置并将断点文件传给扫描子进程。
+- 取消会终止运行态并在可行时归档已落盘的请求/响应。
+- 删除任务会清理对应的运行时目录。
+
+结果入库采用异步队列：
+
+- `vulnerabilityQueue` 使用 2 个 worker，按批量 50 条或 1 秒间隔写入漏洞结果。
+- `assetDomainServiceAssetQueue` 使用单 worker，按批量 100 条或 1 秒间隔同步域名组件，并维护当前任务内的组件去重与目标归属。
+
+## 扫描前域名资产探测
+
+服务端任务在主扫描子进程启动前，会尝试执行域名资产存活与指纹探测。该逻辑位于 `server/internal/service/scan_task_asset_domain.go`。
+
+触发条件：
+
+- 存在资产域名仓储能力。
+- 任务目标非空。
+- 未启用 `OfflineHTTP`。
+- 未启用 `DisableHTTPProbe`。
+
+阶段行为：
+
+- 使用 `ProbeConcurrency` 控制目标级并发；未配置时回退到 `BulkSize`，再回退默认 50。
+- 对每个目标尝试构造 HTTP/HTTPS 探测地址，记录 HTTP 状态码、标题、请求、响应和网络区域。
+- 使用 Wappalyzer 从响应头和响应体中提取被动组件。
+- 将存活结果同步到域名资产表，将组件同步到服务资产表。
+- 写出 `data/runtime/<task-id>/asset-domain-fingerprints.json`，供扫描子进程复用。
+
+该指纹缓存包含目标、域名、`http_alive` 状态和组件列表。它通过环境变量 `MANSCAN_ASSET_DOMAIN_FINGERPRINT_CACHE` 注入扫描子进程，并在自动模版映射和漏洞执行阶段共同使用。
+
+## 扫描前主动指纹识别
+
+非自动扫描任务会在预探测后额外执行 ManScan 主动指纹模板识别，用于补充组件信息。
+
+当前实现按两批处理：
+
+- HTTP 存活目标：执行完整 `tech,detect,favicon` 指纹模板。
+- HTTP 不存活目标：额外执行一批排除 `http,headless` 协议后的指纹模板，保留 TCP、MySQL、Redis、SSL 等非 HTTP 服务识别能力。
+
+两批主动指纹子进程之间是顺序执行；每批内部仍由扫描引擎按 `BulkSize`、`TemplateThreads`、`HeadlessBulkSize`、`HeadlessTemplateThreads` 等参数并发处理目标和模板。
+
+主动指纹结果会：
+
+- 进入 `assetDomainServiceAssetQueue` 并同步到服务资产表。
+- 写入前端可见的组件命中日志。
+- 参与后续目标归属，优先通过结果中的 `input` 字段关联原始输入，降低跳转场景下的跨目标误归属。
+
+## 自动模版映射
+
+启用 `AutomaticScan` 时，runner 会进入 `pkg/protocols/common/automaticscan`。自动扫描不是先串行识别完所有目标再统一漏洞扫描，而是目标级流水线：
+
+1. 多个目标按 `BulkSize` 并发执行指纹映射。
+2. 单个目标先复用扫描前 Wappalyzer 缓存；未命中缓存时才发起 Wappalyzer HTTP 请求。
+3. detection templates 阶段按 `TemplateThreads` 并发执行 `tech,detect,favicon` 模板。
+4. 合并 Wappalyzer tags、模板 tags、matcher name 和用户传入 tags，并过滤内部 `detect` 标签。
+5. 当前目标映射出漏洞模板后立即启动该目标的漏洞扫描，其他目标可以继续指纹映射。
+6. 全部目标完成映射后，再统一发布稳定的预估总请求数和实际漏洞模板数量。
+
+进度统计采用总量闸门：
+
+- 指纹映射期间总量未知，前端进度保持 `calculating`。
+- 漏洞阶段产生的动态总量增量会先缓存。
+- 所有目标映射完成后发布总量，前端进度切换为 `running`。
+
+当扫描前缓存标记某个目标 `http_alive=false` 时：
+
+- 自动映射跳过重复 Wappalyzer 请求。
+- detection templates 会过滤 HTTP/headless 指纹模板。
+- 最终加载出的漏洞模板会先过滤 HTTP/headless 模板。
+- 核心执行器仍会在真正执行前兜底跳过 HTTP/headless 模板，避免绕过自动映射路径时产生无效 HTTP 请求。
+
+## 任务并发模型
+
+ManScan 当前存在多个层级的并发控制：
+
+- 服务端任务级：每个扫描任务由服务端独立 goroutine 执行。
+- 扫描前存活探测：目标级并发由 `ProbeConcurrency` 控制。
+- 自动模版映射：目标映射并发和目标漏洞扫描启动并发由 `BulkSize` 控制。
+- 自动映射 detection templates：单目标内指纹模板并发由 `TemplateThreads` 控制。
+- 普通漏洞扫描 `template-spray`：模板并发由 `TemplateThreads` 控制，每个模板内部目标并发由 `BulkSize` 控制。
+- 普通漏洞扫描 `host-spray`：目标并发由 `BulkSize + HeadlessBulkSize` 控制，单目标内模板并发由模板类型对应的 work pool 控制。
+- Headless 模板使用独立的 `HeadlessBulkSize` 和 `HeadlessTemplateThreads`。
+- nuclei 自带 HTTP 输入探测会用 `ProbeConcurrency` 调整 httpx 并发。
+- 请求发送还会受到全局 `RateLimit` / `RateLimitDuration` 限速约束。
+
+默认 `scan_strategy=auto` 当前会落到 `template-spray`。因此常规漏洞扫描可理解为“多个模板并发，每个模板并发打多个目标”。
+
+## 非 HTTP 服务处理
+
+扫描前探测会把 HTTP 不存活目标写入指纹缓存，并标记 `http_alive=false`。该标记不是跳过整个目标，而是用于减少无效 HTTP 请求：
+
+- 主动指纹阶段保留非 HTTP 协议模板。
+- 自动模版映射阶段保留非 HTTP 指纹识别能力。
+- 漏洞扫描阶段跳过 HTTP/headless 模板。
+- network、ssl、dns、file、javascript 等非 HTTP 模板继续执行。
+
+这套策略的目标是避免 TCP/MySQL/Redis/SSL 等服务因为 HTTP 探测失败而漏掉非 HTTP 漏洞探测，同时减少明显无效的 HTTP/headless 请求。
+
 ## pkg/templates
 
 ### Template
