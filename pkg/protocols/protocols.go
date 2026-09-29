@@ -27,6 +27,7 @@ import (
 	"ManScan/pkg/output"
 	"ManScan/pkg/progress"
 	"ManScan/pkg/projectfile"
+	"ManScan/pkg/protocols/common/assetdomainfingerprint"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/globalmatchers"
 	"ManScan/pkg/protocols/common/hosterrorscache"
@@ -109,6 +110,8 @@ type ExecutorOptions struct {
 	InteractshScope *interactsh.RequestScope
 	// HostErrorsCache is an optional cache for handling host errors
 	HostErrorsCache hosterrorscache.CacheInterface
+	// AssetDomainFingerprintCache carries scan-preflight HTTP liveness and fingerprint data.
+	AssetDomainFingerprintCache *assetdomainfingerprint.Cache
 	// Stop execution once first match is found (Assigned while parsing templates)
 	// Note: this is different from Options.StopAtFirstMatch (Assigned from CLI option)
 	StopAtFirstMatch bool
@@ -334,6 +337,7 @@ func (e *ExecutorOptions) Copy() *ExecutorOptions {
 		Interactsh:                   e.Interactsh,
 		InteractshScope:              e.InteractshScope,
 		HostErrorsCache:              e.HostErrorsCache,
+		AssetDomainFingerprintCache:  e.AssetDomainFingerprintCache,
 		StopAtFirstMatch:             e.StopAtFirstMatch,
 		Variables:                    e.Variables,
 		Constants:                    e.Constants,
@@ -516,6 +520,7 @@ func (e *ExecutorOptions) ApplyNewEngineOptions(n *ExecutorOptions) {
 	e.Interactsh = n.Interactsh
 	e.InteractshScope = n.InteractshScope
 	e.HostErrorsCache = n.HostErrorsCache
+	e.AssetDomainFingerprintCache = n.AssetDomainFingerprintCache
 	e.InputHelper = n.InputHelper
 	e.FuzzParamsFrequency = n.FuzzParamsFrequency
 	e.FuzzStatsDB = n.FuzzStatsDB

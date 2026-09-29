@@ -49,6 +49,7 @@ import (
 	"ManScan/pkg/progress"
 	"ManScan/pkg/projectfile"
 	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/assetdomainfingerprint"
 	"ManScan/pkg/protocols/common/automaticscan"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/globalmatchers"
@@ -677,6 +678,7 @@ func (r *Runner) RunEnumeration() error {
 		DoNotCache:          r.options.DoNotCacheTemplates,
 		Logger:              r.Logger,
 	}
+	executorOpts.AssetDomainFingerprintCache = assetdomainfingerprint.LoadFromEnv()
 
 	if config.DefaultConfig.IsDebugArgEnabled(config.DebugExportURLPattern) {
 		// Go StdLib style experimental/debug feature switch

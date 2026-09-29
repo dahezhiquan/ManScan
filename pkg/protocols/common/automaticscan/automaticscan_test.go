@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"ManScan/pkg/protocols/common/assetdomainfingerprint"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/dns"
 	"ManScan/pkg/protocols/headless"
@@ -50,33 +51,48 @@ func TestLoadAssetDomainFingerprintCache(t *testing.T) {
 		{"target":"https://empty.example.com/","domain":"empty.example.com:443","components":[]}
 	]`
 	require.NoError(t, os.WriteFile(cachePath, []byte(data), 0o600))
-	t.Setenv(assetDomainFingerprintCacheEnv, cachePath)
+	t.Setenv(assetdomainfingerprint.CacheEnv, cachePath)
 
-	cache := loadAssetDomainFingerprintCache()
-	require.Len(t, cache[assetDomainFingerprintCacheKey("https://app.example.com/login")].Components, 1)
-	require.Len(t, cache[assetDomainFingerprintCacheKey("app.example.com:443")].Components, 1)
-	_, ok := cache[assetDomainFingerprintCacheKey("https://empty.example.com/")]
+	cache := assetdomainfingerprint.LoadFromEnv()
+	state, ok := cache.Lookup("https://app.example.com/login")
+	require.True(t, ok)
+	require.Len(t, state.Components, 1)
+	state, ok = cache.Lookup("app.example.com:443")
+	require.True(t, ok)
+	require.Len(t, state.Components, 1)
+	_, ok = cache.Lookup("https://empty.example.com/")
 	require.True(t, ok, "empty component cache should still mark wappalyzer as already probed")
 }
 
 func TestCachedHTTPProbeFailed(t *testing.T) {
 	httpAlive := true
 	httpDown := false
-	service := &Service{fingerprintCache: map[string]assetDomainFingerprintCacheState{
-		assetDomainFingerprintCacheKey("https://alive.example.com"): {
-			HTTPAlive:      httpAlive,
-			HTTPAliveKnown: true,
+	service := &Service{fingerprintCache: assetdomainfingerprint.FromEntries([]assetdomainfingerprint.Entry{
+		{
+			Target:    "https://alive.example.com",
+			HTTPAlive: &httpAlive,
 		},
-		assetDomainFingerprintCacheKey("down.example.com:3306"): {
-			HTTPAlive:      httpDown,
-			HTTPAliveKnown: true,
+		{
+			Target:    "down.example.com:3306",
+			HTTPAlive: &httpDown,
 		},
-		assetDomainFingerprintCacheKey("legacy.example.com"): {},
-	}}
+		{Target: "legacy.example.com"},
+	})}
 
 	require.False(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "https://alive.example.com"}))
 	require.True(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "down.example.com:3306"}))
 	require.False(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "legacy.example.com"}))
+}
+
+func TestFilterHTTPBasedTemplates(t *testing.T) {
+	filtered := filterHTTPBasedTemplates([]*templates.Template{
+		{ID: "http", RequestsHTTP: []*httpprotocol.Request{{}}},
+		{ID: "headless", RequestsHeadless: []*headless.Request{{}}},
+		{ID: "network", RequestsNetwork: []*network.Request{{}}},
+	})
+
+	require.Len(t, filtered, 1)
+	require.Equal(t, "network", filtered[0].ID)
 }
 
 func TestIsHTTPFingerprintTemplate(t *testing.T) {

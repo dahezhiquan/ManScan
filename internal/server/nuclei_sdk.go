@@ -27,6 +27,7 @@ import (
 	"ManScan/pkg/output"
 	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/assetdomainfingerprint"
 	"ManScan/pkg/protocols/common/globalmatchers"
 	"ManScan/pkg/protocols/common/hosterrorscache"
 	"ManScan/pkg/protocols/common/interactsh"
@@ -88,6 +89,7 @@ func newNucleiExecutor(opts *NucleiExecutorOptions) (*nucleiExecutor, error) {
 		FuzzStatsDB:         opts.FuzzStatsDB,
 		Logger:              opts.Logger,
 	}
+	executorOpts.AssetDomainFingerprintCache = assetdomainfingerprint.LoadFromEnv()
 
 	if opts.Options.ShouldUseHostError() {
 		maxHostError := opts.Options.MaxHostError

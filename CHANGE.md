@@ -1,3 +1,18 @@
+## 2026-09-28 20:40 非 HTTP 服务漏洞探测跳过 HTTP 模版
+
+- 变动目录：`pkg/protocols/common/assetdomainfingerprint/`、`pkg/protocols/common/automaticscan/`、`pkg/protocols/`、`pkg/core/`、`internal/runner/`、`internal/server/`、`lib/`
+- 变动文件：`pkg/protocols/common/assetdomainfingerprint/cache.go`、`pkg/protocols/common/assetdomainfingerprint/cache_test.go`、`pkg/protocols/common/automaticscan/automaticscan.go`、`pkg/protocols/common/automaticscan/automaticscan_test.go`、`pkg/protocols/protocols.go`、`pkg/core/executors.go`、`pkg/core/executors_test.go`、`internal/runner/runner.go`、`internal/server/nuclei_sdk.go`、`lib/sdk_private.go`
+- 具体修改内容：
+  - 新增 `pkg/protocols/common/assetdomainfingerprint/cache.go`，统一封装扫描前域名指纹缓存读取、目标 key 归一化、组件去重和 `http_alive=false` 判断逻辑。
+  - 在 `pkg/protocols/protocols.go` 的执行器配置中新增 `AssetDomainFingerprintCache` 字段，并在配置复制和新引擎配置应用时保留该缓存。
+  - 在 `internal/runner/runner.go`、`internal/server/nuclei_sdk.go`、`lib/sdk_private.go` 中从 `MANSCAN_ASSET_DOMAIN_FINGERPRINT_CACHE` 加载扫描前指纹缓存并传入执行器。
+  - 在 `pkg/core/executors.go` 中为普通漏洞扫描执行路径增加 HTTP/headless 模版跳过逻辑：当目标命中 `http_alive=false` 缓存时，不再对该目标执行 HTTP 协议和 headless 协议漏洞模版，非 HTTP 协议模版继续执行。
+  - 在 `pkg/protocols/common/automaticscan/automaticscan.go` 中复用公共缓存实现；自动模版映射命中 `http_alive=false` 时，加载出的漏洞模版会先过滤 HTTP/headless 模版，执行阶段仍由核心执行器兜底跳过。
+  - 补充缓存读取、自动模版映射过滤和普通执行器跳过 HTTP 漏洞模版的回归测试。
+- 修改目的或影响：
+  - 非 HTTP 服务在漏洞探测阶段不会再因为 HTTP 协议漏洞模版产生无效请求；无论是否开启自动模版映射，已确认 HTTP 不存活的目标都会跳过 HTTP/headless 漏洞模版。
+  - 已确认 HTTP 不存活的目标仍会继续执行 network、ssl、dns 等非 HTTP 协议漏洞模版，避免把非 HTTP 服务整体跳过。
+
 ## 2026-09-28 16:33 HTTP 不存活目标保留非 HTTP 指纹识别
 
 - 变动目录：`pkg/protocols/common/automaticscan/`、`server/internal/service/`

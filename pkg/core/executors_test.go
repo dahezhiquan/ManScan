@@ -12,7 +12,10 @@ import (
 	inputtypes "ManScan/pkg/input/types"
 	"ManScan/pkg/output"
 	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/assetdomainfingerprint"
 	"ManScan/pkg/protocols/common/contextargs"
+	httpprotocol "ManScan/pkg/protocols/http"
+	"ManScan/pkg/protocols/network"
 	"ManScan/pkg/scan"
 	"ManScan/pkg/templates"
 	tmpltypes "ManScan/pkg/templates/types"
@@ -32,6 +35,21 @@ func (f *fakeExecuter) ExecuteWithResults(ctx *scan.ScanContext) ([]*output.Resu
 		return nil, nil
 	}
 	return []*output.ResultEvent{{Host: "h"}}, nil
+}
+
+type countingExecuter struct {
+	count atomic.Int32
+}
+
+func (c *countingExecuter) Compile() error { return nil }
+func (c *countingExecuter) Requests() int  { return 1 }
+func (c *countingExecuter) Execute(ctx *scan.ScanContext) (bool, error) {
+	c.count.Add(1)
+	return true, nil
+}
+func (c *countingExecuter) ExecuteWithResults(ctx *scan.ScanContext) ([]*output.ResultEvent, error) {
+	c.count.Add(1)
+	return []*output.ResultEvent{{Host: ctx.Input.MetaInput.Input}}, nil
 }
 
 // newTestEngine creates a minimal Engine for tests
@@ -311,6 +329,42 @@ func TestExecuteTemplateSprayHonorsSharedConcurrencyLimiter(t *testing.T) {
 	}
 	if got := executer.maxInFlight.Load(); got > sharedBudget {
 		t.Fatalf("maximum concurrency was %d, shared budget is %d", got, sharedBudget)
+	}
+}
+
+func TestExecuteSkipsHTTPTemplatesForHTTPInactiveTargets(t *testing.T) {
+	httpAlive := false
+	httpExecuter := &countingExecuter{}
+	networkExecuter := &countingExecuter{}
+	options := &types.Options{
+		BulkSize:                1,
+		TemplateThreads:         2,
+		HeadlessBulkSize:        1,
+		HeadlessTemplateThreads: 1,
+	}
+	engine := New(options)
+	engine.SetExecuterOptions(&protocols.ExecutorOptions{
+		Logger:    engine.Logger,
+		Options:   options,
+		ResumeCfg: types.NewResumeCfg(),
+		AssetDomainFingerprintCache: assetdomainfingerprint.FromEntries([]assetdomainfingerprint.Entry{
+			{Target: "mysql.example.com:3306", HTTPAlive: &httpAlive},
+		}),
+	})
+
+	templatesList := []*templates.Template{
+		{ID: "http-template", RequestsHTTP: []*httpprotocol.Request{{}}, Executer: httpExecuter},
+		{ID: "network-template", RequestsNetwork: []*network.Request{{}}, Executer: networkExecuter},
+	}
+	targets := &fakeTargetProvider{values: []*contextargs.MetaInput{{Input: "mysql.example.com:3306"}}}
+
+	engine.ExecuteScanWithOpts(context.Background(), templatesList, targets, true)
+
+	if got := httpExecuter.count.Load(); got != 0 {
+		t.Fatalf("http template executed %d times, want 0", got)
+	}
+	if got := networkExecuter.count.Load(); got != 1 {
+		t.Fatalf("network template executed %d times, want 1", got)
 	}
 }
 

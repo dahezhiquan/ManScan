@@ -23,6 +23,7 @@ import (
 	"ManScan/pkg/output"
 	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/assetdomainfingerprint"
 	"ManScan/pkg/protocols/common/hosterrorscache"
 	"ManScan/pkg/protocols/common/interactsh"
 	"ManScan/pkg/protocols/common/protocolinit"
@@ -293,6 +294,7 @@ func (e *NucleiEngine) init(ctx context.Context) error {
 		TemporaryDirectory: e.tmpDir,
 		Logger:             e.opts.Logger,
 	}
+	e.executerOpts.AssetDomainFingerprintCache = assetdomainfingerprint.LoadFromEnv()
 	if e.opts.ShouldUseHostError() && e.hostErrCache != nil {
 		e.executerOpts.HostErrorsCache = e.hostErrCache
 	}

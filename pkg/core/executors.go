@@ -185,6 +185,10 @@ func (e *Engine) executeTemplateWithTargets(ctx context.Context, template *templ
 			index++
 			return true
 		}
+		if e.shouldSkipHTTPTemplateForInactiveTarget(template, scannedValue) {
+			index++
+			return true
+		}
 
 		currentInfo.Lock()
 		currentInfo.InFlight[index] = struct{}{}
@@ -244,6 +248,9 @@ func (e *Engine) executeTemplatesOnTarget(ctx context.Context, alltemplates []*t
 			}
 			break
 		}
+		if e.shouldSkipHTTPTemplateForInactiveTarget(tpl, target) {
+			continue
+		}
 
 		// resize check point - nop if there are no changes
 		wp.RefreshWithConfig(e.GetWorkPoolConfig())
@@ -277,6 +284,27 @@ func (e *Engine) executeTemplatesOnTarget(ctx context.Context, alltemplates []*t
 			results.CompareAndSwap(false, match)
 		}(tpl, target, sg, usesSharedTemplateBudget)
 	}
+}
+
+func (e *Engine) shouldSkipHTTPTemplateForInactiveTarget(template *templates.Template, target *contextargs.MetaInput) bool {
+	if e == nil || e.executerOpts == nil || e.executerOpts.AssetDomainFingerprintCache == nil || template == nil || target == nil {
+		return false
+	}
+	if !e.executerOpts.AssetDomainFingerprintCache.HTTPProbeFailed(target.Input) {
+		return false
+	}
+	return isHTTPBasedTemplate(template)
+}
+
+func isHTTPBasedTemplate(template *templates.Template) bool {
+	if template == nil {
+		return false
+	}
+	templateType := template.Type()
+	return templateType == types.HTTPProtocol ||
+		templateType == types.HeadlessProtocol ||
+		template.HasHTTPRequest() ||
+		template.HasHeadlessRequest()
 }
 
 // executeTemplateOnInput performs template execution for a single input and returns match status and error

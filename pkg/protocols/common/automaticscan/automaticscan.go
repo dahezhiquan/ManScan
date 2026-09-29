@@ -2,11 +2,8 @@ package automaticscan
 
 import (
 	"context"
-	"encoding/json"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +17,7 @@ import (
 	"ManScan/pkg/output"
 	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
+	"ManScan/pkg/protocols/common/assetdomainfingerprint"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/helpers/writer"
 	"ManScan/pkg/protocols/http/httpclientpool"
@@ -41,9 +39,8 @@ import (
 )
 
 const (
-	mappingFilename                = "wappalyzer-mapping.yml"
-	maxDefaultBody                 = 4 * unitutils.Mega
-	assetDomainFingerprintCacheEnv = "MANSCAN_ASSET_DOMAIN_FINGERPRINT_CACHE"
+	mappingFilename = "wappalyzer-mapping.yml"
+	maxDefaultBody  = 4 * unitutils.Mega
 )
 
 // Options contains configuration options for automatic scan service
@@ -65,7 +62,7 @@ type Service struct {
 	templateDirs       []string // root Template Directories
 	technologyMappings map[string]string
 	techTemplates      []*templates.Template
-	fingerprintCache   map[string]assetDomainFingerprintCacheState
+	fingerprintCache   *assetdomainfingerprint.Cache
 	totalGate          *totalGate
 	ServiceOpts        Options
 	hasResults         *atomic.Bool
@@ -76,25 +73,6 @@ type mappedTarget struct {
 	finalTemplates             []*templates.Template
 	usedCachedWappalyzer       bool
 	skipHTTPDetectionTemplates bool
-}
-
-type assetDomainFingerprintCacheComponent struct {
-	Domain     string `json:"domain"`
-	AppName    string `json:"app_name"`
-	AppVersion string `json:"app_version"`
-}
-
-type assetDomainFingerprintCacheEntry struct {
-	Target     string                                 `json:"target"`
-	Domain     string                                 `json:"domain"`
-	HTTPAlive  *bool                                  `json:"http_alive"`
-	Components []assetDomainFingerprintCacheComponent `json:"components"`
-}
-
-type assetDomainFingerprintCacheState struct {
-	Components     []assetDomainFingerprintCacheComponent
-	HTTPAlive      bool
-	HTTPAliveKnown bool
 }
 
 type totalGate struct {
@@ -250,7 +228,7 @@ func New(opts Options) (*Service, error) {
 		httpclient:         httpclient,
 		technologyMappings: mappingData,
 		techTemplates:      techDetectTemplates,
-		fingerprintCache:   loadAssetDomainFingerprintCache(),
+		fingerprintCache:   firstNonNilFingerprintCache(opts.ExecuterOpts.AssetDomainFingerprintCache, assetdomainfingerprint.LoadFromEnv()),
 		ServiceOpts:        opts,
 		hasResults:         &atomic.Bool{},
 	}, nil
@@ -356,6 +334,9 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 		gologger.Error().Msgf("%v Error loading templates: %s\n", input.Input, err)
 		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 	}
+	if skipHTTPDetectionTemplates {
+		finalTemplates = filterHTTPBasedTemplates(finalTemplates)
+	}
 	s.opts.Logger.Info().Msgf("%s 已加载漏洞模版数量：%d", input.Input, len(finalTemplates))
 	return mappedTarget{input: input, finalTemplates: finalTemplates, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 }
@@ -412,117 +393,6 @@ func mappedTemplateCount(targets []mappedTarget) int64 {
 	return int64(len(templateIDs))
 }
 
-func loadAssetDomainFingerprintCache() map[string]assetDomainFingerprintCacheState {
-	path := strings.TrimSpace(os.Getenv(assetDomainFingerprintCacheEnv))
-	if path == "" {
-		return nil
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) == 0 {
-		return nil
-	}
-	var entries []assetDomainFingerprintCacheEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
-		return nil
-	}
-
-	cache := make(map[string]assetDomainFingerprintCacheState, len(entries)*2)
-	for _, entry := range entries {
-		components := dedupeAssetDomainFingerprintCacheComponents(entry.Components)
-		state := assetDomainFingerprintCacheState{
-			Components: components,
-		}
-		if entry.HTTPAlive != nil {
-			state.HTTPAlive = *entry.HTTPAlive
-			state.HTTPAliveKnown = true
-		}
-		for _, key := range []string{
-			assetDomainFingerprintCacheKey(entry.Target),
-			assetDomainFingerprintCacheKey(entry.Domain),
-		} {
-			if key == "" {
-				continue
-			}
-			cache[key] = state
-		}
-	}
-	return cache
-}
-
-func dedupeAssetDomainFingerprintCacheComponents(values []assetDomainFingerprintCacheComponent) []assetDomainFingerprintCacheComponent {
-	result := make([]assetDomainFingerprintCacheComponent, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		value.Domain = strings.TrimSpace(value.Domain)
-		value.AppName = normalizeAppName(value.AppName)
-		value.AppVersion = strings.TrimSpace(value.AppVersion)
-		if value.AppName == "" {
-			continue
-		}
-		key := value.Domain + "\x00" + value.AppName
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		result = append(result, value)
-	}
-	return result
-}
-
-func assetDomainFingerprintCacheKey(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if endpoint := assetDomainFingerprintEndpoint(value); endpoint != "" {
-		return endpoint
-	}
-	return strings.ToLower(value)
-}
-
-func assetDomainFingerprintEndpoint(value string) string {
-	parsed, ok := parseAssetDomainFingerprintEndpoint(value)
-	if !ok {
-		return ""
-	}
-	host := strings.TrimSpace(parsed.Hostname())
-	if host == "" {
-		return ""
-	}
-	port := strings.TrimSpace(parsed.Port())
-	if port == "" {
-		switch strings.ToLower(parsed.Scheme) {
-		case "http":
-			port = "80"
-		case "https":
-			port = "443"
-		}
-	}
-	if port == "" {
-		return strings.ToLower(host)
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		host = ip.String()
-	}
-	return strings.ToLower(net.JoinHostPort(host, port))
-}
-
-func parseAssetDomainFingerprintEndpoint(value string) (*url.URL, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil, false
-	}
-	parsed, err := url.Parse(value)
-	if err == nil && parsed.Host != "" {
-		return parsed, true
-	}
-	parsed, err = url.Parse("scheme://" + value)
-	if err == nil && parsed.Host != "" {
-		return parsed, true
-	}
-	return nil, false
-}
-
 func (s *Service) executeMappedTemplates(target mappedTarget) {
 	gologger.Info().Msgf("Executing %d templates on %v", len(target.finalTemplates), target.input.Input)
 	eng := core.New(s.opts.Options)
@@ -545,6 +415,26 @@ func filterAutomaticScanExecutionTags(tags []string) []string {
 		filtered = append(filtered, tag)
 	}
 	return filtered
+}
+
+func filterHTTPBasedTemplates(values []*templates.Template) []*templates.Template {
+	filtered := make([]*templates.Template, 0, len(values))
+	for _, template := range values {
+		if isHTTPFingerprintTemplate(template) {
+			continue
+		}
+		filtered = append(filtered, template)
+	}
+	return filtered
+}
+
+func firstNonNilFingerprintCache(values ...*assetdomainfingerprint.Cache) *assetdomainfingerprint.Cache {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
 }
 
 // getTagsUsingWappalyzer returns tags using wappalyzer by fingerprinting target
@@ -608,11 +498,11 @@ func (s *Service) getTagsUsingWappalyzer(input *contextargs.MetaInput) []string 
 }
 
 func (s *Service) getTagsUsingCachedWappalyzer(input *contextargs.MetaInput) ([]string, bool) {
-	if s == nil || input == nil || len(s.fingerprintCache) == 0 {
+	if s == nil || input == nil || s.fingerprintCache == nil {
 		return nil, false
 	}
 
-	state, ok := s.fingerprintCache[assetDomainFingerprintCacheKey(input.Input)]
+	state, ok := s.fingerprintCache.Lookup(input.Input)
 	if !ok {
 		return nil, false
 	}
@@ -644,11 +534,10 @@ func (s *Service) getTagsUsingCachedWappalyzer(input *contextargs.MetaInput) ([]
 }
 
 func (s *Service) cachedHTTPProbeFailed(input *contextargs.MetaInput) bool {
-	if s == nil || input == nil || len(s.fingerprintCache) == 0 {
+	if s == nil || input == nil || s.fingerprintCache == nil {
 		return false
 	}
-	state, ok := s.fingerprintCache[assetDomainFingerprintCacheKey(input.Input)]
-	return ok && state.HTTPAliveKnown && !state.HTTPAlive
+	return s.fingerprintCache.HTTPProbeFailed(input.Input)
 }
 
 // getTagsUsingDetectionTemplates returns tags using detection templates
