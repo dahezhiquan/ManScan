@@ -178,6 +178,28 @@ func (f *fakeTargetProvider) SetWithExclusions(string, string) error { return ni
 func (f *fakeTargetProvider) InputType() string                      { return "test" }
 func (f *fakeTargetProvider) Close()                                 {}
 
+type recordingProgress struct {
+	hostCount     int64
+	templateCount int
+	requestCount  int64
+}
+
+func (p *recordingProgress) Stop() {}
+
+func (p *recordingProgress) Init(hostCount int64, rulesCount int, requestCount int64) {
+	p.hostCount = hostCount
+	p.templateCount = rulesCount
+	p.requestCount = requestCount
+}
+
+func (p *recordingProgress) AddToTotal(int64)                {}
+func (p *recordingProgress) IncrementRequests()              {}
+func (p *recordingProgress) IncrementActualRequests()        {}
+func (p *recordingProgress) SetRequests(uint64)              {}
+func (p *recordingProgress) IncrementMatched()               {}
+func (p *recordingProgress) IncrementErrorsBy(int64)         {}
+func (p *recordingProgress) IncrementFailedRequestsBy(int64) {}
+
 type slowExecuter struct{}
 
 func (s *slowExecuter) Compile() error { return nil }
@@ -365,6 +387,113 @@ func TestExecuteSkipsHTTPTemplatesForHTTPInactiveTargets(t *testing.T) {
 	}
 	if got := networkExecuter.count.Load(); got != 1 {
 		t.Fatalf("network template executed %d times, want 1", got)
+	}
+}
+
+func TestExecuteProgressCountsOnlyExecutableTemplates(t *testing.T) {
+	httpAlive := false
+	engine := New(&types.Options{})
+	engine.SetExecuterOptions(&protocols.ExecutorOptions{
+		AssetDomainFingerprintCache: assetdomainfingerprint.FromEntries([]assetdomainfingerprint.Entry{
+			{Target: "mysql.example.com:3306", HTTPAlive: &httpAlive},
+		}),
+	})
+
+	templatesList := []*templates.Template{
+		{ID: "http-template", TotalRequests: 3, RequestsHTTP: []*httpprotocol.Request{{}}},
+		{ID: "network-template", TotalRequests: 2, RequestsNetwork: []*network.Request{{}}},
+		{ID: "network-template", TotalRequests: 2, RequestsNetwork: []*network.Request{{}}},
+	}
+	targets := &fakeTargetProvider{values: []*contextargs.MetaInput{{Input: "mysql.example.com:3306"}}}
+	targetStats := engine.targetExecutionStats(targets)
+
+	if got := countExecutableTemplates(templatesList, targetStats); got != 1 {
+		t.Fatalf("countExecutableTemplates() = %d, want 1", got)
+	}
+	if got := getRequestCountForTargets(templatesList, targetStats); got != 4 {
+		t.Fatalf("getRequestCountForTargets() = %d, want 4", got)
+	}
+}
+
+func TestExecuteScanInitializesFilteredProgress(t *testing.T) {
+	httpAlive := false
+	options := &types.Options{
+		BulkSize:                1,
+		TemplateThreads:         2,
+		HeadlessBulkSize:        1,
+		HeadlessTemplateThreads: 1,
+	}
+	engine := New(options)
+	progressClient := &recordingProgress{}
+	httpExecuter := &countingExecuter{}
+	networkExecuter := &countingExecuter{}
+	engine.SetExecuterOptions(&protocols.ExecutorOptions{
+		Logger:    engine.Logger,
+		Options:   options,
+		Progress:  progressClient,
+		ResumeCfg: types.NewResumeCfg(),
+		AssetDomainFingerprintCache: assetdomainfingerprint.FromEntries([]assetdomainfingerprint.Entry{
+			{Target: "mysql.example.com:3306", HTTPAlive: &httpAlive},
+		}),
+	})
+
+	targets := &fakeTargetProvider{values: []*contextargs.MetaInput{{Input: "mysql.example.com:3306"}}}
+	engine.ExecuteScanWithOpts(context.Background(), []*templates.Template{
+		{
+			ID:            "http-template",
+			TotalRequests: 3,
+			RequestsHTTP:  []*httpprotocol.Request{{}},
+			Executer:      httpExecuter,
+		},
+		{
+			ID:              "network-template",
+			TotalRequests:   2,
+			RequestsNetwork: []*network.Request{{}},
+			Executer:        networkExecuter,
+		},
+	}, targets, true)
+
+	if progressClient.hostCount != 1 {
+		t.Fatalf("progress host count = %d, want 1", progressClient.hostCount)
+	}
+	if progressClient.templateCount != 1 {
+		t.Fatalf("progress template count = %d, want 1", progressClient.templateCount)
+	}
+	if progressClient.requestCount != 2 {
+		t.Fatalf("progress request count = %d, want 2", progressClient.requestCount)
+	}
+	if got := httpExecuter.count.Load(); got != 0 {
+		t.Fatalf("http template executed %d times, want 0", got)
+	}
+	if got := networkExecuter.count.Load(); got != 1 {
+		t.Fatalf("network template executed %d times, want 1", got)
+	}
+}
+
+func TestExecuteProgressKeepsHTTPTemplatesForMixedTargets(t *testing.T) {
+	httpAlive := false
+	engine := New(&types.Options{})
+	targets := &fakeTargetProvider{values: []*contextargs.MetaInput{
+		{Input: "mysql.example.com:3306"},
+		{Input: "https://example.com"},
+	}}
+	engine.SetExecuterOptions(&protocols.ExecutorOptions{
+		AssetDomainFingerprintCache: assetdomainfingerprint.FromEntries([]assetdomainfingerprint.Entry{
+			{Target: "mysql.example.com:3306", HTTPAlive: &httpAlive},
+		}),
+	})
+
+	templatesList := []*templates.Template{
+		{ID: "http-template", TotalRequests: 3, RequestsHTTP: []*httpprotocol.Request{{}}},
+		{ID: "network-template", TotalRequests: 2, RequestsNetwork: []*network.Request{{}}},
+	}
+	targetStats := engine.targetExecutionStats(targets)
+
+	if got := countExecutableTemplates(templatesList, targetStats); got != 2 {
+		t.Fatalf("countExecutableTemplates() = %d, want 2", got)
+	}
+	if got := getRequestCountForTargets(templatesList, targetStats); got != 7 {
+		t.Fatalf("getRequestCountForTargets() = %d, want 7", got)
 	}
 }
 

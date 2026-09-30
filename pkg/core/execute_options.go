@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -34,8 +35,9 @@ func (e *Engine) ExecuteWithResults(ctx context.Context, templatesList []*templa
 func (e *Engine) ExecuteScanWithOpts(ctx context.Context, templatesList []*templates.Template, target provider.InputProvider, noCluster bool) *atomic.Bool {
 	results := &atomic.Bool{}
 	selfcontainedWg := &sync.WaitGroup{}
+	targetStats := e.targetExecutionStats(target)
 
-	totalReqBeforeCluster := getRequestCount(templatesList) * int(target.Count())
+	totalReqBeforeCluster := getRequestCountForTargets(templatesList, targetStats)
 
 	// attempt to cluster templates if noCluster is false
 	var finalTemplates []*templates.Template
@@ -51,7 +53,7 @@ func (e *Engine) ExecuteScanWithOpts(ctx context.Context, templatesList []*templ
 		finalTemplates = templatesList
 	}
 
-	totalReqAfterClustering := getRequestCount(finalTemplates) * int(target.Count())
+	totalReqAfterClustering := getRequestCountForTargets(finalTemplates, targetStats)
 
 	if !noCluster && totalReqAfterClustering < totalReqBeforeCluster {
 		e.Logger.Info().Msgf("Templates clustered: %d (Reduced %d Requests)", clusterCount, totalReqBeforeCluster-totalReqAfterClustering)
@@ -65,9 +67,14 @@ func (e *Engine) ExecuteScanWithOpts(ctx context.Context, templatesList []*templ
 	if e.executerOpts.Progress != nil {
 		// Notes:
 		// workflow requests are not counted as they can be conditional
-		// templateList count is user requested templates count (before clustering)
+		// templateList count is the unique set of templates executable for at
+		// least one target (before clustering).
 		// totalReqAfterClustering is total requests count after clustering
-		e.executerOpts.Progress.Init(target.Count(), len(templatesList), int64(totalReqAfterClustering))
+		e.executerOpts.Progress.Init(
+			targetStats.totalTargets,
+			countExecutableTemplates(templatesList, targetStats),
+			totalReqAfterClustering,
+		)
 	}
 
 	if stringsutil.EqualFoldAny(e.options.ScanStrategy, scanstrategy.Auto.String(), "") {
@@ -179,16 +186,114 @@ func (e *Engine) executeHostSpray(ctx context.Context, templatesList []*template
 	return results
 }
 
-// returns total requests count
-func getRequestCount(templates []*templates.Template) int {
+type targetExecutionStats struct {
+	totalTargets       int64
+	httpCapableTargets int64
+}
+
+func (e *Engine) targetExecutionStats(target provider.InputProvider) targetExecutionStats {
+	if target == nil {
+		return targetExecutionStats{}
+	}
+
+	totalTargets := target.Count()
+	if totalTargets <= 0 {
+		return targetExecutionStats{}
+	}
+
+	stats := targetExecutionStats{
+		totalTargets:       totalTargets,
+		httpCapableTargets: totalTargets,
+	}
+	if e == nil || e.executerOpts == nil || e.executerOpts.AssetDomainFingerprintCache == nil {
+		return stats
+	}
+
+	stats.httpCapableTargets = 0
+	iteratedTargets := int64(0)
+	target.Iterate(func(value *contextargs.MetaInput) bool {
+		iteratedTargets++
+		if value == nil || !e.executerOpts.AssetDomainFingerprintCache.HTTPProbeFailed(value.Input) {
+			stats.httpCapableTargets++
+		}
+		return true
+	})
+	// A provider may report more targets than it exposes through Iterate while
+	// loading a stream. Unknown targets must remain eligible for HTTP templates.
+	if iteratedTargets < totalTargets {
+		stats.httpCapableTargets += totalTargets - iteratedTargets
+	}
+	if stats.httpCapableTargets > totalTargets {
+		stats.httpCapableTargets = totalTargets
+	}
+	return stats
+}
+
+func countExecutableTemplates(templateList []*templates.Template, targetStats targetExecutionStats) int {
+	if targetStats.totalTargets <= 0 {
+		return 0
+	}
+
+	seenIDs := make(map[string]struct{}, len(templateList))
+	seenPointers := make(map[*templates.Template]struct{})
 	count := 0
-	for _, template := range templates {
-		// ignore requests in workflows as total requests in workflow
-		// depends on what templates will be called in workflow
+	for _, template := range templateList {
+		if template == nil {
+			continue
+		}
+		if !templateCanExecuteForTargets(template, targetStats) {
+			continue
+		}
+
+		templateID := strings.TrimSpace(template.ID)
+		if templateID == "" {
+			templateID = strings.TrimSpace(template.Path)
+		}
+		if templateID != "" {
+			if _, ok := seenIDs[templateID]; ok {
+				continue
+			}
+			seenIDs[templateID] = struct{}{}
+		} else {
+			if _, ok := seenPointers[template]; ok {
+				continue
+			}
+			seenPointers[template] = struct{}{}
+		}
+		count++
+	}
+	return count
+}
+
+func getRequestCountForTargets(templateList []*templates.Template, targetStats targetExecutionStats) int64 {
+	if targetStats.totalTargets <= 0 {
+		return 0
+	}
+
+	var count int64
+	for _, template := range templateList {
+		if template == nil {
+			continue
+		}
+		// Workflow requests are conditional and cannot be estimated here.
 		if len(template.Workflows) > 0 {
 			continue
 		}
-		count += template.TotalRequests
+		targetCount := targetStats.totalTargets
+		if !template.SelfContained && isHTTPBasedTemplate(template) {
+			targetCount = targetStats.httpCapableTargets
+		}
+		count += int64(template.TotalRequests) * targetCount
 	}
 	return count
+}
+
+func templateCanExecuteForTargets(template *templates.Template, targetStats targetExecutionStats) bool {
+	if template == nil || targetStats.totalTargets <= 0 {
+		return false
+	}
+	if template.SelfContained || !isHTTPBasedTemplate(template) {
+		return true
+	}
+	return targetStats.httpCapableTargets > 0
 }

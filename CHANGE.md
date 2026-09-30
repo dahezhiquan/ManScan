@@ -1,3 +1,17 @@
+## 2026-09-30 15:34 修复非 HTTP 目标实际漏洞模版数量统计
+
+- 变动目录：`pkg/core/`、根目录文档、`server/`
+- 变动文件：`pkg/core/execute_options.go`、`pkg/core/executors_test.go`、`server/API.md`
+- 具体修改内容：
+  - 在 `pkg/core/execute_options.go` 中根据扫描前域名指纹缓存统计目标可执行性：当目标确认 `http_alive=false` 时，HTTP、Headless 以及包含 HTTP/Headless 请求的模版不再计入实际漏洞模版数量。
+  - 普通扫描的模版数量按至少一个目标可执行的唯一模版 ID（无 ID 时使用路径或实例）统计；混合 HTTP 与非 HTTP 目标时保留对 HTTP 目标仍可执行的模版。
+  - 同步修正逻辑请求总量，扣除非 HTTP 目标上实际跳过的 HTTP 模版请求，避免插件数量和进度总量口径不一致。
+  - 在 `pkg/core/executors_test.go` 中补充全非 HTTP 目标、混合目标、重复模版 ID 和实际进度初始化的回归测试。
+  - 在 `server/API.md` 中补充 `progress.templates` 与 `task.plugin_count` 的实际可执行模版统计口径。
+- 修改目的或影响：
+  - 修复非 HTTP 目标仍显示 scanner 全局加载模版数的问题。类似任务 203 的场景不会再把未执行的 HTTP 漏洞模版计入“实际漏洞插件数量”。
+  - 不改变已有执行阶段过滤逻辑；只让进度模版数和逻辑请求总量与实际执行范围保持一致。
+
 ## 2026-09-29 11:09 自动指纹识别空结果显示未发现
 
 - 变动目录：`pkg/protocols/common/automaticscan/`

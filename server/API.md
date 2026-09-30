@@ -676,6 +676,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
 ```
 
 - 说明：
+  - `progress.templates` 和 `task.plugin_count` 表示本次扫描实际可执行的唯一漏洞模版数量；对于扫描前预探测确认 `http_alive=false` 的目标，HTTP、Headless 以及包含 HTTP/Headless 请求的模版不会计入。多目标扫描按“至少有一个目标可执行”计数，不按目标重复累加。
   - `progress.requests` 表示扫描进程实际发出的请求数，会排除项目缓存、模板聚类等没有真实出网的请求。
   - `progress.total_requests` 表示本次任务按模板和目标预估的逻辑请求总数。
   - `progress.percent` 表示逻辑扫描完成度，不直接用 `requests / total_requests` 计算，因此缓存或聚类节省大量请求时，进度仍会按扫描执行进度平滑推进。
