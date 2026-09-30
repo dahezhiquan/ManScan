@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -765,7 +764,6 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	taskDir := filepath.Dir(state.LogFilePath)
 	fingerprintCachePath := filepath.Join(taskDir, "asset-domain-fingerprints.json")
 	excludeFingerprintTemplates := s.shouldRunAssetDomainFingerprintTemplates(plan.Raw, plan.CollectedTargets)
-	s.publishInitialPluginCount(cmdCtx, plan.Raw, state, excludeFingerprintTemplates)
 	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, plan.CollectedTargets, state, fingerprintCachePath, runtime.assetDomainServiceAssetQueue); err != nil {
 		return err
 	}
@@ -842,20 +840,6 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 
 func (s *scanTaskService) shouldRunAssetDomainFingerprintTemplates(request dto.CreateScanTaskRequest, targets []string) bool {
 	return s.assetDomainRepository != nil && len(targets) > 0 && !request.AutomaticScan && !request.OfflineHTTP && !request.DisableHTTPProbe
-}
-
-func (s *scanTaskService) publishInitialPluginCount(_ context.Context, request dto.CreateScanTaskRequest, state *scanruntime.State, excludeFingerprintTemplates bool) {
-	if state == nil || request.AutomaticScan || s.templateRepository == nil {
-		return
-	}
-	items, err := s.templateRepository.List()
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("estimate initial scan template count failed", "error", err)
-		}
-		return
-	}
-	state.SetTemplateCount(int64(countSelectedVulnerabilityTemplates(items, request, excludeFingerprintTemplates)))
 }
 
 func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntime, startedAt time.Time) {
@@ -1648,80 +1632,6 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 		"-elog", filepath.Join(taskDir, "error.log"),
 	)
 	return args
-}
-
-func countSelectedVulnerabilityTemplates(items []dto.TemplateListItem, request dto.CreateScanTaskRequest, excludeFingerprintTemplates bool) int {
-	count := 0
-	for _, item := range items {
-		if excludeFingerprintTemplates && scanruntime.HasFingerprintTag(item.Tags) {
-			continue
-		}
-		if !templateMatchesIDs(item.ID, request.IncludeIDs) {
-			continue
-		}
-		if !templateMatchesTags(item.Tags, request.Tags) {
-			continue
-		}
-		if !templateMatchesSeverity(item.Severity, request.Severities) {
-			continue
-		}
-		if !templateMatchesProtocols(item.Protocols, request.Protocols) {
-			continue
-		}
-		count++
-	}
-	return count
-}
-
-func templateMatchesIDs(templateID string, includeIDs []string) bool {
-	includeIDs = cleanStringSlice(includeIDs)
-	if len(includeIDs) == 0 {
-		return true
-	}
-	templateID = strings.TrimSpace(templateID)
-	for _, value := range includeIDs {
-		if value == templateID {
-			return true
-		}
-		if matched, err := path.Match(value, templateID); err == nil && matched {
-			return true
-		}
-	}
-	return false
-}
-
-func templateMatchesTags(templateTags, selectedTags []string) bool {
-	selected := normalizeQueries(selectedTags)
-	if len(selected) == 0 {
-		return true
-	}
-	for _, tag := range templateTags {
-		if contains(selected, strings.ToLower(strings.TrimSpace(tag))) {
-			return true
-		}
-	}
-	return false
-}
-
-func templateMatchesSeverity(templateSeverity string, selectedSeverities []string) bool {
-	selected := normalizeQueries(selectedSeverities)
-	if len(selected) == 0 {
-		return true
-	}
-	return contains(selected, strings.ToLower(strings.TrimSpace(templateSeverity)))
-}
-
-func templateMatchesProtocols(templateProtocols, selectedProtocols []string) bool {
-	selected := templateprotocol.NormalizeList(selectedProtocols)
-	if len(selected) == 0 {
-		return true
-	}
-	for _, protocol := range templateProtocols {
-		if contains(selected, templateprotocol.Normalize(protocol)) {
-			return true
-		}
-	}
-	return false
 }
 
 func toScanTaskSummary(task *entity.ScanTask, result *entity.ScanTaskResult) dto.ScanTaskSummary {

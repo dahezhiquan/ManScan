@@ -176,33 +176,6 @@ func TestBuildAssetDomainFingerprintTemplateCLIArgsUsesOnlyFingerprintTags(t *te
 	}
 }
 
-func TestCountSelectedVulnerabilityTemplatesExcludesFingerprintTemplates(t *testing.T) {
-	t.Parallel()
-
-	items := []dto.TemplateListItem{
-		{ID: "cve-1", Severity: "high", Tags: []string{"spring"}, Protocols: []string{"http"}},
-		{ID: "tech-1", Severity: "info", Tags: []string{"tech"}, Protocols: []string{"http"}},
-		{ID: "dns-1", Severity: "low", Tags: []string{"dns"}, Protocols: []string{"dns"}},
-		{ID: "cve-2", Severity: "medium", Tags: []string{"spring"}, Protocols: []string{"http"}},
-	}
-
-	got := countSelectedVulnerabilityTemplates(items, dto.CreateScanTaskRequest{
-		Tags:       []string{"spring", "tech"},
-		Protocols:  []string{"http"},
-		Severities: []string{"high", "medium", "info"},
-	}, true)
-	if got != 2 {
-		t.Fatalf("countSelectedVulnerabilityTemplates() = %d, want 2", got)
-	}
-
-	got = countSelectedVulnerabilityTemplates(items, dto.CreateScanTaskRequest{
-		IncludeIDs: []string{"cve-*"},
-	}, true)
-	if got != 2 {
-		t.Fatalf("countSelectedVulnerabilityTemplates() wildcard = %d, want 2", got)
-	}
-}
-
 func TestBuildScanCLIArgsIncludesInteractshConfiguration(t *testing.T) {
 	t.Parallel()
 
