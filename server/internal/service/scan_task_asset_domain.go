@@ -43,7 +43,7 @@ const (
 
 var assetDomainTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
-func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, state *scanruntime.State, fingerprintCachePath, preflightCachePath string, serviceAssetQueue *assetDomainServiceAssetQueue) error {
+func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, state *scanruntime.State, fingerprintCachePath, preflightCachePath string, serviceAssetQueue *assetDomainServiceAssetQueue, runtime *scanTaskRuntime) error {
 	if s.assetDomainRepository == nil || len(targets) == 0 {
 		return nil
 	}
@@ -165,8 +165,14 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			state.Append("info", "asset_domain_fingerprint_template_started", "开始进行 ManScan 智能主动指纹识别")
 		}
 		pendingFingerprintTargets, pendingUnresponsiveFingerprintTargets := preflightCache.pendingFingerprintTargets(request, pendingTargets)
-		activeServiceAssets, aliveErr := s.runAssetDomainFingerprintTemplates(ctx, request, pendingFingerprintTargets, filepath.Dir(fingerprintCachePath), state, false)
-		unresponsiveServiceAssets, unresponsiveErr := s.runAssetDomainFingerprintTemplates(ctx, request, pendingUnresponsiveFingerprintTargets, filepath.Dir(fingerprintCachePath), state, true)
+		activeServiceAssets, aliveErr := s.runAssetDomainFingerprintTemplates(ctx, request, pendingFingerprintTargets, filepath.Dir(fingerprintCachePath), state, runtime, false)
+		if runtime != nil && runtime.IsPauseRequested() {
+			return errScanTaskPausedBeforeProcess
+		}
+		unresponsiveServiceAssets, unresponsiveErr := s.runAssetDomainFingerprintTemplates(ctx, request, pendingUnresponsiveFingerprintTargets, filepath.Dir(fingerprintCachePath), state, runtime, true)
+		if runtime != nil && runtime.IsPauseRequested() {
+			return errScanTaskPausedBeforeProcess
+		}
 		if err := firstNonNilError(aliveErr, unresponsiveErr); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -584,10 +590,13 @@ func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.C
 	}, nil
 }
 
-func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context, request dto.CreateScanTaskRequest, fingerprintTargets []assetDomainFingerprintTarget, taskDir string, state *scanruntime.State, excludeHTTPTemplates bool) ([]repository.AssetDomainServiceAssetObservation, error) {
+func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context, request dto.CreateScanTaskRequest, fingerprintTargets []assetDomainFingerprintTarget, taskDir string, state *scanruntime.State, runtime *scanTaskRuntime, excludeHTTPTemplates bool) ([]repository.AssetDomainServiceAssetObservation, error) {
 	fingerprintTargets = uniqueAssetDomainFingerprintTargets(fingerprintTargets)
 	if len(fingerprintTargets) == 0 || s.assetDomainRepository == nil {
 		return nil, nil
+	}
+	if runtime != nil && runtime.IsPauseRequested() {
+		return nil, errScanTaskPausedBeforeProcess
 	}
 
 	targetsFile := filepath.Join(taskDir, "asset-domain-fingerprint-targets.txt")
@@ -623,6 +632,16 @@ func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context
 	if err := cmd.Start(); err != nil {
 		queue.CloseAndWait()
 		return nil, err
+	}
+	if runtime != nil {
+		if !runtime.AttachInterrupt(func() {
+			_ = interruptTaskCommand(cmd)
+		}) {
+			_ = terminateTaskCommand(cmd)
+			queue.CloseAndWait()
+			return nil, context.Canceled
+		}
+		defer runtime.ClearInterrupt()
 	}
 
 	var wg sync.WaitGroup

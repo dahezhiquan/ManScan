@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -363,7 +364,7 @@ func TestSyncAliveAssetDomainsBeforeScanDefersServiceAssetStaleMarking(t *testin
 		AutomaticScan:    true,
 		ProbeConcurrency: 1,
 		Timeout:          3,
-	}, []string{server.URL}, state, "", "", queue); err != nil {
+	}, []string{server.URL}, state, "", "", queue, nil); err != nil {
 		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
 	}
 
@@ -440,7 +441,7 @@ func TestSyncAliveAssetDomainsBeforeScanReusesPreflightCache(t *testing.T) {
 
 	if err := svc.syncAliveAssetDomainsBeforeScan(context.Background(), dto.CreateScanTaskRequest{
 		AutomaticScan: true,
-	}, []string{server.URL}, state, fingerprintCachePath, preflightCachePath, queue); err != nil {
+	}, []string{server.URL}, state, fingerprintCachePath, preflightCachePath, queue, nil); err != nil {
 		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
 	}
 
@@ -760,6 +761,61 @@ func TestStreamAssetDomainFingerprintTemplateResultsRecordsStats(t *testing.T) {
 	if progress.PreClusterTotalRequests != 7 {
 		t.Fatalf("PreClusterTotalRequests = %d, want 7", progress.PreClusterTotalRequests)
 	}
+}
+
+func TestRunAssetDomainFingerprintTemplatesRegistersPauseInterrupt(t *testing.T) {
+	rootDir := t.TempDir()
+	startedPath := filepath.Join(rootDir, "started")
+	interruptedPath := filepath.Join(rootDir, "interrupted")
+	script := "#!/bin/sh\n" +
+		"touch " + startedPath + "\n" +
+		"trap 'touch " + interruptedPath + "; exit 0' INT\n" +
+		"while true; do sleep 1; done\n"
+	if err := os.WriteFile(filepath.Join(rootDir, "manscan"), []byte(script), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runtime := newScanTaskRuntime(nil)
+	svc := &scanTaskService{
+		rootDir:               rootDir,
+		assetDomainRepository: &assetDomainRepositoryStub{},
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.runAssetDomainFingerprintTemplates(ctx, dto.CreateScanTaskRequest{}, []assetDomainFingerprintTarget{{
+			Input:  "example.com:443",
+			Domain: "example.com:443",
+		}}, rootDir, &scanruntime.State{}, runtime, false)
+		done <- err
+	}()
+
+	waitForTestFile(t, startedPath)
+	if _, accepted := runtime.RequestPause(); !accepted {
+		t.Fatalf("RequestPause() accepted = false, want true")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		cancel()
+		t.Fatalf("active fingerprint process did not exit after pause interrupt")
+	}
+	waitForTestFile(t, interruptedPath)
+}
+
+func waitForTestFile(t *testing.T, path string) {
+	t.Helper()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("expected file %s to be created", path)
 }
 
 type assetDomainRepositoryStub struct {

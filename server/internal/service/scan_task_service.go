@@ -765,7 +765,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	fingerprintCachePath := filepath.Join(taskDir, "asset-domain-fingerprints.json")
 	preflightCachePath := filepath.Join(taskDir, "asset-domain-preflight.json")
 	excludeFingerprintTemplates := s.shouldRunAssetDomainFingerprintTemplates(plan.Raw, plan.CollectedTargets)
-	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, plan.CollectedTargets, state, fingerprintCachePath, preflightCachePath, runtime.assetDomainServiceAssetQueue); err != nil {
+	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, plan.CollectedTargets, state, fingerprintCachePath, preflightCachePath, runtime.assetDomainServiceAssetQueue, runtime); err != nil {
 		return err
 	}
 	if runtime.IsPauseRequested() {
