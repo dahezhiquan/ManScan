@@ -1,3 +1,24 @@
+## 2026-10-08 16:20 修复 HTTP 回退重试实际请求数统计
+
+- 变动目录：`pkg/protocols/`
+- 变动文件：`pkg/protocols/http/request.go`
+- 具体修改内容：
+  - 在 HTTP-to-HTTPS 自动修正失败并回退 HTTP 重试前，补充递增 `actual_requests`。
+- 修改目的或影响：
+  - 让 HTTP 协议的“实际请求数”覆盖因端口协议误判触发的第二次真实请求尝试，避免回退重试场景下实际请求数少计 1 次。
+
+## 2026-10-08 16:13 补齐非 HTTP 协议实际请求数统计
+
+- 变动目录：`pkg/protocols/`
+- 变动文件：`pkg/protocols/dns/request.go`、`pkg/protocols/network/request.go`、`pkg/protocols/headless/request.go`、`pkg/protocols/websocket/websocket.go`、`pkg/protocols/javascript/js.go`、`pkg/protocols/file/request.go`、`pkg/protocols/offlinehttp/request.go`、`pkg/protocols/ssl/ssl.go`、`pkg/protocols/code/code.go`
+- 具体修改内容：
+  - 在 DNS、Network、Headless、Websocket、JavaScript、File、OfflineHTTP、SSL 和 Code 协议实际开始发起网络连接、浏览器执行、脚本执行、文件处理或代码执行时递增 `actual_requests`。
+  - 修正 JavaScript precondition 仅在 debug 场景递增逻辑完成数的问题，确保 precondition 执行后按实际执行结果推进完成计数。
+  - 修正 SSL 协议成功执行后未递增逻辑完成数的问题，避免 SSL 请求已执行但进度完成数不推进。
+- 修改目的或影响：
+  - 让前端动态展示的“实际请求数”不再只覆盖 HTTP 和自动 Wappalyzer 探测，混合协议或非 HTTP 扫描任务也能反映真实执行过的协议请求数量。
+  - 降低最终 `real_requests` 被低估、请求节省数量被高估的概率，使实际请求数、逻辑完成数和扫描结果落库口径更加一致。
+
 ## 2026-10-08 12:17 修复 SSL 聚类请求数统计
 
 - 变动目录：`pkg/templates/`

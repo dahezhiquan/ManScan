@@ -917,6 +917,7 @@ func (request *Request) executeRequest(input *contextargs.Context, generatedRequ
 			if err != nil && httpsCorrectionTracker != nil && generatedRequest.request != nil && generatedRequest.request.Scheme == "https" {
 				generatedRequest.request.Scheme = "http"
 				httpsCorrectionTracker.Evict(httpsCorrectionURL)
+				request.options.Progress.IncrementActualRequests()
 				resp, err = httpclient.Do(generatedRequest.request)
 			}
 		}

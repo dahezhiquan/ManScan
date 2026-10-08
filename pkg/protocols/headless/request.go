@@ -160,6 +160,7 @@ func (request *Request) executeRequestWithPayloads(input *contextargs.Context, p
 	}
 
 	timeStart := time.Now()
+	request.options.Progress.IncrementActualRequests()
 	out, page, err := instance.Run(input, request.Steps, payloads, options)
 	runDuration := time.Since(timeStart)
 	if err != nil {

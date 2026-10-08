@@ -64,6 +64,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 
 			if IsSMBPath(filePath) {
 				request.options.Progress.AddToTotal(1)
+				request.options.Progress.IncrementActualRequests()
 				body, err := request.readSMBFile(input.Context(), filePath)
 				if err != nil {
 					gologger.Error().Msgf("%s\n", err)
@@ -106,6 +107,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 						}
 						// every new file in the compressed multi-file archive counts 1
 						request.options.Progress.AddToTotal(1)
+						request.options.Progress.IncrementActualRequests()
 						archiveFileName := filepath.Join(filePath, file.Name())
 						reader, err := file.Open()
 						if err != nil {
@@ -140,6 +142,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 				case archives.Decompressor:
 					// compressed archive - contains only one file => increments the counter by 1
 					request.options.Progress.AddToTotal(1)
+					request.options.Progress.IncrementActualRequests()
 					reader, err := archiveInstance.OpenReader(stream)
 					if err != nil {
 						gologger.Error().Msgf("%s\n", err)
@@ -194,6 +197,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 			default:
 				// normal file - increments the counter by 1
 				request.options.Progress.AddToTotal(1)
+				request.options.Progress.IncrementActualRequests()
 				event, fileMatches, err := request.processFile(filePath, input, previous)
 				if err != nil {
 					if errors.Is(err, errEmptyResult) {

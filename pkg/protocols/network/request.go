@@ -326,8 +326,10 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 	}
 
 	if shouldUseTLS {
+		request.options.Progress.IncrementActualRequests()
 		conn, err = request.dialer.DialTLS(input.Context(), "tcp", actualAddress)
 	} else {
+		request.options.Progress.IncrementActualRequests()
 		conn, err = request.dialer.Dial(input.Context(), "tcp", actualAddress)
 	}
 	// adds it to unresponsive address list if applicable

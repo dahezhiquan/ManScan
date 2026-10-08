@@ -403,6 +403,7 @@ func (request *Request) executeWithResults(port string, target *contextargs.Cont
 		interactshURLs = append(interactshURLs, argURLs...)
 		argsCopy.TemplateCtx = templateCtx.GetAll()
 
+		request.options.Progress.IncrementActualRequests()
 		result, err := request.options.JsCompiler.ExecuteWithOptions(target.Context(), request.preConditionCompiled, argsCopy,
 			&compiler.ExecuteOptions{
 				ExecutionId:     requestOptions.Options.ExecutionId,
@@ -412,11 +413,11 @@ func (request *Request) executeWithResults(port string, target *contextargs.Cont
 				Source:          &request.PreCondition,
 			},
 		)
+		request.options.Progress.IncrementRequests()
 
 		// if precondition was successful
 		if err == nil && result.GetSuccess() {
 			if request.options.Options.Debug || request.options.Options.DebugRequests {
-				request.options.Progress.IncrementRequests()
 				gologger.Debug().Msgf("[%s] Precondition for request was satisfied\n", request.TemplateID)
 			}
 		} else {
@@ -642,6 +643,7 @@ func (request *Request) executeRequestWithPayloads(
 		argsCopy.TemplateCtx = map[string]interface{}{}
 	}
 
+	request.options.Progress.IncrementActualRequests()
 	results, err := request.options.JsCompiler.ExecuteWithOptions(input.Context(), request.scriptCompiled, argsCopy,
 		&compiler.ExecuteOptions{
 			ExecutionId:     requestOptions.Options.ExecutionId,

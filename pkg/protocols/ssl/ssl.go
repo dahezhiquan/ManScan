@@ -254,6 +254,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, dynamicVa
 	}
 
 	timeStart := time.Now()
+	requestOptions.Progress.IncrementActualRequests()
 	response, err := request.tlsx.Connect(host, hostIp, port)
 	duration := time.Since(timeStart)
 	if err != nil {
@@ -263,6 +264,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, dynamicVa
 	}
 
 	requestOptions.Output.Request(requestOptions.TemplateID, hostPort, request.Type().String(), err)
+	requestOptions.Progress.IncrementRequests()
 	gologger.Verbose().Msgf("[%s] Sent SSL request to %s", request.options.TemplateID, hostPort)
 
 	if requestOptions.Options.Debug || requestOptions.Options.DebugRequests || requestOptions.Options.StoreResponse {

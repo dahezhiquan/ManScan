@@ -253,6 +253,7 @@ func (request *Request) executeRequestWithPayloads(target *contextargs.Context, 
 	addressToDial = parsedAddress.String()
 
 	timeStart := time.Now()
+	requestOptions.Progress.IncrementActualRequests()
 	conn, readBuffer, _, err := websocketDialer.Dial(target.Context(), addressToDial)
 	handshakeDuration := time.Since(timeStart)
 	if err != nil {

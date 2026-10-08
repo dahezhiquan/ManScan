@@ -262,6 +262,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, dynamicVa
 	ctx, cancel := context.WithTimeoutCause(input.Context(), request.options.Options.GetTimeouts().CodeExecutionTimeout, ErrCodeExecutionDeadline)
 	defer cancel()
 	// Note: we use contextutil despite the fact that gozero accepts context as argument
+	request.options.Progress.IncrementActualRequests()
 	gOutput, err := contextutil.ExecFuncWithTwoReturns(ctx, func() (*gozerotypes.Result, error) {
 		if request.useSandbox() {
 			return request.gozero.EvalWithVirtualEnv(
@@ -291,6 +292,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, dynamicVa
 	if err != nil {
 		gologger.Warning().Msgf("[%s] Could not execute code: %s", request.options.TemplateID, err)
 	}
+	request.options.Progress.IncrementRequests()
 	gologger.Verbose().Msgf("[%s] Executed code on local machine %v", request.options.TemplateID, input.MetaInput.Input)
 
 	if vardump.EnableVarDump {

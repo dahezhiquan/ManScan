@@ -166,6 +166,7 @@ func (request *Request) execute(input *contextargs.Context, domain string, metad
 
 	// Send the request to the target servers
 	timeStart := time.Now()
+	request.options.Progress.IncrementActualRequests()
 	response, err := dnsClient.Do(compiledRequest)
 	duration := time.Since(timeStart)
 	if err != nil {
