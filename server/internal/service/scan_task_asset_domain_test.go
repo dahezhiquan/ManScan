@@ -202,7 +202,10 @@ func TestProbeAssetDomainLivenessRecordsRequestStats(t *testing.T) {
 
 	progress := state.SnapshotProgress()
 	if progress.TotalRequests != 0 || progress.Requests != 1 {
-		t.Fatalf("progress = %+v, want one pre-scan request counted without publishing total", progress)
+		t.Fatalf("progress = %+v, want one pre-scan request counted as actual request with deferred total", progress)
+	}
+	if progress.ProgressStatus != "calculating" {
+		t.Fatalf("ProgressStatus = %q, want calculating while pre-scan total is deferred", progress.ProgressStatus)
 	}
 }
 
@@ -633,13 +636,16 @@ func TestStreamAssetDomainFingerprintTemplateResultsRecordsStats(t *testing.T) {
 	state := &scanruntime.State{}
 	statsTracker := &assetDomainFingerprintTemplateStatsTracker{}
 	streamAssetDomainFingerprintTemplateResults(strings.NewReader(strings.Join([]string{
-		`{"requests":"3","actual_requests":"2","total":"5","total_known":"1"}`,
-		`{"requests":"4","actual_requests":"3","total":"5","total_known":"1"}`,
+		`{"requests":"3","actual_requests":"2","total":"5","pre_cluster_total":"7","total_known":"1"}`,
+		`{"requests":"4","actual_requests":"3","total":"5","pre_cluster_total":"7","total_known":"1"}`,
 	}, "\n")), nil, state, statsTracker)
 
 	progress := state.SnapshotProgress()
 	if progress.TotalRequests != 5 || progress.Requests != 3 {
 		t.Fatalf("progress = %+v, want active fingerprint stats merged", progress)
+	}
+	if progress.PreClusterTotalRequests != 7 {
+		t.Fatalf("PreClusterTotalRequests = %d, want 7", progress.PreClusterTotalRequests)
 	}
 }
 
@@ -678,12 +684,36 @@ func TestStreamAssetDomainFingerprintTemplateStatsRecordsStderrStats(t *testing.
 	statsTracker := &assetDomainFingerprintTemplateStatsTracker{}
 	streamAssetDomainFingerprintTemplateStats(strings.NewReader(strings.Join([]string{
 		`[INF] loading templates`,
-		`{"requests":"10","actual_requests":"8","total":"1200","total_known":"1"}`,
+		`{"requests":"10","actual_requests":"8","total":"1200","pre_cluster_total":"1500","total_known":"1"}`,
 	}, "\n")), state, statsTracker)
 
 	progress := state.SnapshotProgress()
 	if progress.TotalRequests != 1200 || progress.Requests != 8 {
 		t.Fatalf("progress = %+v, want stderr active fingerprint stats merged", progress)
+	}
+	if progress.PreClusterTotalRequests != 1500 {
+		t.Fatalf("PreClusterTotalRequests = %d, want 1500", progress.PreClusterTotalRequests)
+	}
+}
+
+func TestAssetDomainFingerprintTemplateStatsCanDeferTotal(t *testing.T) {
+	t.Parallel()
+
+	state := &scanruntime.State{}
+	statsTracker := &assetDomainFingerprintTemplateStatsTracker{deferTotal: true}
+	streamAssetDomainFingerprintTemplateStats(strings.NewReader(
+		`{"requests":"4","actual_requests":"3","total":"6","pre_cluster_total":"8","total_known":"1"}`,
+	), state, statsTracker)
+
+	progress := state.SnapshotProgress()
+	if progress.TotalRequests != 0 || progress.PreClusterTotalRequests != 0 {
+		t.Fatalf("progress totals = %d/%d, want deferred active fingerprint totals hidden", progress.TotalRequests, progress.PreClusterTotalRequests)
+	}
+	if progress.Requests != 3 {
+		t.Fatalf("Requests = %d, want active fingerprint actual requests 3", progress.Requests)
+	}
+	if progress.ProgressStatus != "calculating" {
+		t.Fatalf("ProgressStatus = %q, want calculating while active fingerprint total is deferred", progress.ProgressStatus)
 	}
 }
 
@@ -692,10 +722,10 @@ func TestAssetDomainFingerprintStatsAccumulateAcrossTargetGroups(t *testing.T) {
 
 	state := &scanruntime.State{}
 	streamAssetDomainFingerprintTemplateStats(strings.NewReader(
-		`{"requests":"4","actual_requests":"3","total":"6","total_known":"1"}`,
+		`{"requests":"4","actual_requests":"3","total":"6","pre_cluster_total":"8","total_known":"1"}`,
 	), state, &assetDomainFingerprintTemplateStatsTracker{})
 	streamAssetDomainFingerprintTemplateStats(strings.NewReader(
-		`{"requests":"2","actual_requests":"2","total":"3","total_known":"1"}`,
+		`{"requests":"2","actual_requests":"2","total":"3","pre_cluster_total":"5","total_known":"1"}`,
 	), state, &assetDomainFingerprintTemplateStatsTracker{})
 
 	progress := state.SnapshotProgress()
@@ -704,6 +734,9 @@ func TestAssetDomainFingerprintStatsAccumulateAcrossTargetGroups(t *testing.T) {
 	}
 	if progress.Requests != 5 {
 		t.Fatalf("Requests = %d, want accumulated fingerprint requests 5", progress.Requests)
+	}
+	if progress.PreClusterTotalRequests != 13 {
+		t.Fatalf("PreClusterTotalRequests = %d, want accumulated fingerprint totals 13", progress.PreClusterTotalRequests)
 	}
 }
 

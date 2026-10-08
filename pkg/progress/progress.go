@@ -97,6 +97,7 @@ func (p *StatsTicker) Init(hostCount int64, rulesCount int, requestCount int64) 
 	p.stats.AddCounter("errors", uint64(0))
 	p.stats.AddCounter("matched", uint64(0))
 	p.stats.AddCounter("total", uint64(requestCount))
+	p.stats.AddCounter("pre_cluster_total", uint64(0))
 	totalKnown := uint64(0)
 	if requestCount > 0 {
 		totalKnown = 1
@@ -168,12 +169,28 @@ func (p *StatsTicker) SetTotal(total int64) {
 	}
 }
 
+// SetPreClusterTotal sets the estimated request count before template clustering.
+func (p *StatsTicker) SetPreClusterTotal(total int64) {
+	if total < 0 {
+		total = 0
+	}
+
+	current, _ := p.stats.GetCounter("pre_cluster_total")
+	if total > int64(current) {
+		p.stats.IncrementCounter("pre_cluster_total", int(total-int64(current)))
+	}
+	if p.active {
+		p.emitCurrentSummary()
+	}
+}
+
 // AddToTotal adds a value to the total request count
 func (p *StatsTicker) AddToTotal(delta int64) {
 	if delta <= 0 {
 		return
 	}
 	p.stats.IncrementCounter("total", int(delta))
+	p.stats.IncrementCounter("pre_cluster_total", int(delta))
 	if p.totalKnown.CompareAndSwap(false, true) {
 		p.stats.IncrementCounter("total_known", 1)
 	}
@@ -322,6 +339,7 @@ func metricsMap(stats clistats.StatisticsClient) map[string]interface{} {
 	actualRequests, _ := stats.GetCounter("actual_requests")
 	results["actual_requests"] = clistats.String(actualRequests)
 	total, _ := stats.GetCounter("total")
+	preClusterTotal, _ := stats.GetCounter("pre_cluster_total")
 	totalKnown, okTotalKnown := stats.GetCounter("total_known")
 	if !okTotalKnown {
 		// Keep compatibility with progress clients created before total_known
@@ -333,6 +351,7 @@ func metricsMap(stats clistats.StatisticsClient) map[string]interface{} {
 	results["total_known"] = clistats.String(totalKnown)
 	if totalKnown > 0 {
 		results["total"] = clistats.String(total)
+		results["pre_cluster_total"] = clistats.String(preClusterTotal)
 	}
 	results["rps"] = clistats.String(calculateRPS(requests, duration))
 	errors, _ := stats.GetCounter("errors")

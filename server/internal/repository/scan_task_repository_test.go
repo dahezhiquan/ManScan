@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -65,5 +66,47 @@ func TestScanTaskRepositoryDeleteRemovesTaskAndResult(t *testing.T) {
 	var result entity.ScanTaskResult
 	if err := db.Where("task_id = ?", 1).First(&result).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("result still exists or unexpected error: %v", err)
+	}
+}
+
+func TestScanTaskRepositoryStatsUsesPreClusterRequestTotal(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "stats.db")), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	if err := db.AutoMigrate(&entity.ScanTask{}, &entity.ScanTaskResult{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	tasks := []entity.ScanTask{
+		{ID: 1, TaskNo: "task-1", Name: "clustered", Status: "success", CreatedBy: "tester"},
+		{ID: 2, TaskNo: "task-2", Name: "legacy", Status: "success", CreatedBy: "tester"},
+		{ID: 3, TaskNo: "failed", Name: "failed", Status: "failed", CreatedBy: "tester"},
+	}
+	if err := db.Create(&tasks).Error; err != nil {
+		t.Fatalf("Create tasks error = %v", err)
+	}
+	results := []entity.ScanTaskResult{
+		{TaskID: 1, TaskName: "clustered", TotalRequests: 60, PreClusterTotalRequests: 100, RealRequests: 45},
+		{TaskID: 2, TaskName: "legacy", TotalRequests: 20, RealRequests: 5},
+		{TaskID: 3, TaskName: "failed", TotalRequests: 100, PreClusterTotalRequests: 120, RealRequests: 10},
+	}
+	if err := db.Create(&results).Error; err != nil {
+		t.Fatalf("Create results error = %v", err)
+	}
+
+	stats, err := NewScanTaskRepository(db).Stats(context.Background())
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	if stats.Total != 3 || stats.Running != 0 {
+		t.Fatalf("stats counts = %+v, want total 3 and running 0", stats)
+	}
+	if stats.SavedRequests != 70 {
+		t.Fatalf("SavedRequests = %d, want 70", stats.SavedRequests)
 	}
 }

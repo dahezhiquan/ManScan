@@ -378,7 +378,7 @@ type assetDomainProbeStatusTransport struct {
 
 func (t assetDomainProbeStatusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if state, ok := req.Context().Value(assetDomainProbeStatsStateKey{}).(*scanruntime.State); ok && state != nil {
-		state.AddRequestStats(0, 1, 1, "扫描前域名资产存活 & 指纹探测进度更新")
+		state.AddDeferredTotalRequestStats(1, 1, 1, "扫描前域名资产存活 & 指纹探测进度更新")
 	}
 	resp, err := t.base.RoundTrip(req)
 	if resp != nil && resp.StatusCode > 0 {
@@ -570,7 +570,7 @@ func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context
 	if queue == nil {
 		return nil, nil
 	}
-	statsTracker := &assetDomainFingerprintTemplateStatsTracker{}
+	statsTracker := &assetDomainFingerprintTemplateStatsTracker{deferTotal: true}
 
 	if err := cmd.Start(); err != nil {
 		queue.CloseAndWait()
@@ -684,17 +684,20 @@ func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskReques
 }
 
 type assetDomainFingerprintTemplateStatsPayload struct {
-	Requests       string `json:"requests"`
-	ActualRequests string `json:"actual_requests"`
-	Total          string `json:"total"`
-	TotalKnown     string `json:"total_known"`
+	Requests        string `json:"requests"`
+	ActualRequests  string `json:"actual_requests"`
+	Total           string `json:"total"`
+	PreClusterTotal string `json:"pre_cluster_total"`
+	TotalKnown      string `json:"total_known"`
 }
 
 type assetDomainFingerprintTemplateStatsTracker struct {
-	mu                 sync.Mutex
-	lastRequests       int64
-	lastActualRequests int64
-	lastTotal          int64
+	mu                  sync.Mutex
+	lastRequests        int64
+	lastActualRequests  int64
+	lastTotal           int64
+	lastPreClusterTotal int64
+	deferTotal          bool
 }
 
 func (t *assetDomainFingerprintTemplateStatsTracker) Handle(line string, state *scanruntime.State) bool {
@@ -706,7 +709,7 @@ func (t *assetDomainFingerprintTemplateStatsTracker) Handle(line string, state *
 	if err := json.Unmarshal([]byte(line), &payload); err != nil {
 		return false
 	}
-	if payload.Requests == "" && payload.ActualRequests == "" && payload.Total == "" && payload.TotalKnown == "" {
+	if payload.Requests == "" && payload.ActualRequests == "" && payload.Total == "" && payload.PreClusterTotal == "" && payload.TotalKnown == "" {
 		return false
 	}
 
@@ -729,6 +732,7 @@ func (t *assetDomainFingerprintTemplateStatsTracker) Handle(line string, state *
 	}
 
 	totalDelta := int64(0)
+	preClusterTotalDelta := int64(0)
 	totalKnown := strings.EqualFold(strings.TrimSpace(payload.TotalKnown), "1") || strings.EqualFold(strings.TrimSpace(payload.TotalKnown), "true")
 	if payload.TotalKnown == "" {
 		totalKnown = payload.Total != ""
@@ -740,11 +744,24 @@ func (t *assetDomainFingerprintTemplateStatsTracker) Handle(line string, state *
 			totalDelta = total
 		}
 		t.lastTotal = total
+		preClusterTotal := total
+		if payload.PreClusterTotal != "" {
+			preClusterTotal = scanruntime.ParseInt64(payload.PreClusterTotal)
+		}
+		preClusterTotalDelta = preClusterTotal - t.lastPreClusterTotal
+		if preClusterTotalDelta < 0 {
+			preClusterTotalDelta = preClusterTotal
+		}
+		t.lastPreClusterTotal = preClusterTotal
 	}
 	t.lastRequests = requests
 	t.lastActualRequests = actualRequests
 
-	state.AddRequestStats(totalDelta, actualDelta, requestDelta, "扫描前域名资产存活 & 指纹探测进度更新")
+	if t.deferTotal {
+		state.AddDeferredTotalRequestStats(totalDelta, actualDelta, requestDelta, "扫描前域名资产存活 & 指纹探测进度更新", preClusterTotalDelta)
+	} else {
+		state.AddRequestStats(totalDelta, actualDelta, requestDelta, "扫描前域名资产存活 & 指纹探测进度更新", preClusterTotalDelta)
+	}
 	return true
 }
 

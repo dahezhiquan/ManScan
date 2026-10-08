@@ -1,3 +1,23 @@
+## 2026-09-30 预估请求数增加模板聚类前基准
+
+- 变动目录：`pkg/core/`、`pkg/progress/`、`pkg/protocols/common/automaticscan/`、`server/internal/model/`、`server/internal/pkg/scanruntime/`、`server/internal/repository/`、`server/internal/service/`、`docs/SQL/`、根目录文档
+- 变动文件：
+  - `pkg/core/execute_options.go`：普通扫描在完成目标过滤和模板聚类后，继续用聚类后请求数初始化动态进度，同时向进度统计发布聚类前请求基准。
+  - `pkg/progress/progress.go`：新增 `pre_cluster_total` 统计字段；Workflow 动态请求同时计入聚类前基准，并通过 stats-json 输出。
+  - `pkg/protocols/common/automaticscan/automaticscan.go`、`pkg/protocols/common/automaticscan/util.go`：自动扫描分别记录指纹模板和按目标映射后的漏洞模板聚类前请求数；非 HTTP 目标先过滤 HTTP/Headless 模板，再计算基准，避免将未执行请求计入节省量。
+  - `server/internal/pkg/scanruntime/runtime.go`：解析、合并、恢复并持久化 `pre_cluster_total_requests`，但进度百分比仍使用聚类后 `total_requests`。
+  - `server/internal/service/scan_task_asset_domain.go`：主动指纹子进程同步聚类前请求统计；扫描前 Wappalyzer 请求继续同时计入总量和聚类前基准。
+  - `server/internal/model/entity/scan_task_result.go`、`server/internal/model/dto/scan_task.go`：增加聚类前预估请求数字段。
+  - `server/internal/repository/scan_task_repository.go`：`saved_requests` 改为使用聚类前预估请求数减实际请求数；历史记录无新字段时回退到旧 `total_requests`，任务列表同步返回该字段。
+  - `server/internal/service/scan_task_service.go`：贯通运行时汇总、暂停恢复、结果入库和任务列表的聚类前请求基准。
+  - `docs/SQL/create_manscan_task_results.sql`、`docs/SQL/alter_manscan_task_results_add_pre_cluster_total_requests.sql`：新增建表字段和存量数据库升级 SQL。
+  - `server/API.md`：补充动态进度、任务列表和 `saved_requests` 的新字段及统计口径。
+  - `pkg/core/executors_test.go`、`pkg/progress/progress_test.go`、`server/internal/pkg/scanruntime/runtime_test.go`、`server/internal/repository/scan_task_repository_test.go`、`server/internal/service/scan_task_asset_domain_test.go`：补充普通扫描基准发布、stats-json 聚类前基准、主动指纹统计合并、历史任务回退和失败任务排除回归测试。
+- 修改目的或影响：
+  - 保持动态进度使用聚类后的实际执行总量，避免模板聚类后进度无法达到真实执行进度。
+  - 让成功任务的节省请求数包含模板聚类、缓存和其他未实际发出的请求，且基准与当前目标过滤和模板执行范围一致。
+  - 已有任务仍可通过旧 `total_requests` 计算节省量；部署前需执行新增的 `ALTER TABLE` 脚本。
+
 ## 2026-09-30 15:34 修复非 HTTP 目标实际漏洞模版数量统计
 
 - 变动目录：`pkg/core/`、根目录文档、`server/`

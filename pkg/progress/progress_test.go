@@ -14,6 +14,7 @@ func TestMetricsMapOmitsUnknownTotalAndPercent(t *testing.T) {
 	stats.AddCounter("requests", 7)
 	stats.AddCounter("actual_requests", 6)
 	stats.AddCounter("total", 0)
+	stats.AddCounter("pre_cluster_total", 0)
 	stats.AddCounter("total_known", 0)
 	stats.AddCounter("matched", 0)
 	stats.AddCounter("errors", 0)
@@ -38,6 +39,12 @@ func TestMetricsMapOmitsUnknownTotalAndPercent(t *testing.T) {
 	if got := metrics["percent"]; got != "35" {
 		t.Fatalf("percent = %v, want 35", got)
 	}
+
+	stats.IncrementCounter("pre_cluster_total", 30)
+	metrics = metricsMap(stats)
+	if got := metrics["pre_cluster_total"]; got != "30" {
+		t.Fatalf("pre_cluster_total = %v, want 30", got)
+	}
 }
 
 func TestCalculateProgressPercentWithUnknownTotal(t *testing.T) {
@@ -53,12 +60,16 @@ func TestStatsTickerPublishesTemplateCount(t *testing.T) {
 	}
 
 	ticker := progressClient.(*StatsTicker)
-	ticker.Init(1, 0, 0)
+	ticker.Init(1, 0, 10)
 	ticker.SetTemplateCount(12)
+	ticker.SetPreClusterTotal(24)
 
 	metrics := metricsMap(ticker.stats)
 	if got := metrics["templates"]; got != "12" {
 		t.Fatalf("templates = %v, want 12", got)
+	}
+	if got := metrics["pre_cluster_total"]; got != "24" {
+		t.Fatalf("pre_cluster_total = %v, want 24", got)
 	}
 
 	// Template counts are monotonic to remain safe after clistats starts.

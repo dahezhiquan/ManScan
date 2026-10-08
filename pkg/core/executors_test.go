@@ -179,9 +179,10 @@ func (f *fakeTargetProvider) InputType() string                      { return "t
 func (f *fakeTargetProvider) Close()                                 {}
 
 type recordingProgress struct {
-	hostCount     int64
-	templateCount int
-	requestCount  int64
+	hostCount              int64
+	templateCount          int
+	requestCount           int64
+	preClusterRequestCount int64
 }
 
 func (p *recordingProgress) Stop() {}
@@ -190,6 +191,10 @@ func (p *recordingProgress) Init(hostCount int64, rulesCount int, requestCount i
 	p.hostCount = hostCount
 	p.templateCount = rulesCount
 	p.requestCount = requestCount
+}
+
+func (p *recordingProgress) SetPreClusterTotal(requestCount int64) {
+	p.preClusterRequestCount = requestCount
 }
 
 func (p *recordingProgress) AddToTotal(int64)                {}
@@ -461,6 +466,9 @@ func TestExecuteScanInitializesFilteredProgress(t *testing.T) {
 	}
 	if progressClient.requestCount != 2 {
 		t.Fatalf("progress request count = %d, want 2", progressClient.requestCount)
+	}
+	if progressClient.preClusterRequestCount != 2 {
+		t.Fatalf("progress pre-cluster request count = %d, want 2", progressClient.preClusterRequestCount)
 	}
 	if got := httpExecuter.count.Load(); got != 0 {
 		t.Fatalf("http template executed %d times, want 0", got)

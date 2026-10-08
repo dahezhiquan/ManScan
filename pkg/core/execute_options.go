@@ -75,6 +75,9 @@ func (e *Engine) ExecuteScanWithOpts(ctx context.Context, templatesList []*templ
 			countExecutableTemplates(templatesList, targetStats),
 			totalReqAfterClustering,
 		)
+		if setter, ok := e.executerOpts.Progress.(interface{ SetPreClusterTotal(int64) }); ok {
+			setter.SetPreClusterTotal(totalReqBeforeCluster)
+		}
 	}
 
 	if stringsutil.EqualFoldAny(e.options.ScanStrategy, scanstrategy.Auto.String(), "") {

@@ -1681,12 +1681,16 @@ func applyRuntimeResultSummaryToListItem(item *dto.ScanTaskListItem, result scan
 	item.PluginCount = result.PluginCount
 	item.TargetCount = result.TargetCount
 	item.TotalRequests = result.TotalRequests
+	item.PreClusterTotalRequests = result.PreClusterTotalRequests
 	item.RealRequests = result.RealRequests
 }
 
 func applyProgressSnapshotToListItem(item *dto.ScanTaskListItem, progress scanruntime.TaskProgressSnapshot) {
 	if progress.TotalRequests > 0 {
 		item.TotalRequests = progress.TotalRequests
+	}
+	if progress.PreClusterTotalRequests > 0 {
+		item.PreClusterTotalRequests = progress.PreClusterTotalRequests
 	}
 	if progress.Requests > 0 {
 		item.RealRequests = progress.Requests
@@ -1786,16 +1790,17 @@ func entityResultSummary(result *entity.ScanTaskResult) scanruntime.ResultSummar
 		return scanruntime.ResultSummary{}
 	}
 	return scanruntime.ResultSummary{
-		CriticalCount: result.CriticalCount,
-		HighCount:     result.HighCount,
-		MediumCount:   result.MediumCount,
-		LowCount:      result.LowCount,
-		InfoCount:     result.InfoCount,
-		TechCount:     result.TechCount,
-		PluginCount:   result.PluginCount,
-		TargetCount:   result.TargetCount,
-		TotalRequests: result.TotalRequests,
-		RealRequests:  result.RealRequests,
+		CriticalCount:           result.CriticalCount,
+		HighCount:               result.HighCount,
+		MediumCount:             result.MediumCount,
+		LowCount:                result.LowCount,
+		InfoCount:               result.InfoCount,
+		TechCount:               result.TechCount,
+		PluginCount:             result.PluginCount,
+		TargetCount:             result.TargetCount,
+		TotalRequests:           result.TotalRequests,
+		PreClusterTotalRequests: result.PreClusterTotalRequests,
+		RealRequests:            result.RealRequests,
 	}
 }
 
@@ -1804,10 +1809,11 @@ func entityResultRequestSummary(result *entity.ScanTaskResult) scanruntime.Resul
 		return scanruntime.ResultSummary{}
 	}
 	return scanruntime.ResultSummary{
-		PluginCount:   result.PluginCount,
-		TargetCount:   result.TargetCount,
-		TotalRequests: result.TotalRequests,
-		RealRequests:  result.RealRequests,
+		PluginCount:             result.PluginCount,
+		TargetCount:             result.TargetCount,
+		TotalRequests:           result.TotalRequests,
+		PreClusterTotalRequests: result.PreClusterTotalRequests,
+		RealRequests:            result.RealRequests,
 	}
 }
 
@@ -1817,6 +1823,10 @@ func mergeResultSummaryCounts(counts, requestStats scanruntime.ResultSummary) sc
 		counts.TargetCount = requestStats.TargetCount
 	}
 	counts.TotalRequests = requestStats.TotalRequests
+	counts.PreClusterTotalRequests = requestStats.PreClusterTotalRequests
+	if counts.PreClusterTotalRequests < counts.TotalRequests {
+		counts.PreClusterTotalRequests = counts.TotalRequests
+	}
 	counts.RealRequests = requestStats.RealRequests
 	return counts
 }
@@ -1855,20 +1865,21 @@ func (s *scanTaskService) replaceRuntime(taskID int64, runtime *scanTaskRuntime)
 
 func toScanTaskResult(taskID int64, taskName string, startedAt *time.Time, finishedAt time.Time, summary scanruntime.ResultSummary) *entity.ScanTaskResult {
 	return &entity.ScanTaskResult{
-		TaskID:        taskID,
-		TaskName:      taskName,
-		CriticalCount: summary.CriticalCount,
-		HighCount:     summary.HighCount,
-		MediumCount:   summary.MediumCount,
-		LowCount:      summary.LowCount,
-		InfoCount:     summary.InfoCount,
-		TechCount:     summary.TechCount,
-		PluginCount:   summary.PluginCount,
-		TargetCount:   summary.TargetCount,
-		TotalRequests: summary.TotalRequests,
-		RealRequests:  summary.RealRequests,
-		CreatedAt:     startedAt,
-		FinishedAt:    &finishedAt,
+		TaskID:                  taskID,
+		TaskName:                taskName,
+		CriticalCount:           summary.CriticalCount,
+		HighCount:               summary.HighCount,
+		MediumCount:             summary.MediumCount,
+		LowCount:                summary.LowCount,
+		InfoCount:               summary.InfoCount,
+		TechCount:               summary.TechCount,
+		PluginCount:             summary.PluginCount,
+		TargetCount:             summary.TargetCount,
+		TotalRequests:           summary.TotalRequests,
+		PreClusterTotalRequests: summary.PreClusterTotalRequests,
+		RealRequests:            summary.RealRequests,
+		CreatedAt:               startedAt,
+		FinishedAt:              &finishedAt,
 	}
 }
 

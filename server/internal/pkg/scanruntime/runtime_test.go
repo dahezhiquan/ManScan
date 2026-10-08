@@ -830,7 +830,7 @@ func TestHandleStatsJSONLineAccumulatesResumeSessionRequests(t *testing.T) {
 		completedRequests: 40,
 	}
 
-	if !HandleStatsJSONLine(`{"requests":"5","actual_requests":"3","total":"100","percent":"5","matched":"9"}`, state) {
+	if !HandleStatsJSONLine(`{"requests":"5","actual_requests":"3","total":"100","pre_cluster_total":"140","percent":"5","matched":"9"}`, state) {
 		t.Fatalf("HandleStatsJSONLine() = false, want true")
 	}
 	progress := state.SnapshotProgress()
@@ -839,6 +839,9 @@ func TestHandleStatsJSONLineAccumulatesResumeSessionRequests(t *testing.T) {
 	}
 	if progress.TotalRequests != 100 {
 		t.Fatalf("TotalRequests = %d, want 100", progress.TotalRequests)
+	}
+	if progress.PreClusterTotalRequests != 140 {
+		t.Fatalf("PreClusterTotalRequests = %d, want 140", progress.PreClusterTotalRequests)
 	}
 	if progress.Percent != 45 {
 		t.Fatalf("Percent = %v, want cumulative logical percent 45", progress.Percent)
@@ -872,6 +875,42 @@ func TestHandleStatsJSONLineKeepsExternalRequestStats(t *testing.T) {
 	progress := state.SnapshotProgress()
 	if progress.TotalRequests != 105 {
 		t.Fatalf("TotalRequests = %d, want external + scanner total 105", progress.TotalRequests)
+	}
+	if progress.PreClusterTotalRequests != 105 {
+		t.Fatalf("PreClusterTotalRequests = %d, want external + scanner total 105", progress.PreClusterTotalRequests)
+	}
+	if progress.Requests != 11 {
+		t.Fatalf("Requests = %d, want external + scanner actual requests 11", progress.Requests)
+	}
+}
+
+func TestHandleStatsJSONLinePublishesDeferredExternalTotal(t *testing.T) {
+	t.Parallel()
+
+	state := &State{}
+	state.AddDeferredTotalRequestStats(5, 3, 3, "扫描前探测")
+
+	progress := state.SnapshotProgress()
+	if progress.TotalRequests != 0 || progress.PreClusterTotalRequests != 0 {
+		t.Fatalf("progress totals = %d/%d, want deferred totals hidden", progress.TotalRequests, progress.PreClusterTotalRequests)
+	}
+	if progress.Requests != 3 {
+		t.Fatalf("Requests before scanner total = %d, want external actual requests 3", progress.Requests)
+	}
+	if progress.ProgressStatus != "calculating" {
+		t.Fatalf("ProgressStatus = %q, want calculating before scanner total", progress.ProgressStatus)
+	}
+
+	if !HandleStatsJSONLine(`{"requests":"10","actual_requests":"8","total":"100","pre_cluster_total":"140","total_known":"1","percent":"10"}`, state) {
+		t.Fatalf("HandleStatsJSONLine() = false, want true")
+	}
+
+	progress = state.SnapshotProgress()
+	if progress.TotalRequests != 105 {
+		t.Fatalf("TotalRequests = %d, want deferred external + scanner total 105", progress.TotalRequests)
+	}
+	if progress.PreClusterTotalRequests != 145 {
+		t.Fatalf("PreClusterTotalRequests = %d, want deferred external + scanner pre-cluster total 145", progress.PreClusterTotalRequests)
 	}
 	if progress.Requests != 11 {
 		t.Fatalf("Requests = %d, want external + scanner actual requests 11", progress.Requests)
@@ -1092,11 +1131,15 @@ func TestSnapshotResultSummaryIncludesRequestStats(t *testing.T) {
 
 	state := &State{TargetCount: 2}
 	state.progress.TotalRequests = 120
+	state.progress.PreClusterTotalRequests = 160
 	state.progress.Requests = 88
 
 	summary := state.SnapshotResultSummary()
 	if summary.TotalRequests != 120 {
 		t.Fatalf("TotalRequests = %d, want 120", summary.TotalRequests)
+	}
+	if summary.PreClusterTotalRequests != 160 {
+		t.Fatalf("PreClusterTotalRequests = %d, want 160", summary.PreClusterTotalRequests)
 	}
 	if summary.RealRequests != 88 {
 		t.Fatalf("RealRequests = %d, want 88", summary.RealRequests)

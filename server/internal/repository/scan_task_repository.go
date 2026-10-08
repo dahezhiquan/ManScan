@@ -156,8 +156,8 @@ func (r *scanTaskRepository) Stats(ctx context.Context) (*dto.ScanTaskStats, err
 			SUM(CASE WHEN t.status = 'running' THEN 1 ELSE 0 END) AS running,
 			COALESCE(SUM(CASE
 				WHEN t.status = 'success'
-					AND COALESCE(r.total_requests, 0) > COALESCE(r.real_requests, 0)
-					THEN COALESCE(r.total_requests, 0) - COALESCE(r.real_requests, 0)
+					AND COALESCE(NULLIF(r.pre_cluster_total_requests, 0), r.total_requests, 0) > COALESCE(r.real_requests, 0)
+					THEN COALESCE(NULLIF(r.pre_cluster_total_requests, 0), r.total_requests, 0) - COALESCE(r.real_requests, 0)
 				ELSE 0
 			END), 0) AS saved_requests
 		`).
@@ -258,6 +258,7 @@ func (r *scanTaskRepository) UpsertResult(ctx context.Context, result *entity.Sc
 			"plugin_count",
 			"target_count",
 			"total_requests",
+			"pre_cluster_total_requests",
 			"real_requests",
 			"finished_at",
 		}),
@@ -319,6 +320,7 @@ func (r *scanTaskRepository) listItems(ctx context.Context, query dto.ListScanTa
 			COALESCE(r.plugin_count, 0) AS plugin_count,
 			COALESCE(r.target_count, 0) AS target_count,
 			COALESCE(r.total_requests, 0) AS total_requests,
+			COALESCE(NULLIF(r.pre_cluster_total_requests, 0), r.total_requests, 0) AS pre_cluster_total_requests,
 			COALESCE(r.real_requests, 0) AS real_requests
 		`).
 		Joins("LEFT JOIN manscan_task_results AS r ON r.task_id = t.id").

@@ -62,6 +62,7 @@ type Service struct {
 	templateDirs       []string // root Template Directories
 	technologyMappings map[string]string
 	techTemplates      []*templates.Template
+	techTemplateStats  templateLoadStats
 	fingerprintCache   *assetdomainfingerprint.Cache
 	totalGate          *totalGate
 	ServiceOpts        Options
@@ -71,6 +72,7 @@ type Service struct {
 type mappedTarget struct {
 	input                      *contextargs.MetaInput
 	finalTemplates             []*templates.Template
+	preClusterRequests         int64
 	usedCachedWappalyzer       bool
 	skipHTTPDetectionTemplates bool
 }
@@ -102,13 +104,14 @@ func (g *totalGate) Add(delta int64) {
 	}
 }
 
-func (g *totalGate) Publish(total int64) {
+func (g *totalGate) Publish(total, preClusterTotal int64) {
 	if g == nil {
 		return
 	}
 
 	g.mu.Lock()
 	total += g.pending
+	preClusterTotal += g.pending
 	g.pending = 0
 	g.known = true
 	if g.progress != nil {
@@ -116,6 +119,9 @@ func (g *totalGate) Publish(total int64) {
 			setter.SetTotal(total)
 		} else {
 			g.progress.AddToTotal(total)
+		}
+		if setter, ok := g.progress.(interface{ SetPreClusterTotal(int64) }); ok {
+			setter.SetPreClusterTotal(preClusterTotal)
 		}
 	}
 	g.mu.Unlock()
@@ -207,7 +213,7 @@ func New(opts Options) (*Service, error) {
 	}
 
 	// load tech detect templates
-	techDetectTemplates, err := LoadTemplatesWithTags(opts, templateDirs, []string{"tech", "detect", "favicon"}, true)
+	techDetectTemplates, techTemplateStats, err := loadTemplatesWithTagsWithStats(opts, templateDirs, []string{"tech", "detect", "favicon"}, true, false)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +234,7 @@ func New(opts Options) (*Service, error) {
 		httpclient:         httpclient,
 		technologyMappings: mappingData,
 		techTemplates:      techDetectTemplates,
+		techTemplateStats:  techTemplateStats,
 		fingerprintCache:   firstNonNilFingerprintCache(opts.ExecuterOpts.AssetDomainFingerprintCache, assetdomainfingerprint.LoadFromEnv()),
 		ServiceOpts:        opts,
 		hasResults:         &atomic.Bool{},
@@ -329,16 +336,23 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 	}
 
-	finalTemplates, err := LoadTemplatesWithTags(s.ServiceOpts, s.templateDirs, finalTags, false)
+	finalTemplates, loadStats, err := loadTemplatesWithTagsWithStats(s.ServiceOpts, s.templateDirs, finalTags, false, skipHTTPDetectionTemplates)
 	if err != nil {
 		gologger.Error().Msgf("%v Error loading templates: %s\n", input.Input, err)
 		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 	}
-	if skipHTTPDetectionTemplates {
-		finalTemplates = filterHTTPBasedTemplates(finalTemplates)
-	}
 	s.opts.Logger.Info().Msgf("%s 已加载漏洞模版数量：%d", input.Input, len(finalTemplates))
-	return mappedTarget{input: input, finalTemplates: finalTemplates, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
+	preClusterRequests := loadStats.PreClusterRequests
+	if skipHTTPDetectionTemplates {
+		preClusterRequests = loadStats.PreClusterNonHTTPRequests
+	}
+	return mappedTarget{
+		input:                      input,
+		finalTemplates:             finalTemplates,
+		preClusterRequests:         preClusterRequests,
+		usedCachedWappalyzer:       usedCachedWappalyzer,
+		skipHTTPDetectionTemplates: skipHTTPDetectionTemplates,
+	}
 }
 
 func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
@@ -355,6 +369,7 @@ func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
 		}
 	}
 	total := wappalyzerTargets
+	preClusterTotal := wappalyzerTargets
 	for _, target := range targets {
 		for _, template := range s.techTemplates {
 			if target.skipHTTPDetectionTemplates && isHTTPFingerprintTemplate(template) {
@@ -362,13 +377,19 @@ func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
 			}
 			total += int64(template.TotalRequests)
 		}
+		if target.skipHTTPDetectionTemplates {
+			preClusterTotal += s.techTemplateStats.PreClusterNonHTTPRequests
+		} else {
+			preClusterTotal += s.techTemplateStats.PreClusterRequests
+		}
 	}
 	for _, target := range targets {
 		for _, template := range target.finalTemplates {
 			total += int64(template.TotalRequests)
 		}
+		preClusterTotal += target.preClusterRequests
 	}
-	s.totalGate.Publish(total)
+	s.totalGate.Publish(total, preClusterTotal)
 	if setter, ok := s.opts.Progress.(interface{ SetTemplateCount(int64) }); ok {
 		setter.SetTemplateCount(mappedTemplateCount(targets))
 	}

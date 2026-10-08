@@ -13,6 +13,7 @@ CREATE TABLE `manscan_task_results` (
                                         `finished_at` DATETIME DEFAULT NULL COMMENT '结束时间',
                                         `tech_count` INT DEFAULT NULL COMMENT '本次扫描识别到的指纹数量',
                                         `total_requests` MEDIUMTEXT DEFAULT NULL COMMENT '预计总请求数量',
+                                        `pre_cluster_total_requests` MEDIUMTEXT DEFAULT NULL COMMENT '模板聚类前预估总请求数量',
                                         `real_requests` MEDIUMTEXT DEFAULT NULL COMMENT '实际请求数量',
                                         PRIMARY KEY (`id`),
                                         UNIQUE KEY `uk_task_id` (`task_id`),

@@ -27,21 +27,22 @@ const (
 var ansiLogPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 type TaskProgressSnapshot struct {
-	Hosts             int64     `json:"hosts"`
-	AliveHosts        *int64    `json:"alive_hosts,omitempty"`
-	UnresponsiveHosts *int64    `json:"unresponsive_hosts,omitempty"`
-	Templates         int64     `json:"templates"`
-	TotalRequests     int64     `json:"total_requests,omitempty"`
-	Requests          int64     `json:"requests"`
-	Matched           int64     `json:"matched"`
-	Errors            int64     `json:"errors"`
-	Percent           float64   `json:"percent,omitempty"`
-	ProgressStatus    string    `json:"progress_status"`
-	LastUpdatedAt     time.Time `json:"last_updated_at"`
-	LastMessage       string    `json:"last_message,omitempty"`
-	LastEventSeq      int64     `json:"last_event_seq"`
-	Finished          bool      `json:"finished"`
-	FinishedStatus    string    `json:"finished_status,omitempty"`
+	Hosts                   int64     `json:"hosts"`
+	AliveHosts              *int64    `json:"alive_hosts,omitempty"`
+	UnresponsiveHosts       *int64    `json:"unresponsive_hosts,omitempty"`
+	Templates               int64     `json:"templates"`
+	TotalRequests           int64     `json:"total_requests,omitempty"`
+	PreClusterTotalRequests int64     `json:"pre_cluster_total_requests,omitempty"`
+	Requests                int64     `json:"requests"`
+	Matched                 int64     `json:"matched"`
+	Errors                  int64     `json:"errors"`
+	Percent                 float64   `json:"percent,omitempty"`
+	ProgressStatus          string    `json:"progress_status"`
+	LastUpdatedAt           time.Time `json:"last_updated_at"`
+	LastMessage             string    `json:"last_message,omitempty"`
+	LastEventSeq            int64     `json:"last_event_seq"`
+	Finished                bool      `json:"finished"`
+	FinishedStatus          string    `json:"finished_status,omitempty"`
 }
 
 // MarshalJSON omits total and percent while the automatic fingerprint
@@ -49,50 +50,57 @@ type TaskProgressSnapshot struct {
 // once the total has become known.
 func (p TaskProgressSnapshot) MarshalJSON() ([]byte, error) {
 	type progressSnapshotJSON struct {
-		Hosts             int64     `json:"hosts"`
-		AliveHosts        *int64    `json:"alive_hosts,omitempty"`
-		UnresponsiveHosts *int64    `json:"unresponsive_hosts,omitempty"`
-		Templates         int64     `json:"templates"`
-		TotalRequests     *int64    `json:"total_requests,omitempty"`
-		Requests          int64     `json:"requests"`
-		Matched           int64     `json:"matched"`
-		Errors            int64     `json:"errors"`
-		Percent           *float64  `json:"percent,omitempty"`
-		ProgressStatus    string    `json:"progress_status"`
-		LastUpdatedAt     time.Time `json:"last_updated_at"`
-		LastMessage       string    `json:"last_message,omitempty"`
-		LastEventSeq      int64     `json:"last_event_seq"`
-		Finished          bool      `json:"finished"`
-		FinishedStatus    string    `json:"finished_status,omitempty"`
+		Hosts                   int64     `json:"hosts"`
+		AliveHosts              *int64    `json:"alive_hosts,omitempty"`
+		UnresponsiveHosts       *int64    `json:"unresponsive_hosts,omitempty"`
+		Templates               int64     `json:"templates"`
+		TotalRequests           *int64    `json:"total_requests,omitempty"`
+		PreClusterTotalRequests *int64    `json:"pre_cluster_total_requests,omitempty"`
+		Requests                int64     `json:"requests"`
+		Matched                 int64     `json:"matched"`
+		Errors                  int64     `json:"errors"`
+		Percent                 *float64  `json:"percent,omitempty"`
+		ProgressStatus          string    `json:"progress_status"`
+		LastUpdatedAt           time.Time `json:"last_updated_at"`
+		LastMessage             string    `json:"last_message,omitempty"`
+		LastEventSeq            int64     `json:"last_event_seq"`
+		Finished                bool      `json:"finished"`
+		FinishedStatus          string    `json:"finished_status,omitempty"`
 	}
 
 	known := p.Finished || p.ProgressStatus == "running" || p.ProgressStatus == "finished" ||
 		(p.ProgressStatus == "" && p.TotalRequests > 0)
 	var totalRequests *int64
+	var preClusterTotalRequests *int64
 	var percent *float64
 	if known {
 		total := p.TotalRequests
 		value := p.Percent
 		totalRequests = &total
 		percent = &value
+		if p.PreClusterTotalRequests > 0 {
+			preClusterTotal := p.PreClusterTotalRequests
+			preClusterTotalRequests = &preClusterTotal
+		}
 	}
 
 	return json.Marshal(progressSnapshotJSON{
-		Hosts:             p.Hosts,
-		AliveHosts:        p.AliveHosts,
-		UnresponsiveHosts: p.UnresponsiveHosts,
-		Templates:         p.Templates,
-		TotalRequests:     totalRequests,
-		Requests:          p.Requests,
-		Matched:           p.Matched,
-		Errors:            p.Errors,
-		Percent:           percent,
-		ProgressStatus:    p.ProgressStatus,
-		LastUpdatedAt:     p.LastUpdatedAt,
-		LastMessage:       p.LastMessage,
-		LastEventSeq:      p.LastEventSeq,
-		Finished:          p.Finished,
-		FinishedStatus:    p.FinishedStatus,
+		Hosts:                   p.Hosts,
+		AliveHosts:              p.AliveHosts,
+		UnresponsiveHosts:       p.UnresponsiveHosts,
+		Templates:               p.Templates,
+		TotalRequests:           totalRequests,
+		PreClusterTotalRequests: preClusterTotalRequests,
+		Requests:                p.Requests,
+		Matched:                 p.Matched,
+		Errors:                  p.Errors,
+		Percent:                 percent,
+		ProgressStatus:          p.ProgressStatus,
+		LastUpdatedAt:           p.LastUpdatedAt,
+		LastMessage:             p.LastMessage,
+		LastEventSeq:            p.LastEventSeq,
+		Finished:                p.Finished,
+		FinishedStatus:          p.FinishedStatus,
 	})
 }
 
@@ -121,18 +129,19 @@ type TaskLogsPage struct {
 }
 
 type ResultSummary struct {
-	CriticalCount     int
-	HighCount         int
-	MediumCount       int
-	LowCount          int
-	InfoCount         int
-	TechCount         int
-	PluginCount       int
-	TargetCount       int
-	TotalRequests     int64
-	RealRequests      int64
-	AliveHosts        *int64
-	UnresponsiveHosts *int64
+	CriticalCount           int
+	HighCount               int
+	MediumCount             int
+	LowCount                int
+	InfoCount               int
+	TechCount               int
+	PluginCount             int
+	TargetCount             int
+	TotalRequests           int64
+	PreClusterTotalRequests int64
+	RealRequests            int64
+	AliveHosts              *int64
+	UnresponsiveHosts       *int64
 }
 
 type progressLogState struct {
@@ -143,15 +152,16 @@ type progressLogState struct {
 }
 
 type cliStatsPayload struct {
-	Templates      string `json:"templates"`
-	Hosts          string `json:"hosts"`
-	Matched        string `json:"matched"`
-	Requests       string `json:"requests"`
-	ActualRequests string `json:"actual_requests"`
-	Total          string `json:"total"`
-	TotalKnown     string `json:"total_known"`
-	Errors         string `json:"errors"`
-	Percent        string `json:"percent"`
+	Templates       string `json:"templates"`
+	Hosts           string `json:"hosts"`
+	Matched         string `json:"matched"`
+	Requests        string `json:"requests"`
+	ActualRequests  string `json:"actual_requests"`
+	Total           string `json:"total"`
+	PreClusterTotal string `json:"pre_cluster_total"`
+	TotalKnown      string `json:"total_known"`
+	Errors          string `json:"errors"`
+	Percent         string `json:"percent"`
 }
 
 type scannerErrorLogEntry struct {
@@ -178,21 +188,22 @@ type State struct {
 	LogFile          *os.File
 	MatchLogFile     *os.File
 
-	mu                   sync.RWMutex
-	events               []TaskLogEvent
-	nextSeq              int64
-	progress             TaskProgressSnapshot
-	resultSummary        ResultSummary
-	matchedTemplate      map[string]struct{}
-	matchedResults       map[string]struct{}
-	lastProgressLog      progressLogState
-	lastStats            TaskProgressSnapshot
-	completedRequests    int64
-	lastLogicalRequests  int64
-	externalRequestTotal int64
-	mirroredErrors       int64
-	httpStatsBase        map[string]int
-	subscribers          map[chan TaskLogEvent]struct{}
+	mu                             sync.RWMutex
+	events                         []TaskLogEvent
+	nextSeq                        int64
+	progress                       TaskProgressSnapshot
+	resultSummary                  ResultSummary
+	matchedTemplate                map[string]struct{}
+	matchedResults                 map[string]struct{}
+	lastProgressLog                progressLogState
+	lastStats                      TaskProgressSnapshot
+	completedRequests              int64
+	lastLogicalRequests            int64
+	externalRequestTotal           int64
+	externalPreClusterRequestTotal int64
+	mirroredErrors                 int64
+	httpStatsBase                  map[string]int
+	subscribers                    map[chan TaskLogEvent]struct{}
 }
 
 func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir string) (*State, error) {
@@ -396,7 +407,17 @@ func (s *State) SetAssetHostCounts(aliveCount, unresponsiveCount int) {
 
 // AddRequestStats merges request counters produced outside the main scanner
 // stats stream, such as server-side pre-scan probes.
-func (s *State) AddRequestStats(totalDelta, requestDelta, completedDelta int64, message string) {
+func (s *State) AddRequestStats(totalDelta, requestDelta, completedDelta int64, message string, preClusterTotalDelta ...int64) {
+	s.addRequestStats(totalDelta, requestDelta, completedDelta, message, true, preClusterTotalDelta...)
+}
+
+// AddDeferredTotalRequestStats records external request counters without
+// exposing their total until the scanner publishes its final executable total.
+func (s *State) AddDeferredTotalRequestStats(totalDelta, requestDelta, completedDelta int64, message string, preClusterTotalDelta ...int64) {
+	s.addRequestStats(totalDelta, requestDelta, completedDelta, message, false, preClusterTotalDelta...)
+}
+
+func (s *State) addRequestStats(totalDelta, requestDelta, completedDelta int64, message string, publishTotal bool, preClusterTotalDelta ...int64) {
 	if s == nil {
 		return
 	}
@@ -409,7 +430,14 @@ func (s *State) AddRequestStats(totalDelta, requestDelta, completedDelta int64, 
 	if completedDelta < 0 {
 		completedDelta = 0
 	}
-	if totalDelta == 0 && requestDelta == 0 && completedDelta == 0 {
+	preClusterDelta := totalDelta
+	if len(preClusterTotalDelta) > 0 {
+		preClusterDelta = preClusterTotalDelta[0]
+	}
+	if preClusterDelta < 0 {
+		preClusterDelta = 0
+	}
+	if totalDelta == 0 && requestDelta == 0 && completedDelta == 0 && preClusterDelta == 0 {
 		return
 	}
 	if strings.TrimSpace(message) == "" {
@@ -418,8 +446,12 @@ func (s *State) AddRequestStats(totalDelta, requestDelta, completedDelta int64, 
 
 	s.UpdateProgress(func(snapshot *TaskProgressSnapshot) {
 		s.externalRequestTotal += totalDelta
+		s.externalPreClusterRequestTotal += preClusterDelta
 		s.completedRequests += completedDelta
-		snapshot.TotalRequests += totalDelta
+		if publishTotal {
+			snapshot.TotalRequests += totalDelta
+			snapshot.PreClusterTotalRequests += preClusterDelta
+		}
 		snapshot.Requests += requestDelta
 		if snapshot.TotalRequests > 0 {
 			snapshot.Percent = NormalizeProgressPercent(
@@ -428,6 +460,8 @@ func (s *State) AddRequestStats(totalDelta, requestDelta, completedDelta int64, 
 				snapshot.TotalRequests,
 			)
 			snapshot.ProgressStatus = "running"
+		} else {
+			snapshot.ProgressStatus = "calculating"
 		}
 		snapshot.LastMessage = message
 		snapshot.LastUpdatedAt = time.Now()
@@ -619,6 +653,10 @@ func (s *State) SnapshotResultSummary() ResultSummary {
 	summary.TargetCount = s.TargetCount
 	summary.PluginCount = int(s.progress.Templates)
 	summary.TotalRequests = s.progress.TotalRequests
+	summary.PreClusterTotalRequests = s.progress.PreClusterTotalRequests
+	if summary.PreClusterTotalRequests < summary.TotalRequests {
+		summary.PreClusterTotalRequests = summary.TotalRequests
+	}
 	summary.RealRequests = s.progress.Requests
 	summary.AliveHosts = s.progress.AliveHosts
 	summary.UnresponsiveHosts = s.progress.UnresponsiveHosts
@@ -636,6 +674,9 @@ func (s *State) SetResultSummary(summary ResultSummary) {
 	}
 	if summary.TotalRequests > s.progress.TotalRequests {
 		s.progress.TotalRequests = summary.TotalRequests
+	}
+	if summary.PreClusterTotalRequests > s.progress.PreClusterTotalRequests {
+		s.progress.PreClusterTotalRequests = summary.PreClusterTotalRequests
 	}
 	if summary.RealRequests > s.progress.Requests {
 		s.progress.Requests = summary.RealRequests
@@ -1349,6 +1390,10 @@ func HandleStatsJSONLine(line string, state *State) bool {
 		actualRequests = requests
 	}
 	total := ParseInt64(payload.Total)
+	preClusterTotal := ParseInt64(payload.PreClusterTotal)
+	if payload.PreClusterTotal == "" {
+		preClusterTotal = total
+	}
 	totalKnown := parseStatsBool(payload.TotalKnown)
 	if payload.TotalKnown == "" {
 		totalKnown = payload.Total != ""
@@ -1381,6 +1426,13 @@ func HandleStatsJSONLine(line string, state *State) bool {
 			totalWithExternal := state.externalRequestTotal + total
 			if totalWithExternal > snapshot.TotalRequests {
 				snapshot.TotalRequests = totalWithExternal
+			}
+			preClusterWithExternal := state.externalPreClusterRequestTotal + preClusterTotal
+			if preClusterWithExternal < totalWithExternal {
+				preClusterWithExternal = totalWithExternal
+			}
+			if preClusterWithExternal > snapshot.PreClusterTotalRequests {
+				snapshot.PreClusterTotalRequests = preClusterWithExternal
 			}
 			snapshot.ProgressStatus = "running"
 			snapshot.LastMessage = "扫描进度更新"

@@ -11,6 +11,11 @@ import (
 	sliceutil "github.com/projectdiscovery/utils/slice"
 )
 
+type templateLoadStats struct {
+	PreClusterRequests        int64
+	PreClusterNonHTTPRequests int64
+}
+
 // getTemplateDirs returns template directories for given input
 // by default it returns default template directory
 func getTemplateDirs(opts Options) ([]string, error) {
@@ -37,12 +42,25 @@ func getTemplateDirs(opts Options) ([]string, error) {
 
 // LoadTemplatesWithTags loads and returns templates with given tags
 func LoadTemplatesWithTags(opts Options, templateDirs []string, tags []string, logInfo bool) ([]*templates.Template, error) {
+	finalTemplates, _, err := loadTemplatesWithTagsWithStats(opts, templateDirs, tags, logInfo, false)
+	return finalTemplates, err
+}
+
+func loadTemplatesWithTagsWithStats(opts Options, templateDirs []string, tags []string, logInfo, excludeHTTP bool) ([]*templates.Template, templateLoadStats, error) {
 	finalTemplates, err := opts.Store.LoadTemplatesWithTags(templateDirs, tags)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not load templates")
+		return nil, templateLoadStats{}, errors.Wrap(err, "could not load templates")
 	}
 	if len(finalTemplates) == 0 {
-		return nil, errors.New("could not find any templates with tech tag")
+		return nil, templateLoadStats{}, errors.New("could not find any templates with tech tag")
+	}
+
+	loadStats := templateLoadStats{
+		PreClusterRequests:        int64(getRequestCount(finalTemplates)),
+		PreClusterNonHTTPRequests: int64(getRequestCount(filterHTTPBasedTemplates(finalTemplates))),
+	}
+	if excludeHTTP {
+		finalTemplates = filterHTTPBasedTemplates(finalTemplates)
 	}
 
 	if !opts.ExecuterOpts.Options.DisableClustering {
@@ -65,7 +83,7 @@ func LoadTemplatesWithTags(opts Options, templateDirs []string, tags []string, l
 		}
 
 	}
-	return finalTemplates, nil
+	return finalTemplates, loadStats, nil
 }
 
 // returns total requests count
