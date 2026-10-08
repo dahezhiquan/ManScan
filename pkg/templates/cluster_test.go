@@ -8,6 +8,7 @@ import (
 	"ManScan/pkg/model/types/severity"
 	"ManScan/pkg/protocols/dns"
 	"ManScan/pkg/protocols/http"
+	"ManScan/pkg/protocols/ssl"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,4 +50,25 @@ func TestClusterTemplates(t *testing.T) {
 		got := Cluster(tpls)[0]
 		require.ElementsMatch(t, got, expected)
 	})
+}
+
+func TestClusterTemplatesCountsSSLRequests(t *testing.T) {
+	testutils.Init(testutils.DefaultOptions)
+	execOptions := testutils.NewMockExecuterOptions(testutils.DefaultOptions, &testutils.TemplateInfo{
+		ID:   "templateID",
+		Info: model.Info{SeverityHolder: severity.Holder{Severity: severity.Low}, Name: "test"},
+	})
+	tp1 := &Template{ID: "first", Path: "first.yaml", RequestsSSL: []*ssl.Request{{Address: "{{Host}}:443"}}}
+	tp2 := &Template{ID: "second", Path: "second.yaml", RequestsSSL: []*ssl.Request{{Address: "{{Host}}:443"}}}
+	tp1.Options = execOptions
+	tp2.Options = execOptions
+	require.NoError(t, tp1.RequestsSSL[0].Compile(execOptions))
+	require.NoError(t, tp2.RequestsSSL[0].Compile(execOptions))
+
+	clusteredTemplates, clusterCount, _ := ClusterTemplates([]*Template{tp1, tp2}, execOptions)
+
+	require.Equal(t, 2, clusterCount)
+	require.Len(t, clusteredTemplates, 1)
+	require.Len(t, clusteredTemplates[0].RequestsSSL, 1)
+	require.Equal(t, 1, clusteredTemplates[0].TotalRequests)
 }

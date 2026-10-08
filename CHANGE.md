@@ -1,3 +1,13 @@
+## 2026-10-08 12:17 修复 SSL 聚类请求数统计
+
+- 变动目录：`pkg/templates/`
+- 变动文件：`pkg/templates/cluster.go`、`pkg/templates/cluster_test.go`
+- 具体修改内容：
+  - 在 `pkg/templates/cluster.go` 中将聚类模板的 `TotalRequests` 统计改为同时包含 HTTP、DNS 和 SSL 请求，避免 SSL 模板聚类后请求数被记为 0。
+  - 在 `pkg/templates/cluster_test.go` 中新增 SSL 模板聚类回归测试，验证两个相同 SSL 请求聚类后总请求数仍保留为 1。
+- 修改目的或影响：
+  - 修复 SSL 模板参与聚类时 `total_requests` 被低估的问题，让预估总请求数、进度分母和请求节省统计与实际逻辑执行范围保持一致。
+
 ## 2026-09-30 预估请求数增加模板聚类前基准
 
 - 变动目录：`pkg/core/`、`pkg/progress/`、`pkg/protocols/common/automaticscan/`、`server/internal/model/`、`server/internal/pkg/scanruntime/`、`server/internal/repository/`、`server/internal/service/`、`docs/SQL/`、根目录文档

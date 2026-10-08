@@ -162,7 +162,7 @@ func ClusterTemplates(templatesList []*Template, options *protocols.ExecutorOpti
 				RequestsHTTP:  cluster[0].RequestsHTTP,
 				RequestsSSL:   cluster[0].RequestsSSL,
 				Executer:      NewClusterExecuter(cluster, executerOpts),
-				TotalRequests: len(cluster[0].RequestsHTTP) + len(cluster[0].RequestsDNS),
+				TotalRequests: clusterRequestCount(cluster[0]),
 			})
 			clusterCount += len(cluster)
 		} else {
@@ -170,6 +170,13 @@ func ClusterTemplates(templatesList []*Template, options *protocols.ExecutorOpti
 		}
 	}
 	return finalTemplatesList, clusterCount, clusterMappings
+}
+
+func clusterRequestCount(template *Template) int {
+	if template == nil {
+		return 0
+	}
+	return len(template.RequestsHTTP) + len(template.RequestsDNS) + len(template.RequestsSSL)
 }
 
 // ClusterExecuter executes a group of requests for a protocol for a clustered
