@@ -144,6 +144,34 @@ type ResultSummary struct {
 	UnresponsiveHosts       *int64
 }
 
+type progressRuntimeSnapshot struct {
+	CompletedRequests              int64 `json:"completed_requests,omitempty"`
+	ExternalRequestTotal           int64 `json:"external_request_total,omitempty"`
+	ExternalPreClusterRequestTotal int64 `json:"external_pre_cluster_request_total,omitempty"`
+}
+
+func (p progressRuntimeSnapshot) isZero() bool {
+	return p.CompletedRequests == 0 &&
+		p.ExternalRequestTotal == 0 &&
+		p.ExternalPreClusterRequestTotal == 0
+}
+
+func (p progressRuntimeSnapshot) normalize() progressRuntimeSnapshot {
+	if p.CompletedRequests < 0 {
+		p.CompletedRequests = 0
+	}
+	if p.ExternalRequestTotal < 0 {
+		p.ExternalRequestTotal = 0
+	}
+	if p.ExternalPreClusterRequestTotal < 0 {
+		p.ExternalPreClusterRequestTotal = 0
+	}
+	if p.ExternalPreClusterRequestTotal < p.ExternalRequestTotal {
+		p.ExternalPreClusterRequestTotal = p.ExternalRequestTotal
+	}
+	return p
+}
+
 type progressLogState struct {
 	lastLoggedAt  time.Time
 	lastPercent10 int64
@@ -214,7 +242,7 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 
 	logFilePath := filepath.Join(taskDir, "events.jsonl")
 	events, nextSeq := loadExistingEvents(logFilePath, 5000)
-	progress := loadProgressSnapshot(filepath.Join(taskDir, "progress.json"))
+	progress, runtimeProgress := loadProgressState(filepath.Join(taskDir, "progress.json"))
 	if progress.ProgressStatus == "" {
 		switch {
 		case progress.Finished:
@@ -246,6 +274,11 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 		return nil, err
 	}
 
+	completedRequests := runtimeProgress.CompletedRequests
+	if completedRequests <= 0 {
+		completedRequests = estimateCompletedRequests(progress)
+	}
+
 	return &State{
 		ID:               taskID,
 		TaskNo:           taskNo,
@@ -266,8 +299,10 @@ func NewState(taskID int64, taskNo, taskName string, targetCount int, runtimeDir
 		resultSummary: ResultSummary{
 			TargetCount: targetCount,
 		},
-		progress:          progress,
-		completedRequests: estimateCompletedRequests(progress),
+		progress:                       progress,
+		completedRequests:              completedRequests,
+		externalRequestTotal:           runtimeProgress.ExternalRequestTotal,
+		externalPreClusterRequestTotal: runtimeProgress.ExternalPreClusterRequestTotal,
 	}, nil
 }
 
@@ -953,21 +988,36 @@ func loadHTTPStatsBase(events []TaskLogEvent) map[string]int {
 }
 
 func loadProgressSnapshot(path string) TaskProgressSnapshot {
+	snapshot, _ := loadProgressState(path)
+	return snapshot
+}
+
+func loadProgressState(path string) (TaskProgressSnapshot, progressRuntimeSnapshot) {
 	snapshot := TaskProgressSnapshot{
 		LastUpdatedAt: time.Now(),
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return snapshot
+		return snapshot, progressRuntimeSnapshot{}
 	}
-	if err := json.Unmarshal(data, &snapshot); err != nil {
-		return TaskProgressSnapshot{LastUpdatedAt: time.Now()}
+	type progressSnapshotFile TaskProgressSnapshot
+	var fileSnapshot struct {
+		progressSnapshotFile
+		Runtime *progressRuntimeSnapshot `json:"runtime,omitempty"`
 	}
+	if err := json.Unmarshal(data, &fileSnapshot); err != nil {
+		return TaskProgressSnapshot{LastUpdatedAt: time.Now()}, progressRuntimeSnapshot{}
+	}
+	snapshot = TaskProgressSnapshot(fileSnapshot.progressSnapshotFile)
 	if snapshot.LastUpdatedAt.IsZero() {
 		snapshot.LastUpdatedAt = time.Now()
 	}
-	return snapshot
+	runtimeSnapshot := progressRuntimeSnapshot{}
+	if fileSnapshot.Runtime != nil {
+		runtimeSnapshot = fileSnapshot.Runtime.normalize()
+	}
+	return snapshot, runtimeSnapshot
 }
 
 func loadExistingResultMessages(path string) map[string]struct{} {
@@ -1063,7 +1113,22 @@ func (s *State) writeProgressSnapshotLocked() {
 	if s.ProgressFilePath == "" {
 		return
 	}
-	if encoded, err := json.MarshalIndent(s.progress, "", "  "); err == nil {
+	type progressSnapshotFile TaskProgressSnapshot
+	fileSnapshot := struct {
+		progressSnapshotFile
+		Runtime *progressRuntimeSnapshot `json:"runtime,omitempty"`
+	}{
+		progressSnapshotFile: progressSnapshotFile(s.progress),
+	}
+	runtimeSnapshot := progressRuntimeSnapshot{
+		CompletedRequests:              s.completedRequests,
+		ExternalRequestTotal:           s.externalRequestTotal,
+		ExternalPreClusterRequestTotal: s.externalPreClusterRequestTotal,
+	}.normalize()
+	if !runtimeSnapshot.isZero() {
+		fileSnapshot.Runtime = &runtimeSnapshot
+	}
+	if encoded, err := json.MarshalIndent(fileSnapshot, "", "  "); err == nil {
 		_ = os.WriteFile(s.ProgressFilePath, encoded, 0o644)
 	}
 }

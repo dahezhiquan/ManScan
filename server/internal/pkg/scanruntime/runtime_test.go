@@ -917,6 +917,39 @@ func TestHandleStatsJSONLinePublishesDeferredExternalTotal(t *testing.T) {
 	}
 }
 
+func TestNewStateRestoresDeferredExternalTotalForResume(t *testing.T) {
+	t.Parallel()
+
+	runtimeDir := t.TempDir()
+	state, err := NewState(214, "task-214", "resume-task", 3, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	state.AddDeferredTotalRequestStats(5, 3, 3, "扫描前探测", 7)
+	state.Close()
+
+	resumed, err := NewState(214, "task-214", "resume-task", 3, runtimeDir)
+	if err != nil {
+		t.Fatalf("NewState() resumed error = %v", err)
+	}
+	defer resumed.Close()
+
+	if !HandleStatsJSONLine(`{"requests":"10","actual_requests":"8","total":"100","pre_cluster_total":"140","total_known":"1","percent":"10"}`, resumed) {
+		t.Fatalf("HandleStatsJSONLine() = false, want true")
+	}
+
+	progress := resumed.SnapshotProgress()
+	if progress.TotalRequests != 105 {
+		t.Fatalf("TotalRequests = %d, want restored deferred external + scanner total 105", progress.TotalRequests)
+	}
+	if progress.PreClusterTotalRequests != 147 {
+		t.Fatalf("PreClusterTotalRequests = %d, want restored deferred external + scanner pre-cluster total 147", progress.PreClusterTotalRequests)
+	}
+	if progress.Requests != 11 {
+		t.Fatalf("Requests = %d, want restored external + scanner actual requests 11", progress.Requests)
+	}
+}
+
 func TestHandleStatsJSONLineOverridesInitialTemplateCount(t *testing.T) {
 	t.Parallel()
 
