@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -362,7 +363,7 @@ func TestSyncAliveAssetDomainsBeforeScanDefersServiceAssetStaleMarking(t *testin
 		AutomaticScan:    true,
 		ProbeConcurrency: 1,
 		Timeout:          3,
-	}, []string{server.URL}, state, "", queue); err != nil {
+	}, []string{server.URL}, state, "", "", queue); err != nil {
 		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
 	}
 
@@ -380,6 +381,118 @@ func TestSyncAliveAssetDomainsBeforeScanDefersServiceAssetStaleMarking(t *testin
 	}
 	if checked := queue.CheckedDomains(); len(checked) != 1 || !strings.Contains(checked[0], ":") {
 		t.Fatalf("queue.CheckedDomains() = %v, want probed endpoint recorded", checked)
+	}
+}
+
+func TestSyncAliveAssetDomainsBeforeScanReusesPreflightCache(t *testing.T) {
+	t.Parallel()
+
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	parsed, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	domain := "localhost:" + parsed.Port()
+	taskDir := t.TempDir()
+	preflightCachePath := taskDir + "/asset-domain-preflight.json"
+	fingerprintCachePath := taskDir + "/asset-domain-fingerprints.json"
+	cache := &assetDomainPreflightCache{}
+	cache.upsertProbeResults([]assetDomainProbeTargetResult{{
+		Target:         server.URL,
+		CheckedDomains: []string{domain},
+		Observations: []repository.AssetDomainObservation{{
+			Domain:         domain,
+			HTTPStatusCode: http.StatusNoContent,
+		}},
+		ServiceAssets: []repository.AssetDomainServiceAssetObservation{{
+			Domain:  domain,
+			AppName: "nginx",
+		}},
+		Fingerprints: []assetDomainFingerprintCacheEntry{{
+			Target:    server.URL,
+			Domain:    domain,
+			HTTPAlive: true,
+			Components: []assetDomainFingerprintCacheComponent{{
+				Domain:  domain,
+				AppName: "nginx",
+			}},
+		}},
+		FingerprintTargets: []assetDomainFingerprintTarget{{
+			Input:  server.URL,
+			Domain: domain,
+		}},
+	}})
+	if err := writeAssetDomainPreflightCache(preflightCachePath, cache); err != nil {
+		t.Fatalf("writeAssetDomainPreflightCache() error = %v", err)
+	}
+
+	repo := &assetDomainRepositoryStub{}
+	svc := &scanTaskService{assetDomainRepository: repo}
+	state := &scanruntime.State{}
+	queue := newAssetDomainServiceAssetQueue(svc, state)
+	defer queue.CloseAndWait()
+
+	if err := svc.syncAliveAssetDomainsBeforeScan(context.Background(), dto.CreateScanTaskRequest{
+		AutomaticScan: true,
+	}, []string{server.URL}, state, fingerprintCachePath, preflightCachePath, queue); err != nil {
+		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
+	}
+
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("preflight HTTP requests = %d, want 0 when cache is complete", got)
+	}
+	if progress := state.SnapshotProgress(); progress.Requests != 0 || progress.TotalRequests != 0 {
+		t.Fatalf("progress = %+v, want no duplicated preflight request stats", progress)
+	}
+	if len(repo.syncObservationValues) != 1 || len(repo.syncObservationValues[0]) != 1 {
+		t.Fatalf("SyncObservations = %+v, want cached observation synced", repo.syncObservationValues)
+	}
+	if len(repo.syncServiceAssetObservations) != 1 || len(repo.syncServiceAssetObservations[0]) != 1 {
+		t.Fatalf("SyncServiceAssets = %+v, want cached service asset synced", repo.syncServiceAssetObservations)
+	}
+	data, err := os.ReadFile(fingerprintCachePath)
+	if err != nil {
+		t.Fatalf("ReadFile fingerprint cache error = %v", err)
+	}
+	if !strings.Contains(string(data), `"http_alive":true`) || !strings.Contains(string(data), `"nginx"`) {
+		t.Fatalf("fingerprint cache = %s, want reused cached fingerprint data", string(data))
+	}
+}
+
+func TestAssetDomainPreflightCacheRequiresActiveFingerprintForManualScan(t *testing.T) {
+	t.Parallel()
+
+	cache := &assetDomainPreflightCache{}
+	cache.upsertProbeResults([]assetDomainProbeTargetResult{{
+		Target:         "https://app.example.com",
+		CheckedDomains: []string{"app.example.com:443"},
+		FingerprintTargets: []assetDomainFingerprintTarget{{
+			Input:  "https://app.example.com",
+			Domain: "app.example.com:443",
+		}},
+	}})
+
+	completed, pending := cache.splitCompletedTargets([]string{"https://app.example.com"}, dto.CreateScanTaskRequest{})
+	if len(completed.CheckedDomains) != 0 || len(pending) != 1 {
+		t.Fatalf("manual completed=%+v pending=%v, want target pending before active fingerprint completes", completed, pending)
+	}
+
+	cache.markActiveFingerprintDone([]assetDomainFingerprintTarget{{
+		Input:  "https://app.example.com",
+		Domain: "app.example.com:443",
+	}}, []repository.AssetDomainServiceAssetObservation{{
+		Domain:  "app.example.com:443",
+		AppName: "tomcat",
+	}})
+	completed, pending = cache.splitCompletedTargets([]string{"https://app.example.com"}, dto.CreateScanTaskRequest{})
+	if len(pending) != 0 || len(completed.CheckedDomains) != 1 || len(completed.ServiceAssets) != 1 {
+		t.Fatalf("manual completed=%+v pending=%v, want target reused after active fingerprint completes", completed, pending)
 	}
 }
 

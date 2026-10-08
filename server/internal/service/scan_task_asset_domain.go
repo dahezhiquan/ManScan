@@ -43,7 +43,7 @@ const (
 
 var assetDomainTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
-func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, state *scanruntime.State, fingerprintCachePath string, serviceAssetQueue *assetDomainServiceAssetQueue) error {
+func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, state *scanruntime.State, fingerprintCachePath, preflightCachePath string, serviceAssetQueue *assetDomainServiceAssetQueue) error {
 	if s.assetDomainRepository == nil || len(targets) == 0 {
 		return nil
 	}
@@ -68,22 +68,43 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		return nil
 	}
 
+	preflightCache, err := readAssetDomainPreflightCache(preflightCachePath)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Error("load asset domain preflight cache failed", "path", preflightCachePath, "error", err)
+		}
+		preflightCache = &assetDomainPreflightCache{Version: assetDomainPreflightCacheVersion}
+	}
+	cachedResult, pendingTargets := preflightCache.splitCompletedTargets(targets, request)
+	if len(cachedResult.CheckedDomains) > 0 && state != nil {
+		state.Append("info", "asset_domain_preflight_cache_reused", fmt.Sprintf("已复用 %d 个目标的扫描前资产探测与指纹识别结果", len(targets)-len(pendingTargets)))
+	}
+
 	if state != nil {
 		state.Append("info", "asset_domain_wappalyzer_started", "开始进行 Wappalyzer 被动指纹识别")
 	}
-	probeResult, err := probeAssetDomainLiveness(ctx, request, targets, buildAssetDomainNetworkRegions(networkItems), state)
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return err
+	probeResult := cachedResult
+	if len(pendingTargets) > 0 {
+		pendingResult, err := probeAssetDomainLiveness(ctx, request, pendingTargets, buildAssetDomainNetworkRegions(networkItems), state)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+			if s.logger != nil {
+				s.logger.Error("probe asset domains before scan failed", "error", err)
+			}
+			if state != nil {
+				state.Append("warn", "asset_domain_probe_failed", "扫描前域名资产存活探测失败，已跳过资产同步")
+			}
+			return nil
 		}
-		if s.logger != nil {
-			s.logger.Error("probe asset domains before scan failed", "error", err)
+		preflightCache.upsertProbeResults(pendingResult.TargetResults)
+		if err := writeAssetDomainPreflightCache(preflightCachePath, preflightCache); err != nil && s.logger != nil {
+			s.logger.Error("write asset domain preflight cache failed", "path", preflightCachePath, "error", err)
 		}
-		if state != nil {
-			state.Append("warn", "asset_domain_probe_failed", "扫描前域名资产存活探测失败，已跳过资产同步")
-		}
-		return nil
+		probeResult.merge(pendingResult)
 	}
+	probeResult.normalize()
 	aliveCount, notAliveCount := assetDomainProbeHostCounts(probeResult)
 	if state != nil {
 		state.SetAssetHostCounts(aliveCount, notAliveCount)
@@ -139,12 +160,13 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			s.logger.Error("write asset domain fingerprint cache failed", "path", fingerprintCachePath, "error", err)
 		}
 	}
-	if !request.AutomaticScan {
+	if !request.AutomaticScan && len(pendingTargets) > 0 {
 		if state != nil {
 			state.Append("info", "asset_domain_fingerprint_template_started", "开始进行 ManScan 智能主动指纹识别")
 		}
-		activeServiceAssets, aliveErr := s.runAssetDomainFingerprintTemplates(ctx, request, probeResult.FingerprintTargets, filepath.Dir(fingerprintCachePath), state, false)
-		unresponsiveServiceAssets, unresponsiveErr := s.runAssetDomainFingerprintTemplates(ctx, request, probeResult.UnresponsiveFingerprintTargets, filepath.Dir(fingerprintCachePath), state, true)
+		pendingFingerprintTargets, pendingUnresponsiveFingerprintTargets := preflightCache.pendingFingerprintTargets(request, pendingTargets)
+		activeServiceAssets, aliveErr := s.runAssetDomainFingerprintTemplates(ctx, request, pendingFingerprintTargets, filepath.Dir(fingerprintCachePath), state, false)
+		unresponsiveServiceAssets, unresponsiveErr := s.runAssetDomainFingerprintTemplates(ctx, request, pendingUnresponsiveFingerprintTargets, filepath.Dir(fingerprintCachePath), state, true)
 		if err := firstNonNilError(aliveErr, unresponsiveErr); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -157,6 +179,11 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			}
 		} else {
 			activeServiceAssets = append(activeServiceAssets, unresponsiveServiceAssets...)
+			preflightCache.markActiveFingerprintDone(pendingFingerprintTargets, activeServiceAssets)
+			preflightCache.markActiveFingerprintDone(pendingUnresponsiveFingerprintTargets, activeServiceAssets)
+			if err := writeAssetDomainPreflightCache(preflightCachePath, preflightCache); err != nil && s.logger != nil {
+				s.logger.Error("write asset domain preflight cache failed", "path", preflightCachePath, "error", err)
+			}
 			if serviceAssetQueue != nil {
 				serviceAssetQueue.record(activeServiceAssets)
 			}
@@ -218,6 +245,27 @@ type assetDomainLivenessProbeResult struct {
 	Fingerprints                   []assetDomainFingerprintCacheEntry
 	FingerprintTargets             []assetDomainFingerprintTarget
 	UnresponsiveFingerprintTargets []assetDomainFingerprintTarget
+	TargetResults                  []assetDomainProbeTargetResult
+}
+
+func (r *assetDomainLivenessProbeResult) merge(other assetDomainLivenessProbeResult) {
+	r.Observations = append(r.Observations, other.Observations...)
+	r.CheckedDomains = append(r.CheckedDomains, other.CheckedDomains...)
+	r.ServiceAssets = append(r.ServiceAssets, other.ServiceAssets...)
+	r.Fingerprints = append(r.Fingerprints, other.Fingerprints...)
+	r.FingerprintTargets = append(r.FingerprintTargets, other.FingerprintTargets...)
+	r.UnresponsiveFingerprintTargets = append(r.UnresponsiveFingerprintTargets, other.UnresponsiveFingerprintTargets...)
+	r.TargetResults = append(r.TargetResults, other.TargetResults...)
+	r.normalize()
+}
+
+func (r *assetDomainLivenessProbeResult) normalize() {
+	r.Observations = uniqueAssetDomainObservations(r.Observations)
+	r.CheckedDomains = uniqueNonEmptyStrings(r.CheckedDomains)
+	r.ServiceAssets = uniqueAssetDomainServiceAssetObservations(r.ServiceAssets)
+	r.Fingerprints = uniqueAssetDomainFingerprintCacheEntries(r.Fingerprints)
+	r.FingerprintTargets = uniqueAssetDomainFingerprintTargets(r.FingerprintTargets)
+	r.UnresponsiveFingerprintTargets = uniqueAssetDomainFingerprintTargets(r.UnresponsiveFingerprintTargets)
 }
 
 type assetDomainFingerprintTarget struct {
@@ -324,15 +372,14 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 		probeResult.Fingerprints = append(probeResult.Fingerprints, result.Fingerprints...)
 		probeResult.FingerprintTargets = append(probeResult.FingerprintTargets, result.FingerprintTargets...)
 		probeResult.UnresponsiveFingerprintTargets = append(probeResult.UnresponsiveFingerprintTargets, result.UnresponsiveFingerprintTargets...)
+		probeResult.TargetResults = append(probeResult.TargetResults, result)
 	}
-	probeResult.ServiceAssets = uniqueAssetDomainServiceAssetObservations(probeResult.ServiceAssets)
-	probeResult.Fingerprints = uniqueAssetDomainFingerprintCacheEntries(probeResult.Fingerprints)
-	probeResult.FingerprintTargets = uniqueAssetDomainFingerprintTargets(probeResult.FingerprintTargets)
-	probeResult.UnresponsiveFingerprintTargets = uniqueAssetDomainFingerprintTargets(probeResult.UnresponsiveFingerprintTargets)
+	probeResult.normalize()
 	return probeResult, nil
 }
 
 type assetDomainProbeTargetResult struct {
+	Target                         string
 	Observations                   []repository.AssetDomainObservation
 	CheckedDomains                 []string
 	ServiceAssets                  []repository.AssetDomainServiceAssetObservation
@@ -390,7 +437,8 @@ func (t assetDomainProbeStatusTransport) RoundTrip(req *http.Request) (*http.Res
 }
 
 func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Client, wappalyzerClient *wappalyzer.Wappalyze, target string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) (assetDomainProbeTargetResult, error) {
-	result := assetDomainProbeTargetResult{}
+	target = strings.TrimSpace(target)
+	result := assetDomainProbeTargetResult{Target: target}
 	for _, probeURL := range assetDomainProbeURLs(target) {
 		if err := ctx.Err(); err != nil {
 			return assetDomainProbeTargetResult{}, err
