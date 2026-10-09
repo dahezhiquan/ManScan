@@ -278,6 +278,89 @@ func TestAssetDomainRegion(t *testing.T) {
 	}
 }
 
+func TestAssetHostIPAddressFromTarget(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		target string
+		want   string
+	}{
+		{
+			name:   "ip port service tuple",
+			target: "10.72.160.123:8660,mysql",
+			want:   "10.72.160.123",
+		},
+		{
+			name:   "ip url",
+			target: "http://10.72.160.153:8670",
+			want:   "10.72.160.153",
+		},
+		{
+			name:   "domain target ignored",
+			target: "redis.internal.example.com:6379,redis",
+			want:   "",
+		},
+		{
+			name:   "bare ip",
+			target: "10.72.160.153",
+			want:   "10.72.160.153",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := assetHostIPAddressFromTarget(tc.target); got != tc.want {
+				t.Fatalf("assetHostIPAddressFromTarget(%q) = %q, want %q", tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSyncAliveAssetDomainsBeforeScanSyncsIPTargetsToAssetHosts(t *testing.T) {
+	t.Parallel()
+
+	domainRepo := &assetDomainRepositoryStub{
+		networkItems: []repository.AssetDomainNetworkItem{
+			{ItemName: "10.72.160.0/24", SmallCategory: "生产内网"},
+		},
+	}
+	hostRepo := &assetHostRepositoryStub{}
+	svc := &scanTaskService{
+		assetDomainRepository: domainRepo,
+		assetHostRepository:   hostRepo,
+	}
+
+	if err := svc.syncAliveAssetDomainsBeforeScan(context.Background(), dto.CreateScanTaskRequest{
+		DisableHTTPProbe: true,
+	}, []string{
+		"10.72.160.123:8660,mysql",
+		"10.72.160.153:8670,redis",
+		"example.com:443",
+	}, nil, "", "", nil, nil); err != nil {
+		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
+	}
+
+	if len(hostRepo.observationValues) != 1 {
+		t.Fatalf("SyncObservations calls = %d, want 1", len(hostRepo.observationValues))
+	}
+	got := hostRepo.observationValues[0]
+	if len(got) != 2 {
+		t.Fatalf("host observations = %+v, want two IP hosts", got)
+	}
+	if got[0].IPAddress != "10.72.160.123" || got[0].Region != "生产内网" || !got[0].IsAlive {
+		t.Fatalf("first host observation = %+v, want matched alive host", got[0])
+	}
+	if got[1].IPAddress != "10.72.160.153" || got[1].Region != "生产内网" || !got[1].IsAlive {
+		t.Fatalf("second host observation = %+v, want matched alive host", got[1])
+	}
+	if len(domainRepo.syncObservationValues) != 0 {
+		t.Fatalf("domain observations = %+v, want HTTP probe skipped", domainRepo.syncObservationValues)
+	}
+}
+
 func TestAssetDomainProbeFinishedMessage(t *testing.T) {
 	t.Parallel()
 
@@ -843,6 +926,15 @@ func (s *assetDomainRepositoryStub) SyncObservations(_ context.Context, observat
 func (s *assetDomainRepositoryStub) SyncServiceAssets(_ context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, _ time.Time) error {
 	s.syncServiceAssetObservations = append(s.syncServiceAssetObservations, append([]repository.AssetDomainServiceAssetObservation(nil), observations...))
 	s.syncServiceAssetCheckedDomains = append(s.syncServiceAssetCheckedDomains, append([]string(nil), checkedDomains...))
+	return nil
+}
+
+type assetHostRepositoryStub struct {
+	observationValues [][]repository.AssetHostObservation
+}
+
+func (s *assetHostRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostObservation, _ time.Time) error {
+	s.observationValues = append(s.observationValues, append([]repository.AssetHostObservation(nil), observations...))
 	return nil
 }
 

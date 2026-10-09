@@ -34,6 +34,7 @@ func Run() error {
 	scanTaskRepository := repository.NewScanTaskRepository(db)
 	vulnerabilityRepository := repository.NewVulnerabilityRepository(db)
 	assetDomainRepository := repository.NewAssetDomainRepository(db)
+	assetHostRepository := repository.NewAssetHostRepository(db)
 	assetConfigCenterRepository := repository.NewAssetConfigCenterRepository(db)
 	vulnerabilityService := service.NewVulnerabilityService(vulnerabilityRepository)
 	assetDomainService := service.NewAssetDomainService(assetDomainRepository)
@@ -42,6 +43,7 @@ func Run() error {
 		scanTaskRepository,
 		vulnerabilityRepository,
 		assetDomainRepository,
+		assetHostRepository,
 		templateRepository,
 		logger,
 		cfg.RootDir,

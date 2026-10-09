@@ -47,13 +47,10 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	if s.assetDomainRepository == nil || len(targets) == 0 {
 		return nil
 	}
-	if request.OfflineHTTP || request.DisableHTTPProbe {
+	if request.OfflineHTTP {
 		return nil
 	}
 
-	if state != nil {
-		state.Append("info", "asset_domain_probe_started", "开始扫描前域名资产存活 & 指纹探测")
-	}
 	networkItems, err := s.assetDomainRepository.ListNetworkItems(ctx)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -66,6 +63,17 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			state.Append("warn", "asset_domain_probe_config_failed", "扫描前域名资产存活探测失败，已跳过资产同步")
 		}
 		return nil
+	}
+	networkRegions := buildAssetDomainNetworkRegions(networkItems)
+	if err := s.syncAliveAssetHostsBeforeScan(ctx, targets, networkRegions, state); err != nil {
+		return err
+	}
+	if request.DisableHTTPProbe {
+		return nil
+	}
+
+	if state != nil {
+		state.Append("info", "asset_domain_probe_started", "开始扫描前域名资产存活 & 指纹探测")
 	}
 
 	preflightCache, err := readAssetDomainPreflightCache(preflightCachePath)
@@ -85,7 +93,7 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	}
 	probeResult := cachedResult
 	if len(pendingTargets) > 0 {
-		pendingResult, err := probeAssetDomainLiveness(ctx, request, pendingTargets, buildAssetDomainNetworkRegions(networkItems), state)
+		pendingResult, err := probeAssetDomainLiveness(ctx, request, pendingTargets, networkRegions, state)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -208,6 +216,75 @@ func assetDomainProbeHostCounts(result assetDomainLivenessProbeResult) (int, int
 		notAliveCount = 0
 	}
 	return aliveCount, notAliveCount
+}
+
+func (s *scanTaskService) syncAliveAssetHostsBeforeScan(ctx context.Context, targets []string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) error {
+	if s.assetHostRepository == nil {
+		return nil
+	}
+	observations := buildAssetHostObservations(targets, networkRegions)
+	if len(observations) == 0 {
+		return nil
+	}
+	if err := s.assetHostRepository.SyncObservations(ctx, observations, time.Now()); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if s.logger != nil {
+			s.logger.Error("sync asset host observations before scan failed", "host_count", len(observations), "error", err)
+		}
+		if state != nil {
+			state.Append("warn", "asset_host_sync_failed", "扫描前主机资产同步失败，已继续后续扫描")
+		}
+	}
+	return nil
+}
+
+func buildAssetHostObservations(targets []string, networkRegions []assetDomainNetworkRegion) []repository.AssetHostObservation {
+	observations := make([]repository.AssetHostObservation, 0, len(targets))
+	for _, target := range targets {
+		ipAddress := assetHostIPAddressFromTarget(target)
+		if ipAddress == "" {
+			continue
+		}
+		observations = append(observations, repository.AssetHostObservation{
+			IPAddress: ipAddress,
+			Region:    assetDomainRegion(ipAddress, networkRegions),
+			IsAlive:   true,
+		})
+	}
+	return observations
+}
+
+func assetHostIPAddressFromTarget(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return ""
+	}
+	endpoint, _, _ := strings.Cut(target, ",")
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" {
+		return ""
+	}
+
+	host := ""
+	if strings.Contains(endpoint, "://") {
+		parsed, err := url.Parse(endpoint)
+		if err != nil {
+			return ""
+		}
+		host = parsed.Hostname()
+	} else if splitHost, _, err := net.SplitHostPort(endpoint); err == nil {
+		host = splitHost
+	} else {
+		host = strings.Trim(endpoint, "[]")
+	}
+
+	addr, err := netip.ParseAddr(strings.TrimSpace(host))
+	if err != nil {
+		return ""
+	}
+	return addr.String()
 }
 
 func firstNonNilError(values ...error) error {

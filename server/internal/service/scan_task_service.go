@@ -63,6 +63,7 @@ type scanTaskService struct {
 	repository              repository.ScanTaskRepository
 	vulnerabilityRepository repository.VulnerabilityRepository
 	assetDomainRepository   repository.AssetDomainRepository
+	assetHostRepository     repository.AssetHostRepository
 	templateRepository      repository.TemplateRepository
 	logger                  *logx.Logger
 	rootDir                 string
@@ -99,6 +100,7 @@ func NewScanTaskService(
 	repo repository.ScanTaskRepository,
 	vulnerabilityRepo repository.VulnerabilityRepository,
 	assetDomainRepo repository.AssetDomainRepository,
+	assetHostRepo repository.AssetHostRepository,
 	templateRepo repository.TemplateRepository,
 	logger *logx.Logger,
 	rootDir string,
@@ -110,6 +112,7 @@ func NewScanTaskService(
 		repository:              repo,
 		vulnerabilityRepository: vulnerabilityRepo,
 		assetDomainRepository:   assetDomainRepo,
+		assetHostRepository:     assetHostRepo,
 		templateRepository:      templateRepo,
 		logger:                  logger,
 		rootDir:                 rootDir,
