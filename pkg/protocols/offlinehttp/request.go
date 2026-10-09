@@ -11,6 +11,7 @@ import (
 	"github.com/pkg/errors"
 
 	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/generators"
@@ -60,6 +61,7 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 	// Export inputs attach ReqResp with a URL-shaped MetaInput.Input. Without a
 	// response body there is nothing to match offline; do not treat the URL as a filepath.
 	if input.MetaInput.ReqResp != nil {
+		progress.IncrementSkippedRequests(request.options.Progress, 1)
 		return nil
 	}
 
@@ -68,15 +70,23 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 		return err
 	}
 
+	discoveredFiles := 0
 	err = request.getInputPaths(input.MetaInput.Input, func(data string) {
+		discoveredFiles++
+		if discoveredFiles > 1 {
+			request.options.Progress.AddToTotal(1)
+		}
+
 		wg.Add()
 
 		go func(data string) {
 			defer wg.Done()
 
+			request.options.Progress.IncrementActualRequests()
 			file, err := os.Open(data)
 			if err != nil {
 				gologger.Error().Msgf("Could not open file path %s: %s\n", data, err)
+				request.options.Progress.IncrementFailedRequestsBy(1)
 				return
 			}
 			defer func() {
@@ -86,34 +96,44 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 			stat, err := file.Stat()
 			if err != nil {
 				gologger.Error().Msgf("Could not stat file path %s: %s\n", data, err)
+				request.options.Progress.IncrementFailedRequestsBy(1)
 				return
 			}
 			if stat.Size() >= int64(maxSize) {
 				gologger.Verbose().Msgf("Could not process path %s: exceeded max size\n", data)
+				request.options.Progress.IncrementFailedRequestsBy(1)
 				return
 			}
 
 			buffer, err := io.ReadAll(file)
 			if err != nil {
 				gologger.Error().Msgf("Could not read file path %s: %s\n", data, err)
+				request.options.Progress.IncrementFailedRequestsBy(1)
 				return
 			}
 			dataStr := conversion.String(buffer)
 
-			request.options.Progress.IncrementActualRequests()
 			if err := request.executeRawInput(dataStr, data, input, callback); err != nil {
 				gologger.Error().Msgf("Could not execute raw input %s: %s\n", data, err)
+				request.options.Progress.IncrementFailedRequestsBy(1)
 				return
 			}
+			request.options.Progress.IncrementRequests()
 		}(data)
 	})
 	wg.Wait()
 	if err != nil {
 		request.options.Output.Request(request.options.TemplatePath, input.MetaInput.Input, "file", err)
-		request.options.Progress.IncrementFailedRequestsBy(1)
+		if discoveredFiles == 0 {
+			request.options.Progress.IncrementFailedRequestsBy(1)
+		} else {
+			request.options.Progress.IncrementErrorsBy(1)
+		}
 		return errors.Wrap(err, "could not send file request")
 	}
-	request.options.Progress.IncrementRequests()
+	if discoveredFiles == 0 {
+		progress.IncrementSkippedRequests(request.options.Progress, 1)
+	}
 	return nil
 }
 

@@ -1,6 +1,9 @@
 package offlinehttp
 
 import (
+	"os"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -60,19 +63,76 @@ func TestExecuteWithResultsUsesReqRespResponse(t *testing.T) {
 	require.NotNil(t, gotEvent)
 	require.True(t, gotEvent.HasOperatorResult())
 	require.True(t, gotEvent.OperatorsResult.Matched)
-	require.Equal(t, 1, counter.requests)
+	require.Equal(t, int64(1), counter.requests.Load())
 }
 
 type countingProgress struct {
 	progress.Progress
-	requests int
+	requests       atomic.Int64
+	actualRequests atomic.Int64
+	failedRequests atomic.Int64
+	addedTotal     atomic.Int64
 }
 
 func (c *countingProgress) IncrementRequests() {
-	c.requests++
+	c.requests.Add(1)
 	if c.Progress != nil {
 		c.Progress.IncrementRequests()
 	}
+}
+
+func (c *countingProgress) IncrementActualRequests() {
+	c.actualRequests.Add(1)
+	if c.Progress != nil {
+		c.Progress.IncrementActualRequests()
+	}
+}
+
+func (c *countingProgress) IncrementFailedRequestsBy(count int64) {
+	c.failedRequests.Add(count)
+	if c.Progress != nil {
+		c.Progress.IncrementFailedRequestsBy(count)
+	}
+}
+
+func (c *countingProgress) AddToTotal(delta int64) {
+	c.addedTotal.Add(delta)
+	if c.Progress != nil {
+		c.Progress.AddToTotal(delta)
+	}
+}
+
+func TestExecuteWithResultsCountsEachOfflineFile(t *testing.T) {
+	options := testutils.DefaultOptions
+	options.BulkSize = 2
+	testutils.Init(options)
+
+	request := &Request{}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{
+		ID:   "offline-directory",
+		Info: model.Info{SeverityHolder: severity.Holder{Severity: severity.Info}, Name: "test"},
+	})
+	counter := &countingProgress{Progress: executerOpts.Progress}
+	executerOpts.Progress = counter
+	executerOpts.Operators = []*operators.Operators{{}}
+	require.NoError(t, request.Compile(executerOpts))
+
+	tempDir := t.TempDir()
+	rawResponse := "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK"
+	for _, name := range []string{"one.txt", "two.txt", "three.txt"} {
+		require.NoError(t, os.WriteFile(filepath.Join(tempDir, name), []byte(rawResponse), 0o600))
+	}
+
+	var events atomic.Int64
+	err := request.ExecuteWithResults(contextargs.NewWithInput(t.Context(), tempDir), nil, nil, func(*output.InternalWrappedEvent) {
+		events.Add(1)
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), events.Load())
+	require.Equal(t, int64(3), counter.actualRequests.Load())
+	require.Equal(t, int64(3), counter.requests.Load())
+	require.Zero(t, counter.failedRequests.Load())
+	require.Equal(t, int64(2), counter.addedTotal.Load())
 }
 
 func TestExecuteWithResultsSkipsWhenNoResponseOnReqResp(t *testing.T) {
