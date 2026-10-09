@@ -65,6 +65,9 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		return nil
 	}
 	networkRegions := buildAssetDomainNetworkRegions(networkItems)
+	if serviceAssetQueue != nil {
+		serviceAssetQueue.SetNetworkRegions(networkRegions)
+	}
 	if err := s.syncAliveAssetHostsBeforeScan(ctx, targets, networkRegions, state); err != nil {
 		return err
 	}
@@ -151,15 +154,18 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		serviceAssetQueue.RecordCheckedDomains(probeResult.CheckedDomains)
 		serviceAssetQueue.record(probeResult.ServiceAssets)
 	}
-	if err := s.assetDomainRepository.SyncServiceAssets(ctx, probeResult.ServiceAssets, nil, time.Now()); err != nil {
+	if err := s.syncAliveAssetHostPortsFromDomainObservations(ctx, probeResult.Observations, networkRegions, state); err != nil {
+		return err
+	}
+	if err := s.syncAssetServiceAssets(ctx, probeResult.ServiceAssets, nil, networkRegions, probeResult.Observations, time.Now()); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
 		if s.logger != nil {
-			s.logger.Error("sync probed asset domain service assets failed", "service_asset_count", len(probeResult.ServiceAssets), "checked_domain_count", len(probeResult.CheckedDomains), "error", err)
+			s.logger.Error("sync probed asset service assets failed", "service_asset_count", len(probeResult.ServiceAssets), "checked_domain_count", len(probeResult.CheckedDomains), "error", err)
 		}
 		if state != nil {
-			state.Append("warn", "asset_domain_service_asset_sync_failed", "扫描前域名组件识别完成，但同步组件表失败")
+			state.Append("warn", "asset_service_asset_sync_failed", "扫描前组件识别完成，但同步组件表失败")
 		}
 		return nil
 	}
@@ -240,6 +246,46 @@ func (s *scanTaskService) syncAliveAssetHostsBeforeScan(ctx context.Context, tar
 	return nil
 }
 
+func (s *scanTaskService) syncAliveAssetHostPortsFromDomainObservations(ctx context.Context, observations []repository.AssetDomainObservation, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) error {
+	if s.assetHostPortRepository == nil {
+		return nil
+	}
+	hostPortObservations := buildAssetHostPortObservationsFromDomainObservations(ctx, observations, networkRegions)
+	if len(hostPortObservations) == 0 {
+		return nil
+	}
+	if err := s.assetHostPortRepository.SyncObservations(ctx, hostPortObservations, time.Now()); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if s.logger != nil {
+			s.logger.Error("sync probed asset host port observations failed", "port_count", len(hostPortObservations), "error", err)
+		}
+		if state != nil {
+			state.Append("warn", "asset_host_port_probe_sync_failed", "扫描前主机端口资产探测完成，但同步端口表失败")
+		}
+	}
+	return nil
+}
+
+func (s *scanTaskService) syncAssetServiceAssets(ctx context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, networkRegions []assetDomainNetworkRegion, httpObservations []repository.AssetDomainObservation, observedAt time.Time) error {
+	emptyPreScanSync := len(observations) == 0 && checkedDomains == nil
+	domainObservations, hostPortObservations := splitAssetServiceAssetObservations(ctx, observations, networkRegions, httpObservations)
+	checkedDomains = filterDomainServiceAssetCheckedDomains(checkedDomains)
+	shouldSyncDomainAssets := len(domainObservations) > 0 || len(checkedDomains) > 0 || emptyPreScanSync
+	if s.assetDomainRepository != nil && shouldSyncDomainAssets {
+		if err := s.assetDomainRepository.SyncServiceAssets(ctx, domainObservations, checkedDomains, observedAt); err != nil {
+			return err
+		}
+	}
+	if s.assetHostPortRepository != nil && len(hostPortObservations) > 0 {
+		if err := s.assetHostPortRepository.SyncObservations(ctx, hostPortObservations, observedAt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func buildAssetHostObservations(targets []string, networkRegions []assetDomainNetworkRegion) []repository.AssetHostObservation {
 	observations := make([]repository.AssetHostObservation, 0, len(targets))
 	for _, target := range targets {
@@ -254,6 +300,123 @@ func buildAssetHostObservations(targets []string, networkRegions []assetDomainNe
 		})
 	}
 	return observations
+}
+
+func buildAssetHostPortObservationsFromDomainObservations(ctx context.Context, observations []repository.AssetDomainObservation, networkRegions []assetDomainNetworkRegion) []repository.AssetHostPortObservation {
+	hostPortObservations := make([]repository.AssetHostPortObservation, 0, len(observations))
+	for _, observation := range uniqueAssetDomainObservations(observations) {
+		endpoint, ok := assetHostPortEndpointFromAssetEndpoint(observation.Domain)
+		if !ok {
+			continue
+		}
+		for _, ipAddress := range resolveAssetHostIPAddresses(ctx, endpoint.Host) {
+			hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
+				IPAddress:   ipAddress,
+				Region:      assetDomainRegion(ipAddress, networkRegions),
+				PortNumber:  endpoint.PortNumber,
+				ServiceName: "http",
+				AppName:     "http",
+				IsAlive:     true,
+			})
+		}
+	}
+	return uniqueAssetHostPortObservations(hostPortObservations)
+}
+
+func splitAssetServiceAssetObservations(ctx context.Context, observations []repository.AssetDomainServiceAssetObservation, networkRegions []assetDomainNetworkRegion, httpObservations []repository.AssetDomainObservation) ([]repository.AssetDomainServiceAssetObservation, []repository.AssetHostPortObservation) {
+	domainObservations := make([]repository.AssetDomainServiceAssetObservation, 0, len(observations))
+	hostPortObservations := make([]repository.AssetHostPortObservation, 0, len(observations))
+	httpEndpointKeys := assetHostPortHTTPObservationKeys(ctx, httpObservations)
+	for _, observation := range uniqueAssetDomainServiceAssetObservations(observations) {
+		endpoint, ok := assetHostPortEndpointFromAssetEndpoint(observation.Domain)
+		if !ok {
+			domainObservations = append(domainObservations, observation)
+			continue
+		}
+		if endpoint.IsDomain {
+			domainObservations = append(domainObservations, observation)
+			for _, ipAddress := range resolveAssetHostIPAddresses(ctx, endpoint.Host) {
+				hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
+					IPAddress:   ipAddress,
+					Region:      assetDomainRegion(ipAddress, networkRegions),
+					PortNumber:  endpoint.PortNumber,
+					ServiceName: "http",
+					AppName:     "http",
+					IsAlive:     true,
+				})
+			}
+			continue
+		}
+		serviceName := normalizeAssetDomainComponentName(observation.AppName)
+		appVersion := observation.AppVersion
+		if _, ok := httpEndpointKeys[assetHostPortEndpointKey(endpoint.Host, endpoint.PortNumber)]; ok {
+			serviceName = "http"
+			appVersion = ""
+		}
+		hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
+			IPAddress:   endpoint.Host,
+			Region:      assetDomainRegion(endpoint.Host, networkRegions),
+			PortNumber:  endpoint.PortNumber,
+			ServiceName: serviceName,
+			AppName:     serviceName,
+			AppVersion:  appVersion,
+			IsAlive:     true,
+		})
+	}
+	return uniqueAssetDomainServiceAssetObservations(domainObservations), uniqueAssetHostPortObservations(hostPortObservations)
+}
+
+func assetHostPortHTTPObservationKeys(ctx context.Context, observations []repository.AssetDomainObservation) map[string]struct{} {
+	keys := make(map[string]struct{})
+	for _, observation := range uniqueAssetDomainObservations(observations) {
+		endpoint, ok := assetHostPortEndpointFromAssetEndpoint(observation.Domain)
+		if !ok {
+			continue
+		}
+		for _, ipAddress := range resolveAssetHostIPAddresses(ctx, endpoint.Host) {
+			keys[assetHostPortEndpointKey(ipAddress, endpoint.PortNumber)] = struct{}{}
+		}
+	}
+	return keys
+}
+
+func assetHostPortEndpointKey(ipAddress string, portNumber uint) string {
+	return strings.TrimSpace(ipAddress) + "\x00" + strconv.FormatUint(uint64(portNumber), 10)
+}
+
+func filterDomainServiceAssetCheckedDomains(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range uniqueNonEmptyStrings(values) {
+		endpoint, ok := assetHostPortEndpointFromAssetEndpoint(value)
+		if ok && !endpoint.IsDomain {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
+}
+
+func uniqueAssetHostPortObservations(values []repository.AssetHostPortObservation) []repository.AssetHostPortObservation {
+	result := make([]repository.AssetHostPortObservation, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.IPAddress = strings.TrimSpace(value.IPAddress)
+		value.Region = strings.TrimSpace(value.Region)
+		value.PortProtocol = strings.TrimSpace(value.PortProtocol)
+		value.ServiceName = normalizeAssetDomainComponentName(value.ServiceName)
+		value.AppName = normalizeAssetDomainComponentName(value.AppName)
+		value.AppVersion = normalizeAssetDomainComponentVersion(value.AppVersion)
+		if value.IPAddress == "" || value.PortNumber == 0 {
+			continue
+		}
+		key := value.IPAddress + "\x00" + value.PortProtocol + "\x00" + strconv.FormatUint(uint64(value.PortNumber), 10)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func assetHostIPAddressFromTarget(target string) string {
@@ -285,6 +448,104 @@ func assetHostIPAddressFromTarget(target string) string {
 		return ""
 	}
 	return addr.String()
+}
+
+type assetHostPortEndpoint struct {
+	Host        string
+	PortNumber  uint
+	ServiceName string
+	AppVersion  string
+	IsDomain    bool
+	IsHTTP      bool
+}
+
+func assetHostPortEndpointFromAssetEndpoint(value string) (assetHostPortEndpoint, bool) {
+	return assetHostPortEndpointFromValue(value)
+}
+
+func assetHostPortEndpointFromValue(value string) (assetHostPortEndpoint, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return assetHostPortEndpoint{}, false
+	}
+
+	host := ""
+	port := ""
+	isHTTP := false
+	if strings.Contains(value, "://") {
+		parsed, err := url.Parse(value)
+		if err != nil {
+			return assetHostPortEndpoint{}, false
+		}
+		host = parsed.Hostname()
+		port = parsed.Port()
+		switch strings.ToLower(parsed.Scheme) {
+		case "http":
+			isHTTP = true
+			if port == "" {
+				port = "80"
+			}
+		case "https":
+			isHTTP = true
+			if port == "" {
+				port = "443"
+			}
+		}
+	} else {
+		splitHost, splitPort, err := net.SplitHostPort(value)
+		if err != nil {
+			return assetHostPortEndpoint{}, false
+		}
+		host = splitHost
+		port = splitPort
+	}
+
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return assetHostPortEndpoint{}, false
+	}
+	portNumber, err := strconv.Atoi(strings.TrimSpace(port))
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return assetHostPortEndpoint{}, false
+	}
+	_, ipErr := netip.ParseAddr(host)
+	return assetHostPortEndpoint{
+		Host:       strings.ToLower(host),
+		PortNumber: uint(portNumber),
+		IsDomain:   ipErr != nil,
+		IsHTTP:     isHTTP,
+	}, true
+}
+
+func resolveAssetHostIPAddresses(ctx context.Context, host string) []string {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return nil
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return []string{addr.String()}
+	}
+
+	lookupCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupIPAddr(lookupCtx, host)
+	if err != nil {
+		return nil
+	}
+	result := make([]string, 0, len(addresses))
+	seen := make(map[string]struct{}, len(addresses))
+	for _, address := range addresses {
+		ipAddress := strings.TrimSpace(address.IP.String())
+		if ipAddress == "" {
+			continue
+		}
+		if _, ok := seen[ipAddress]; ok {
+			continue
+		}
+		seen[ipAddress] = struct{}{}
+		result = append(result, ipAddress)
+	}
+	return result
 }
 
 func firstNonNilError(values ...error) error {

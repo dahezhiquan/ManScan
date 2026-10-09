@@ -64,6 +64,7 @@ type scanTaskService struct {
 	vulnerabilityRepository repository.VulnerabilityRepository
 	assetDomainRepository   repository.AssetDomainRepository
 	assetHostRepository     repository.AssetHostRepository
+	assetHostPortRepository repository.AssetHostPortRepository
 	templateRepository      repository.TemplateRepository
 	logger                  *logx.Logger
 	rootDir                 string
@@ -101,6 +102,7 @@ func NewScanTaskService(
 	vulnerabilityRepo repository.VulnerabilityRepository,
 	assetDomainRepo repository.AssetDomainRepository,
 	assetHostRepo repository.AssetHostRepository,
+	assetHostPortRepo repository.AssetHostPortRepository,
 	templateRepo repository.TemplateRepository,
 	logger *logx.Logger,
 	rootDir string,
@@ -113,6 +115,7 @@ func NewScanTaskService(
 		vulnerabilityRepository: vulnerabilityRepo,
 		assetDomainRepository:   assetDomainRepo,
 		assetHostRepository:     assetHostRepo,
+		assetHostPortRepository: assetHostPortRepo,
 		templateRepository:      templateRepo,
 		logger:                  logger,
 		rootDir:                 rootDir,
@@ -914,7 +917,7 @@ func (s *scanTaskService) syncFinishedAssetDomainObservations(queue *assetDomain
 }
 
 func (s *scanTaskService) syncFinishedAssetDomainServiceAssets(queue *assetDomainServiceAssetQueue, state *scanruntime.State) {
-	if s.assetDomainRepository == nil || queue == nil {
+	if queue == nil {
 		return
 	}
 	checkedDomains := queue.CheckedDomains()
@@ -922,12 +925,12 @@ func (s *scanTaskService) syncFinishedAssetDomainServiceAssets(queue *assetDomai
 		return
 	}
 	observations := queue.Observations()
-	if err := s.assetDomainRepository.SyncServiceAssets(context.Background(), observations, checkedDomains, time.Now()); err != nil {
+	if err := s.syncAssetServiceAssets(context.Background(), observations, checkedDomains, queue.NetworkRegions(), queue.DomainObservations(), time.Now()); err != nil {
 		if s.logger != nil {
-			s.logger.Error("sync finished asset domain service assets failed", "service_asset_count", len(observations), "checked_domain_count", len(checkedDomains), "error", err)
+			s.logger.Error("sync finished asset service assets failed", "service_asset_count", len(observations), "checked_domain_count", len(checkedDomains), "error", err)
 		}
 		if state != nil {
-			state.Append("warn", "asset_domain_service_asset_final_sync_failed", "扫描完成，但同步域名组件最终存活状态失败")
+			state.Append("warn", "asset_service_asset_final_sync_failed", "扫描完成，但同步资产组件最终存活状态失败")
 		}
 	}
 }

@@ -35,6 +35,7 @@ func Run() error {
 	vulnerabilityRepository := repository.NewVulnerabilityRepository(db)
 	assetDomainRepository := repository.NewAssetDomainRepository(db)
 	assetHostRepository := repository.NewAssetHostRepository(db)
+	assetHostPortRepository := repository.NewAssetHostPortRepository(db)
 	assetConfigCenterRepository := repository.NewAssetConfigCenterRepository(db)
 	vulnerabilityService := service.NewVulnerabilityService(vulnerabilityRepository)
 	assetDomainService := service.NewAssetDomainService(assetDomainRepository)
@@ -44,6 +45,7 @@ func Run() error {
 		vulnerabilityRepository,
 		assetDomainRepository,
 		assetHostRepository,
+		assetHostPortRepository,
 		templateRepository,
 		logger,
 		cfg.RootDir,

@@ -361,6 +361,97 @@ func TestSyncAliveAssetDomainsBeforeScanSyncsIPTargetsToAssetHosts(t *testing.T)
 	}
 }
 
+func TestSyncAliveAssetDomainsBeforeScanDoesNotSyncUnprobedIPTargetsToAssetHostPorts(t *testing.T) {
+	t.Parallel()
+
+	domainRepo := &assetDomainRepositoryStub{
+		networkItems: []repository.AssetDomainNetworkItem{
+			{ItemName: "10.72.160.0/24", SmallCategory: "生产内网"},
+		},
+	}
+	hostPortRepo := &assetHostPortRepositoryStub{}
+	svc := &scanTaskService{
+		assetDomainRepository:   domainRepo,
+		assetHostPortRepository: hostPortRepo,
+	}
+
+	if err := svc.syncAliveAssetDomainsBeforeScan(context.Background(), dto.CreateScanTaskRequest{
+		DisableHTTPProbe: true,
+	}, []string{
+		"10.72.160.153:9999,redis",
+	}, nil, "", "", nil, nil); err != nil {
+		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
+	}
+
+	if len(hostPortRepo.observationValues) != 0 {
+		t.Fatalf("host port observations = %+v, want no port record without liveness or fingerprint evidence", hostPortRepo.observationValues)
+	}
+}
+
+func TestSyncAssetServiceAssetsRoutesIPEndpointsToHostPorts(t *testing.T) {
+	t.Parallel()
+
+	domainRepo := &assetDomainRepositoryStub{}
+	hostPortRepo := &assetHostPortRepositoryStub{}
+	svc := &scanTaskService{
+		assetDomainRepository:   domainRepo,
+		assetHostPortRepository: hostPortRepo,
+	}
+
+	if err := svc.syncAssetServiceAssets(context.Background(), []repository.AssetDomainServiceAssetObservation{{
+		Domain:     "10.72.160.153:8664",
+		AppName:    "redis",
+		AppVersion: "7.2.1",
+	}}, []string{"10.72.160.153:8664"}, buildAssetDomainNetworkRegions([]repository.AssetDomainNetworkItem{
+		{ItemName: "10.72.160.0/24", SmallCategory: "生产内网"},
+	}), nil, time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("syncAssetServiceAssets() error = %v", err)
+	}
+
+	if len(domainRepo.syncServiceAssetObservations) != 0 {
+		t.Fatalf("domain service asset syncs = %+v, want none for IP endpoint", domainRepo.syncServiceAssetObservations)
+	}
+	if len(hostPortRepo.observationValues) != 1 || len(hostPortRepo.observationValues[0]) != 1 {
+		t.Fatalf("host port syncs = %+v, want one IP endpoint observation", hostPortRepo.observationValues)
+	}
+	got := hostPortRepo.observationValues[0][0]
+	if got.IPAddress != "10.72.160.153" || got.PortNumber != 8664 || got.ServiceName != "redis" || got.AppName != "redis" || got.AppVersion != "7.2.1" || got.Region != "生产内网" {
+		t.Fatalf("host port observation = %+v, want redis endpoint with version", got)
+	}
+}
+
+func TestSyncAssetServiceAssetsKeepsHTTPServiceForHTTPProbedIPEndpoint(t *testing.T) {
+	t.Parallel()
+
+	domainRepo := &assetDomainRepositoryStub{}
+	hostPortRepo := &assetHostPortRepositoryStub{}
+	svc := &scanTaskService{
+		assetDomainRepository:   domainRepo,
+		assetHostPortRepository: hostPortRepo,
+	}
+
+	networkRegions := buildAssetDomainNetworkRegions([]repository.AssetDomainNetworkItem{
+		{ItemName: "10.0.0.0/8", SmallCategory: "生产内网"},
+	})
+	if err := svc.syncAssetServiceAssets(context.Background(), []repository.AssetDomainServiceAssetObservation{{
+		Domain:     "10.107.71.65:8889",
+		AppName:    "nginx",
+		AppVersion: "1.24.0",
+	}}, nil, networkRegions, []repository.AssetDomainObservation{{
+		Domain: "10.107.71.65:8889",
+	}}, time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("syncAssetServiceAssets() error = %v", err)
+	}
+
+	if len(hostPortRepo.observationValues) != 1 || len(hostPortRepo.observationValues[0]) != 1 {
+		t.Fatalf("host port syncs = %+v, want one HTTP endpoint observation", hostPortRepo.observationValues)
+	}
+	got := hostPortRepo.observationValues[0][0]
+	if got.IPAddress != "10.107.71.65" || got.PortNumber != 8889 || got.ServiceName != "http" || got.AppName != "http" || got.AppVersion != "" || got.Region != "生产内网" {
+		t.Fatalf("host port observation = %+v, want HTTP service/app for probed HTTP endpoint", got)
+	}
+}
+
 func TestAssetDomainProbeFinishedMessage(t *testing.T) {
 	t.Parallel()
 
@@ -935,6 +1026,15 @@ type assetHostRepositoryStub struct {
 
 func (s *assetHostRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostObservation, _ time.Time) error {
 	s.observationValues = append(s.observationValues, append([]repository.AssetHostObservation(nil), observations...))
+	return nil
+}
+
+type assetHostPortRepositoryStub struct {
+	observationValues [][]repository.AssetHostPortObservation
+}
+
+func (s *assetHostPortRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostPortObservation, _ time.Time) error {
+	s.observationValues = append(s.observationValues, append([]repository.AssetHostPortObservation(nil), observations...))
 	return nil
 }
 

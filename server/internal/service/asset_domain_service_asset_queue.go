@@ -35,6 +35,7 @@ type assetDomainServiceAssetQueue struct {
 	domainObservations []repository.AssetDomainObservation
 	observations       []repository.AssetDomainServiceAssetObservation
 	checkedDomains     []string
+	networkRegions     []assetDomainNetworkRegion
 	mu                 sync.Mutex
 	resolverMu         sync.RWMutex
 }
@@ -87,6 +88,28 @@ func (q *assetDomainServiceAssetQueue) SetTargetResolver(resolver *assetDomainFi
 	q.resolverMu.Lock()
 	q.resolver = resolver
 	q.resolverMu.Unlock()
+}
+
+func (q *assetDomainServiceAssetQueue) SetNetworkRegions(regions []assetDomainNetworkRegion) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.networkRegions = append([]assetDomainNetworkRegion(nil), regions...)
+}
+
+func (q *assetDomainServiceAssetQueue) NetworkRegions() []assetDomainNetworkRegion {
+	if q == nil {
+		return nil
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	regions := make([]assetDomainNetworkRegion, 0, len(q.networkRegions))
+	regions = append(regions, q.networkRegions...)
+	return regions
 }
 
 func (q *assetDomainServiceAssetQueue) Observations() []repository.AssetDomainServiceAssetObservation {
@@ -207,8 +230,8 @@ func (q *assetDomainServiceAssetQueue) flush(batch []repository.AssetDomainServi
 		return
 	}
 
-	if err := q.service.assetDomainRepository.SyncServiceAssets(context.Background(), batch, nil, time.Now()); err != nil && q.service.logger != nil {
-		q.service.logger.Error("batch sync asset domain service assets failed", "count", len(batch), "error", err)
+	if err := q.service.syncAssetServiceAssets(context.Background(), batch, nil, q.NetworkRegions(), q.DomainObservations(), time.Now()); err != nil && q.service.logger != nil {
+		q.service.logger.Error("batch sync asset service assets failed", "count", len(batch), "error", err)
 	}
 }
 
