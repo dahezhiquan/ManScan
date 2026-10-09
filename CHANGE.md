@@ -1,3 +1,16 @@
+## 2026-10-08 19:12 修复不可达缓存跳过完成度统计
+
+- 变动目录：`pkg/core/`、`pkg/progress/`、`pkg/protocols/`
+- 变动文件：`pkg/core/executors.go`、`pkg/core/executors_test.go`、`pkg/progress/progress.go`、`pkg/progress/progress_test.go`、`pkg/protocols/common/automaticscan/automaticscan.go`、`pkg/protocols/network/request.go`、`pkg/protocols/network/request_test.go`
+- 具体修改内容：
+  - 在进度统计中新增跳过逻辑请求的语义化补偿方法，命中不可达缓存时只递增逻辑完成请求数，不递增实际请求数和失败数。
+  - 在 executor 层的 HostErrorsCache 跳过路径补齐完成数推进：模板喷洒模式按当前模板请求数补偿，目标喷洒模式按当前目标剩余模板请求数补偿。
+  - 在 Network 协议内部命中不可达缓存提前返回的路径补齐完成数推进，覆盖目标级、payload 级和单次连接前的跳过场景。
+  - 补充 executor、progress 和 network 回归测试，验证 HostErrorsCache 跳过不会导致动态完成度偏低。
+- 修改目的或影响：
+  - 让扫描运行中被 HostErrorsCache 判定不可达后跳过的计划请求仍计入“逻辑已完成请求数”，避免暂停、失败或取消时前端完成度长期低于实际处理进度。
+  - 保持“实际请求数”只统计真实执行尝试，不把缓存跳过计入实际发包或失败请求。
+
 ## 2026-10-08 16:20 修复 HTTP 回退重试实际请求数统计
 
 - 变动目录：`pkg/protocols/`

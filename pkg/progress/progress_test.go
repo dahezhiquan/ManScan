@@ -79,3 +79,25 @@ func TestStatsTickerPublishesTemplateCount(t *testing.T) {
 		t.Fatalf("templates after a lower update = %v, want 12", got)
 	}
 }
+
+func TestStatsTickerCountsSkippedRequestsAsCompletedOnly(t *testing.T) {
+	progressClient, err := NewStatsTicker(0, false, false, false, 0)
+	if err != nil {
+		t.Fatalf("NewStatsTicker() error = %v", err)
+	}
+
+	ticker := progressClient.(*StatsTicker)
+	ticker.Init(1, 1, 10)
+	ticker.IncrementSkippedRequests(3)
+
+	metrics := metricsMap(ticker.stats)
+	if got := metrics["requests"]; got != "3" {
+		t.Fatalf("requests = %v, want 3", got)
+	}
+	if got := metrics["actual_requests"]; got != "0" {
+		t.Fatalf("actual_requests = %v, want 0", got)
+	}
+	if got := metrics["errors"]; got != "0" {
+		t.Fatalf("errors = %v, want 0", got)
+	}
+}

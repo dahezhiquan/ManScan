@@ -170,6 +170,12 @@ func (p *phaseProgress) SetRequests(count uint64) {
 	}
 }
 
+func (p *phaseProgress) IncrementSkippedRequests(count int64) {
+	if p.Progress != nil {
+		progress.IncrementSkippedRequests(p.Progress, count)
+	}
+}
+
 func (p *phaseProgress) IncrementMatched() {
 	if p.Progress != nil {
 		p.Progress.IncrementMatched()

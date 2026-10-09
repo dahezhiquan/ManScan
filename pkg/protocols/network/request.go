@@ -17,6 +17,7 @@ import (
 
 	"ManScan/pkg/operators"
 	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/expressions"
@@ -134,12 +135,21 @@ func (request *Request) ExecuteWithResults(target *contextargs.Context, metadata
 	return nil
 }
 
+func (request *Request) requestsForCurrentTarget() int {
+	requests := len(request.addresses)
+	if request.generator != nil {
+		requests *= request.generator.NewIterator().Total()
+	}
+	return requests
+}
+
 func (request *Request) executeOnTarget(input *contextargs.Context, visited mapsutil.Map[string, struct{}], metadata, previous output.InternalEvent, callback protocols.OutputEventCallback) error {
 	var address string
 	var err error
 
 	if request.isUnresponsiveAddress(input) {
 		// skip on unresponsive address no need to continue
+		progress.IncrementSkippedRequests(request.options.Progress, int64(request.requestsForCurrentTarget()))
 		return nil
 	}
 
@@ -259,6 +269,7 @@ func (request *Request) executeAddress(variables map[string]interface{}, actualA
 			}
 			if request.isUnresponsiveAddress(updatedTarget) {
 				// skip on unresponsive address no need to continue
+				progress.IncrementSkippedRequests(request.options.Progress, int64(iterator.Remaining()+1))
 				return nil
 			}
 
@@ -282,6 +293,7 @@ func (request *Request) executeAddress(variables map[string]interface{}, actualA
 
 				if request.isUnresponsiveAddress(updatedTarget) {
 					// skip on unresponsive address no need to continue
+					progress.IncrementSkippedRequests(request.options.Progress, 1)
 					return
 				}
 
@@ -322,6 +334,7 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 
 	if request.isUnresponsiveAddress(updatedTarget) {
 		// skip on unresponsive address no need to continue
+		progress.IncrementSkippedRequests(request.options.Progress, 1)
 		return nil
 	}
 

@@ -37,7 +37,26 @@ type Progress interface {
 	IncrementFailedRequestsBy(count int64)
 }
 
+// SkippedRequestIncrementer can be implemented by progress clients that want a
+// distinct method for logical requests skipped before any real request is sent.
+type SkippedRequestIncrementer interface {
+	IncrementSkippedRequests(count int64)
+}
+
 var _ Progress = &StatsTicker{}
+var _ SkippedRequestIncrementer = &StatsTicker{}
+
+// IncrementSkippedRequests advances only the logical completed-request counter.
+func IncrementSkippedRequests(progressClient Progress, count int64) {
+	if progressClient == nil || count <= 0 {
+		return
+	}
+	if skippedProgress, ok := progressClient.(SkippedRequestIncrementer); ok {
+		skippedProgress.IncrementSkippedRequests(count)
+		return
+	}
+	progressClient.SetRequests(uint64(count))
+}
 
 // StatsTicker is a progress instance for showing program stats
 type StatsTicker struct {
@@ -208,6 +227,14 @@ func (p *StatsTicker) IncrementActualRequests() {
 
 // SetRequests sets the counter by incrementing it with a delta
 func (p *StatsTicker) SetRequests(count uint64) {
+	p.stats.IncrementCounter("requests", int(count))
+}
+
+// IncrementSkippedRequests increments logical completed requests skipped by cache decisions.
+func (p *StatsTicker) IncrementSkippedRequests(count int64) {
+	if count <= 0 {
+		return
+	}
 	p.stats.IncrementCounter("requests", int(count))
 }
 

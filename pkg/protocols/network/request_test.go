@@ -26,6 +26,30 @@ import (
 	"ManScan/pkg/protocols/common/interactsh"
 )
 
+type skippedProgress struct {
+	testutils.MockProgressClient
+	skipped int64
+}
+
+func (p *skippedProgress) IncrementSkippedRequests(count int64) {
+	p.skipped += count
+}
+
+type alwaysSkipHostErrorsCache struct{}
+
+func (c *alwaysSkipHostErrorsCache) SetVerbose(bool) {}
+func (c *alwaysSkipHostErrorsCache) Close()          {}
+func (c *alwaysSkipHostErrorsCache) Check(string, *contextargs.Context) bool {
+	return true
+}
+func (c *alwaysSkipHostErrorsCache) Remove(*contextargs.Context)                    {}
+func (c *alwaysSkipHostErrorsCache) MarkFailed(string, *contextargs.Context, error) {}
+func (c *alwaysSkipHostErrorsCache) MarkFailedOrRemove(string, *contextargs.Context, error) {
+}
+func (c *alwaysSkipHostErrorsCache) IsPermanentErr(*contextargs.Context, error) bool {
+	return false
+}
+
 func TestNetworkExecuteWithResults(t *testing.T) {
 	options := testutils.DefaultOptions
 
@@ -112,6 +136,28 @@ func TestNetworkExecuteWithResults(t *testing.T) {
 	require.Equal(t, "test", finalEvent.Results[0].MatcherName, "could not get correct matcher name of results")
 	require.Equal(t, 1, len(finalEvent.Results[0].ExtractedResults), "could not get correct number of extracted results")
 	require.Equal(t, "<h1>Example Domain</h1>", finalEvent.Results[0].ExtractedResults[0], "could not get correct extracted results")
+}
+
+func TestNetworkCountsHostErrorSkipsAsCompleted(t *testing.T) {
+	options := testutils.DefaultOptions
+	testutils.Init(options)
+
+	request := &Request{
+		ID:      "network-host-error-skip",
+		Address: []string{"{{Hostname}}:80", "{{Hostname}}:81"},
+	}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{
+		ID:   request.ID,
+		Info: model.Info{SeverityHolder: severity.Holder{Severity: severity.Low}, Name: "test"},
+	})
+	progress := &skippedProgress{}
+	executerOpts.Progress = progress
+	executerOpts.HostErrorsCache = &alwaysSkipHostErrorsCache{}
+	require.NoError(t, request.Compile(executerOpts))
+
+	err := request.ExecuteWithResults(contextargs.NewWithInput(context.Background(), "example.com"), nil, nil, func(*output.InternalWrappedEvent) {})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), progress.skipped)
 }
 
 func captureNetworkRequest(t *testing.T, listener net.Listener) (<-chan string, <-chan error) {

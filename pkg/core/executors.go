@@ -8,6 +8,7 @@ import (
 
 	"ManScan/pkg/input/provider"
 	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/scan"
 	"ManScan/pkg/templates"
@@ -182,6 +183,7 @@ func (e *Engine) executeTemplateWithTargets(ctx context.Context, template *templ
 			} else if e.executerOpts.Output != nil {
 				_ = e.executerOpts.Output.Write(skipEvent)
 			}
+			e.incrementSkippedRequests(e.skippedTemplateRequestCount(template, scannedValue))
 			index++
 			return true
 		}
@@ -220,7 +222,7 @@ func (e *Engine) executeTemplatesOnTarget(ctx context.Context, alltemplates []*t
 	wp := e.GetWorkPool()
 	defer wp.Wait()
 
-	for _, tpl := range alltemplates {
+	for index, tpl := range alltemplates {
 		select {
 		case <-ctx.Done():
 			return
@@ -246,6 +248,7 @@ func (e *Engine) executeTemplatesOnTarget(ctx context.Context, alltemplates []*t
 			} else if e.executerOpts.Output != nil {
 				_ = e.executerOpts.Output.Write(skipEvent)
 			}
+			e.incrementSkippedRequests(e.remainingSkippedRequestCount(alltemplates[index:], target))
 			break
 		}
 		if e.shouldSkipHTTPTemplateForInactiveTarget(tpl, target) {
@@ -294,6 +297,38 @@ func (e *Engine) shouldSkipHTTPTemplateForInactiveTarget(template *templates.Tem
 		return false
 	}
 	return isHTTPBasedTemplate(template)
+}
+
+func (e *Engine) skippedTemplateRequestCount(template *templates.Template, target *contextargs.MetaInput) int64 {
+	if template == nil {
+		return 0
+	}
+	// Workflow request counts are dynamic and are published by workflow execution.
+	if len(template.Workflows) > 0 {
+		return 0
+	}
+	if e.shouldSkipHTTPTemplateForInactiveTarget(template, target) {
+		return 0
+	}
+	if template.TotalRequests <= 0 {
+		return 0
+	}
+	return int64(template.TotalRequests)
+}
+
+func (e *Engine) remainingSkippedRequestCount(templateList []*templates.Template, target *contextargs.MetaInput) int64 {
+	var count int64
+	for _, template := range templateList {
+		count += e.skippedTemplateRequestCount(template, target)
+	}
+	return count
+}
+
+func (e *Engine) incrementSkippedRequests(count int64) {
+	if e == nil || e.executerOpts == nil || e.executerOpts.Progress == nil {
+		return
+	}
+	progress.IncrementSkippedRequests(e.executerOpts.Progress, count)
 }
 
 func isHTTPBasedTemplate(template *templates.Template) bool {

@@ -183,6 +183,7 @@ type recordingProgress struct {
 	templateCount          int
 	requestCount           int64
 	preClusterRequestCount int64
+	skippedRequestCount    int64
 }
 
 func (p *recordingProgress) Stop() {}
@@ -197,13 +198,31 @@ func (p *recordingProgress) SetPreClusterTotal(requestCount int64) {
 	p.preClusterRequestCount = requestCount
 }
 
-func (p *recordingProgress) AddToTotal(int64)                {}
-func (p *recordingProgress) IncrementRequests()              {}
-func (p *recordingProgress) IncrementActualRequests()        {}
-func (p *recordingProgress) SetRequests(uint64)              {}
+func (p *recordingProgress) AddToTotal(int64)         {}
+func (p *recordingProgress) IncrementRequests()       {}
+func (p *recordingProgress) IncrementActualRequests() {}
+func (p *recordingProgress) SetRequests(uint64)       {}
+func (p *recordingProgress) IncrementSkippedRequests(count int64) {
+	p.skippedRequestCount += count
+}
 func (p *recordingProgress) IncrementMatched()               {}
 func (p *recordingProgress) IncrementErrorsBy(int64)         {}
 func (p *recordingProgress) IncrementFailedRequestsBy(int64) {}
+
+type alwaysSkipHostErrorsCache struct{}
+
+func (c *alwaysSkipHostErrorsCache) SetVerbose(bool) {}
+func (c *alwaysSkipHostErrorsCache) Close()          {}
+func (c *alwaysSkipHostErrorsCache) Check(string, *contextargs.Context) bool {
+	return true
+}
+func (c *alwaysSkipHostErrorsCache) Remove(*contextargs.Context)                    {}
+func (c *alwaysSkipHostErrorsCache) MarkFailed(string, *contextargs.Context, error) {}
+func (c *alwaysSkipHostErrorsCache) MarkFailedOrRemove(string, *contextargs.Context, error) {
+}
+func (c *alwaysSkipHostErrorsCache) IsPermanentErr(*contextargs.Context, error) bool {
+	return false
+}
 
 type slowExecuter struct{}
 
@@ -575,6 +594,58 @@ func Test_executeTemplateWithTargets_RespectsCancellation(t *testing.T) {
 
 	var matched atomic.Bool
 	e.executeTemplateWithTargets(ctx, tpl, targets, &matched)
+}
+
+func TestExecuteTemplateWithTargetsCountsHostErrorSkips(t *testing.T) {
+	e := newTestEngine()
+	progress := &recordingProgress{}
+	e.SetExecuterOptions(&protocols.ExecutorOptions{
+		Logger:          e.Logger,
+		ResumeCfg:       types.NewResumeCfg(),
+		ProtocolType:    tmpltypes.HTTPProtocol,
+		HostErrorsCache: &alwaysSkipHostErrorsCache{},
+		Progress:        progress,
+	})
+
+	tpl := &templates.Template{ID: "skip-template", TotalRequests: 3}
+	tpl.Executer = &countingExecuter{}
+	targets := &fakeTargetProvider{values: []*contextargs.MetaInput{{Input: "https://example.com"}}}
+
+	var matched atomic.Bool
+	e.executeTemplateWithTargets(context.Background(), tpl, targets, &matched)
+
+	if got := progress.skippedRequestCount; got != 3 {
+		t.Fatalf("skippedRequestCount = %d, want 3", got)
+	}
+}
+
+func TestExecuteTemplatesOnTargetCountsRemainingHostErrorSkips(t *testing.T) {
+	e := New(&types.Options{
+		BulkSize:                1,
+		TemplateThreads:         1,
+		HeadlessBulkSize:        1,
+		HeadlessTemplateThreads: 1,
+	})
+	progress := &recordingProgress{}
+	e.SetExecuterOptions(&protocols.ExecutorOptions{
+		Logger:          e.Logger,
+		ResumeCfg:       types.NewResumeCfg(),
+		ProtocolType:    tmpltypes.HTTPProtocol,
+		HostErrorsCache: &alwaysSkipHostErrorsCache{},
+		Progress:        progress,
+	})
+
+	templatesList := []*templates.Template{
+		{ID: "first", TotalRequests: 2, Executer: &countingExecuter{}},
+		{ID: "second", TotalRequests: 4, Executer: &countingExecuter{}},
+	}
+
+	var matched atomic.Bool
+	e.executeTemplatesOnTarget(context.Background(), templatesList, &contextargs.MetaInput{Input: "https://example.com"}, &matched)
+
+	if got := progress.skippedRequestCount; got != 6 {
+		t.Fatalf("skippedRequestCount = %d, want 6", got)
+	}
 }
 
 func Test_executeTemplateWithTargets_KeepsInFlightOnCancellation(t *testing.T) {
