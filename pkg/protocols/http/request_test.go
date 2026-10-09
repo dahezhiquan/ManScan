@@ -24,6 +24,24 @@ import (
 	"ManScan/pkg/protocols/common/interactsh"
 )
 
+type progressCounter struct {
+	testutils.MockProgressClient
+	requests int64
+	skipped  int64
+}
+
+func (p *progressCounter) IncrementRequests() {
+	p.requests++
+}
+
+func (p *progressCounter) SetRequests(count uint64) {
+	p.requests += int64(count)
+}
+
+func (p *progressCounter) IncrementSkippedRequests(count int64) {
+	p.skipped += count
+}
+
 func TestHTTPExtractMultipleReuse(t *testing.T) {
 	options := testutils.DefaultOptions
 
@@ -513,6 +531,58 @@ func TestExecuteParallelHTTP_StopAtFirstMatch(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, int32(1), atomic.LoadInt32(&matches), "expected only first match to be processed")
+}
+
+func TestExecuteParallelHTTP_StopAtFirstMatchCompletesSkippedRequests(t *testing.T) {
+	options := testutils.DefaultOptions
+	testutils.Init(options)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprintf(w, "match")
+	}))
+	defer ts.Close()
+
+	payloads := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"}
+	req := &Request{
+		ID:      "parallel-stop-first-progress",
+		Method:  HTTPMethodTypeHolder{MethodType: HTTPGet},
+		Path:    []string{"{{BaseURL}}/p?x={{v}}"},
+		Threads: 1,
+		Payloads: map[string]interface{}{
+			"v": payloads,
+		},
+		Operators: operators.Operators{
+			Matchers: []*matchers.Matcher{{
+				Part:  "body",
+				Type:  matchers.MatcherTypeHolder{MatcherType: matchers.WordsMatcher},
+				Words: []string{"match"},
+			}},
+		},
+		StopAtFirstMatch: true,
+	}
+
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{
+		ID:   req.ID,
+		Info: model.Info{SeverityHolder: severity.Holder{Severity: severity.Low}, Name: "test"},
+	})
+	progress := &progressCounter{}
+	executerOpts.Progress = progress
+	require.NoError(t, req.Compile(executerOpts))
+
+	err := req.ExecuteWithResults(contextargs.NewWithInput(context.Background(), ts.URL), nil, nil, func(*output.InternalWrappedEvent) {})
+	require.NoError(t, err)
+	require.Equal(t, int64(req.Requests()), progress.requests+progress.skipped)
+	require.Positive(t, progress.skipped, "stop-at-first-match should complete requests that were not scheduled")
+}
+
+func TestHTTPRaceRequestsUsesRaceCount(t *testing.T) {
+	req := &Request{
+		Race:               true,
+		RaceNumberRequests: 5,
+		Path:               []string{"{{BaseURL}}/race"},
+	}
+
+	require.Equal(t, 5, req.Requests())
 }
 
 func TestExecuteParallelHTTP_SkipOnUnresponsiveFromCache(t *testing.T) {

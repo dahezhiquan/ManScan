@@ -4,6 +4,7 @@ import (
 	"sync/atomic"
 
 	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
 	"ManScan/pkg/scan"
 	"ManScan/pkg/tmplexec/utils"
@@ -44,7 +45,7 @@ func (g *Generic) ExecuteWithResults(ctx *scan.ScanContext) error {
 	}
 	previous := mapsutil.NewSyncLockMap[string, any]()
 
-	for _, req := range g.requests {
+	for index, req := range g.requests {
 		select {
 		case <-ctx.Context().Done():
 			return ctx.Context().Err()
@@ -83,10 +84,22 @@ func (g *Generic) ExecuteWithResults(ctx *scan.ScanContext) error {
 		}
 		// If a match was found and stop at first match is set, break out of the loop and return
 		if g.results.Load() && (g.options.StopAtFirstMatch || g.options.Options.StopAtFirstMatch) {
+			progress.IncrementSkippedRequests(g.options.Progress, int64(remainingRequestCount(g.requests[index+1:])))
 			break
 		}
 	}
 	return nil
+}
+
+func remainingRequestCount(requests []protocols.Request) int {
+	var count int
+	for _, request := range requests {
+		if request == nil {
+			continue
+		}
+		count += request.Requests()
+	}
+	return count
 }
 
 // Type returns the type of engine

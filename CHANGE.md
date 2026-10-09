@@ -1,3 +1,18 @@
+## 2026-10-09 11:00 修复早停场景完成度统计
+
+- 变动目录：`pkg/protocols/`、`pkg/tmplexec/`
+- 变动文件：`pkg/protocols/http/http.go`、`pkg/protocols/http/request.go`、`pkg/protocols/http/request_test.go`、`pkg/protocols/headless/request.go`、`pkg/protocols/network/request.go`、`pkg/protocols/network/request_test.go`、`pkg/tmplexec/generic/exec.go`、`pkg/tmplexec/generic/exec_test.go`
+- 具体修改内容：
+  - 在 HTTP 并发、pipeline 和 race 早停路径中补齐未调度请求的逻辑完成数，补偿只递增 `requests`，不递增 `actual_requests` 或失败数。
+  - 将 HTTP race 模式的预估请求数按 `race_count` 统计，使分母与实际 race 重复请求口径一致。
+  - 在 Headless payload 迭代命中 `stop-at-first-match` 时补齐剩余 payload 组合的逻辑完成数，并将单请求早停结束视为正常完成。
+  - 在 Network 多端口、多地址早停时补齐剩余端口或地址对应的逻辑完成数。
+  - 在 generic 模板执行器中，模板级早停跳过后续 protocol request 时补齐剩余请求的逻辑完成数。
+  - 补充 HTTP、Network 和 generic 早停完成度回归测试。
+- 修改目的或影响：
+  - 避免开启 `stop-at-first-match` 后，运行中的动态完成度因剩余计划请求未执行而长期偏低。
+  - 保持早停省请求行为不变，不增加真实网络请求或浏览器执行次数；实际请求数仍只统计真实执行尝试。
+
 ## 2026-10-08 19:12 修复不可达缓存跳过完成度统计
 
 - 变动目录：`pkg/core/`、`pkg/progress/`、`pkg/protocols/`

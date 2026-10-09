@@ -160,6 +160,47 @@ func TestNetworkCountsHostErrorSkipsAsCompleted(t *testing.T) {
 	require.Equal(t, int64(2), progress.skipped)
 }
 
+func TestNetworkStopAtFirstMatchCompletesRemainingAddresses(t *testing.T) {
+	options := testutils.DefaultOptions
+	testutils.Init(options)
+
+	templateID := "network-stop-first-progress"
+	request := &Request{
+		ID:       templateID,
+		Address:  []string{"{{Hostname}}", "127.0.0.1:1"},
+		ReadSize: 2048,
+		Inputs:   []*Input{{Data: "GET / HTTP/1.1\r\nHost: {{Hostname}}\r\n\r\n"}},
+		Operators: operators.Operators{
+			Matchers: []*matchers.Matcher{{
+				Name:  "test",
+				Part:  "data",
+				Type:  matchers.MatcherTypeHolder{MatcherType: matchers.WordsMatcher},
+				Words: []string{"200 OK"},
+			}},
+		},
+		StopAtFirstMatch: true,
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(exampleBody))
+	}))
+	defer ts.Close()
+
+	parsed, err := url.Parse(ts.URL)
+	require.NoError(t, err)
+
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{
+		ID:   templateID,
+		Info: model.Info{SeverityHolder: severity.Holder{Severity: severity.Low}, Name: "test"},
+	})
+	progress := &skippedProgress{}
+	executerOpts.Progress = progress
+	require.NoError(t, request.Compile(executerOpts))
+
+	err = request.ExecuteWithResults(contextargs.NewWithInput(context.Background(), parsed.Host), nil, nil, func(*output.InternalWrappedEvent) {})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), progress.skipped)
+}
+
 func captureNetworkRequest(t *testing.T, listener net.Listener) (<-chan string, <-chan error) {
 	t.Helper()
 	captured := make(chan string, 1)

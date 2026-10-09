@@ -13,6 +13,7 @@ import (
 
 	"ManScan/pkg/fuzz"
 	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/generators"
@@ -81,14 +82,16 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 	}
 	if request.generator != nil {
 		iterator := request.generator.NewIterator()
+		shouldStopAtFirstMatch := request.StopAtFirstMatch || request.options.Options.StopAtFirstMatch || request.options.StopAtFirstMatch
 		for {
+			if gotmatches && shouldStopAtFirstMatch {
+				progress.IncrementSkippedRequests(request.options.Progress, int64(iterator.Remaining()))
+				return nil
+			}
+
 			value, ok := iterator.Value()
 			if !ok {
 				break
-			}
-
-			if gotmatches && (request.StopAtFirstMatch || request.options.Options.StopAtFirstMatch || request.options.StopAtFirstMatch) {
-				return nil
 			}
 
 			renderedValue, err := render.RenderMap(render.MapInput{
@@ -103,12 +106,19 @@ func (request *Request) ExecuteWithResults(input *contextargs.Context, metadata,
 			}
 
 			if err := request.executeRequestWithPayloads(input, renderedValue.Values, previous, renderedValue.InteractURLs, wrappedCallback); err != nil {
+				if errors.Is(err, types.ErrNoMoreRequests) {
+					progress.IncrementSkippedRequests(request.options.Progress, int64(iterator.Remaining()))
+					return nil
+				}
 				return err
 			}
 		}
 	} else {
 		value := maps.Clone(vars)
 		if err := request.executeRequestWithPayloads(input, value, previous, interactshURLs, wrappedCallback); err != nil {
+			if errors.Is(err, types.ErrNoMoreRequests) {
+				return nil
+			}
 			return err
 		}
 	}

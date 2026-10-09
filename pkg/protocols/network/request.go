@@ -116,7 +116,7 @@ func (request *Request) ExecuteWithResults(target *contextargs.Context, metadata
 		callback(event)
 	}
 
-	for _, port := range ports {
+	for portIndex, port := range ports {
 		input := target.Clone()
 		// use network port updates input with new port requested in template file
 		// and it is ignored if input port is not standard http(s) ports like 80,8080,8081 etc
@@ -128,6 +128,8 @@ func (request *Request) ExecuteWithResults(target *contextargs.Context, metadata
 			return err
 		}
 		if shouldStopAtFirstMatch && atomicBool.Load() {
+			remainingPorts := len(ports) - portIndex - 1
+			progress.IncrementSkippedRequests(request.options.Progress, int64(remainingPorts*request.requestsForCurrentTarget()))
 			break
 		}
 	}
@@ -136,11 +138,15 @@ func (request *Request) ExecuteWithResults(target *contextargs.Context, metadata
 }
 
 func (request *Request) requestsForCurrentTarget() int {
-	requests := len(request.addresses)
-	if request.generator != nil {
-		requests *= request.generator.NewIterator().Total()
-	}
+	requests := len(request.addresses) * request.payloadRequestCount()
 	return requests
+}
+
+func (request *Request) payloadRequestCount() int {
+	if request.generator != nil {
+		return request.generator.NewIterator().Total()
+	}
+	return 1
 }
 
 func (request *Request) executeOnTarget(input *contextargs.Context, visited mapsutil.Map[string, struct{}], metadata, previous output.InternalEvent, callback protocols.OutputEventCallback) error {
@@ -191,7 +197,7 @@ func (request *Request) executeOnTarget(input *contextargs.Context, visited maps
 		callback(event)
 	}
 
-	for _, kv := range request.addresses {
+	for addressIndex, kv := range request.addresses {
 		select {
 		case <-input.Context().Done():
 			return input.Context().Err()
@@ -214,6 +220,8 @@ func (request *Request) executeOnTarget(input *contextargs.Context, visited maps
 		}
 
 		if shouldStopAtFirstMatch && atomicBool.Load() {
+			remainingAddresses := len(request.addresses) - addressIndex - 1
+			progress.IncrementSkippedRequests(request.options.Progress, int64(remainingAddresses*request.payloadRequestCount()))
 			break
 		}
 	}

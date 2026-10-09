@@ -584,6 +584,9 @@ func (request *Request) RebuildGenerator() error {
 
 // Requests returns the total number of requests the YAML rule will perform
 func (request *Request) Requests() int {
+	if request.Race && request.RaceNumberRequests > 0 {
+		return request.RaceNumberRequests
+	}
 	generator := request.newGenerator(false)
 	return generator.Total()
 }

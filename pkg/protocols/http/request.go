@@ -23,6 +23,7 @@ import (
 	fuzzStats "ManScan/pkg/fuzz/stats"
 	"ManScan/pkg/operators"
 	"ManScan/pkg/output"
+	"ManScan/pkg/progress"
 	"ManScan/pkg/protocols"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/expressions"
@@ -174,6 +175,7 @@ func (request *Request) executeRaceRequest(input *contextargs.Context, dynamicVa
 		updatedInput := contextargs.GetCopyIfHostOutdated(input, generatedRequests[i].URL())
 		if spmHandler.FoundFirstMatch() || request.isUnresponsiveAddress(updatedInput) {
 			// stop sending more requests condition is met
+			request.incrementSkippedRequests(request.RaceNumberRequests - i)
 			break
 		}
 		spmHandler.Acquire()
@@ -203,6 +205,21 @@ func (request *Request) executeRaceRequest(input *contextargs.Context, dynamicVa
 		return nil
 	}
 	return multierr.Combine(spmHandler.CombinedResults()...)
+}
+
+func (request *Request) incrementSkippedRequests(count int) {
+	progress.IncrementSkippedRequests(request.options.Progress, int64(count))
+}
+
+func (request *Request) incrementRemainingGeneratedRequests(generator *requestGenerator, includeCurrent bool) {
+	if generator == nil {
+		return
+	}
+	remaining := generator.Remaining()
+	if includeCurrent {
+		remaining++
+	}
+	request.incrementSkippedRequests(remaining)
 }
 
 // executeParallelHTTP executes parallel requests for a template
@@ -357,6 +374,7 @@ func (request *Request) executeParallelHTTP(input *contextargs.Context, dynamicV
 
 		// break if stop at first match is found or host is unresponsive
 		if spmHandler.FoundFirstMatch() || request.isUnresponsiveAddress(input) {
+			request.incrementRemainingGeneratedRequests(generator, true)
 			break
 		}
 
@@ -378,6 +396,7 @@ func (request *Request) executeParallelHTTP(input *contextargs.Context, dynamicV
 		updatedInput := contextargs.GetCopyIfHostOutdated(input, generatedHttpRequest.URL())
 		if request.isUnresponsiveAddress(updatedInput) {
 			// skip on unresponsive host no need to continue
+			request.incrementRemainingGeneratedRequests(generator, true)
 			spmHandler.Cancel()
 			close(tasks)
 			workersWg.Wait()
@@ -385,6 +404,9 @@ func (request *Request) executeParallelHTTP(input *contextargs.Context, dynamicV
 		}
 		select {
 		case <-spmHandler.Done():
+			if spmHandler.FoundFirstMatch() {
+				request.incrementRemainingGeneratedRequests(generator, true)
+			}
 			close(tasks)
 			workersWg.Wait()
 			spmHandler.Wait()
@@ -481,6 +503,7 @@ func (request *Request) executeTurboHTTP(input *contextargs.Context, dynamicValu
 
 		if spmHandler.FoundFirstMatch() || request.isUnresponsiveAddress(input) || spmHandler.Cancelled() {
 			// skip if first match is found
+			request.incrementRemainingGeneratedRequests(generator, true)
 			break
 		}
 
@@ -496,6 +519,7 @@ func (request *Request) executeTurboHTTP(input *contextargs.Context, dynamicValu
 		updatedInput := contextargs.GetCopyIfHostOutdated(input, generatedHttpRequest.URL())
 		if request.isUnresponsiveAddress(updatedInput) {
 			// skip on unresponsive host no need to continue
+			request.incrementRemainingGeneratedRequests(generator, true)
 			spmHandler.Cancel()
 			return nil
 		}
