@@ -56,9 +56,24 @@ type AssetDomainListRecord struct {
 
 type AssetDomainDetailRecord struct {
 	entity.AssetDomain `gorm:"embedded"`
+	VulnerabilityCount int `gorm:"column:vulnerability_count"`
+	CriticalCount      int `gorm:"column:critical_count"`
+	HighCount          int `gorm:"column:high_count"`
+	MediumCount        int `gorm:"column:medium_count"`
+	LowCount           int `gorm:"column:low_count"`
 	ServiceAssets      []entity.AssetDomainServiceAsset
 	TitleHistories     []entity.AssetDomainTitleHistory
 }
+
+type assetDomainVulnerabilityStats struct {
+	VulnerabilityCount int
+	CriticalCount      int
+	HighCount          int
+	MediumCount        int
+	LowCount           int
+}
+
+var excludedAssetVulnerabilityStatuses = []string{"fixed", "false_positive", "ignored"}
 
 func NewAssetDomainRepository(db *gorm.DB) AssetDomainRepository {
 	return &assetDomainRepository{db: db}
@@ -187,6 +202,11 @@ func (r *assetDomainRepository) Detail(ctx context.Context, domain string) (*Ass
 		return nil, err
 	}
 
+	stats, err := r.assetDomainVulnerabilityStats(ctx, domain)
+	if err != nil {
+		return nil, err
+	}
+
 	serviceAssets := make([]entity.AssetDomainServiceAsset, 0)
 	if err := r.db.WithContext(ctx).
 		Where("domain = ?", domain).
@@ -208,10 +228,30 @@ func (r *assetDomainRepository) Detail(ctx context.Context, domain string) (*Ass
 	}
 
 	return &AssetDomainDetailRecord{
-		AssetDomain:    asset,
-		ServiceAssets:  serviceAssets,
-		TitleHistories: titleHistories,
+		AssetDomain:        asset,
+		VulnerabilityCount: stats.VulnerabilityCount,
+		CriticalCount:      stats.CriticalCount,
+		HighCount:          stats.HighCount,
+		MediumCount:        stats.MediumCount,
+		LowCount:           stats.LowCount,
+		ServiceAssets:      serviceAssets,
+		TitleHistories:     titleHistories,
 	}, nil
+}
+
+func (r *assetDomainRepository) assetDomainVulnerabilityStats(ctx context.Context, domain string) (assetDomainVulnerabilityStats, error) {
+	var stats assetDomainVulnerabilityStats
+	err := r.db.WithContext(ctx).
+		Model(&entity.Vulnerability{}).
+		Select(`COUNT(*) AS vulnerability_count,
+			COALESCE(SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END), 0) AS critical_count,
+			COALESCE(SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'high' THEN 1 ELSE 0 END), 0) AS high_count,
+			COALESCE(SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'medium' THEN 1 ELSE 0 END), 0) AS medium_count,
+			COALESCE(SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'low' THEN 1 ELSE 0 END), 0) AS low_count`).
+		Where("asset_endpoint = ?", domain).
+		Where("LOWER(COALESCE(status, '')) NOT IN ?", excludedAssetVulnerabilityStatuses).
+		Scan(&stats).Error
+	return stats, err
 }
 
 func (r *assetDomainRepository) withAssetDomainListStats(db *gorm.DB) *gorm.DB {

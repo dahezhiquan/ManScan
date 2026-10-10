@@ -1060,6 +1060,10 @@ func (s *assetHostRepositoryStub) List(context.Context, dto.ListAssetHostsQuery)
 	return &dto.PageResult[repository.AssetHostListRecord]{}, nil
 }
 
+func (s *assetHostRepositoryStub) Detail(context.Context, string) (*repository.AssetHostDetailRecord, error) {
+	return &repository.AssetHostDetailRecord{}, nil
+}
+
 func (s *assetHostRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostObservation, _ time.Time) error {
 	s.observationValues = append(s.observationValues, append([]repository.AssetHostObservation(nil), observations...))
 	return nil

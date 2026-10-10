@@ -14,6 +14,7 @@ import (
 
 type AssetHostRepository interface {
 	List(ctx context.Context, query dto.ListAssetHostsQuery) (*dto.PageResult[AssetHostListRecord], error)
+	Detail(ctx context.Context, ipAddress string) (*AssetHostDetailRecord, error)
 	SyncObservations(ctx context.Context, observations []AssetHostObservation, observedAt time.Time) error
 }
 
@@ -35,6 +36,24 @@ type AssetHostListRecord struct {
 	MediumCount        int `gorm:"column:medium_count"`
 	LowCount           int `gorm:"column:low_count"`
 	PortCount          int `gorm:"column:port_count"`
+}
+
+type AssetHostDetailRecord struct {
+	entity.AssetHost   `gorm:"embedded"`
+	VulnerabilityCount int `gorm:"column:vulnerability_count"`
+	CriticalCount      int `gorm:"column:critical_count"`
+	HighCount          int `gorm:"column:high_count"`
+	MediumCount        int `gorm:"column:medium_count"`
+	LowCount           int `gorm:"column:low_count"`
+	Ports              []entity.AssetHostPort
+}
+
+type assetHostVulnerabilityStats struct {
+	VulnerabilityCount int
+	CriticalCount      int
+	HighCount          int
+	MediumCount        int
+	LowCount           int
 }
 
 func NewAssetHostRepository(db *gorm.DB) AssetHostRepository {
@@ -88,6 +107,60 @@ func (r *assetHostRepository) List(ctx context.Context, query dto.ListAssetHosts
 	}, nil
 }
 
+func (r *assetHostRepository) Detail(ctx context.Context, ipAddress string) (*AssetHostDetailRecord, error) {
+	ipAddress = strings.TrimSpace(ipAddress)
+	if ipAddress == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var asset entity.AssetHost
+	if err := r.db.WithContext(ctx).
+		Where("ip_address = ?", ipAddress).
+		First(&asset).Error; err != nil {
+		return nil, err
+	}
+
+	stats, err := r.assetHostVulnerabilityStats(ctx, ipAddress)
+	if err != nil {
+		return nil, err
+	}
+
+	ports := make([]entity.AssetHostPort, 0)
+	if err := r.db.WithContext(ctx).
+		Where("ip_address = ?", ipAddress).
+		Order("is_alive DESC").
+		Order("port_number ASC").
+		Order("id ASC").
+		Find(&ports).Error; err != nil {
+		return nil, err
+	}
+
+	return &AssetHostDetailRecord{
+		AssetHost:          asset,
+		VulnerabilityCount: stats.VulnerabilityCount,
+		CriticalCount:      stats.CriticalCount,
+		HighCount:          stats.HighCount,
+		MediumCount:        stats.MediumCount,
+		LowCount:           stats.LowCount,
+		Ports:              ports,
+	}, nil
+}
+
+func (r *assetHostRepository) assetHostVulnerabilityStats(ctx context.Context, ipAddress string) (assetHostVulnerabilityStats, error) {
+	var stats assetHostVulnerabilityStats
+	err := r.db.WithContext(ctx).
+		Model(&entity.Vulnerability{}).
+		Select(`COUNT(*) AS vulnerability_count,
+			COALESCE(SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'critical' THEN 1 ELSE 0 END), 0) AS critical_count,
+			COALESCE(SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'high' THEN 1 ELSE 0 END), 0) AS high_count,
+			COALESCE(SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'medium' THEN 1 ELSE 0 END), 0) AS medium_count,
+			COALESCE(SUM(CASE WHEN LOWER(COALESCE(severity, '')) = 'low' THEN 1 ELSE 0 END), 0) AS low_count`).
+		Where("asset_host = ?", ipAddress).
+		Where("LOWER(COALESCE(status, '')) NOT IN ?", excludedAssetVulnerabilityStatuses).
+		Scan(&stats).Error
+	return stats, err
+}
+
 func (r *assetHostRepository) withAssetHostListStats(db *gorm.DB) *gorm.DB {
 	return db.
 		Joins(`LEFT JOIN (
@@ -108,12 +181,7 @@ func (r *assetHostRepository) withAssetHostListStats(db *gorm.DB) *gorm.DB {
 func (r *assetHostRepository) applyListFilters(db *gorm.DB, query dto.ListAssetHostsQuery) *gorm.DB {
 	if keyword := strings.TrimSpace(query.Keyword); keyword != "" {
 		like := "%" + escapeLikeValue(strings.ToLower(keyword)) + "%"
-		db = db.Where(
-			"(LOWER(COALESCE(h.ip_address, '')) LIKE ? OR LOWER(COALESCE(h.os_type, '')) LIKE ? OR LOWER(COALESCE(h.related_domains, '')) LIKE ?)",
-			like,
-			like,
-			like,
-		)
+		db = db.Where("LOWER(COALESCE(h.ip_address, '')) LIKE ?", like)
 	}
 	if strings.TrimSpace(query.Owner) != "" {
 		db = applyLikeAnyFilter(db, "h.owner", []string{query.Owner})

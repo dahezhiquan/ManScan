@@ -9,6 +9,7 @@ import (
 
 type AssetHostService interface {
 	List(ctx context.Context, query dto.ListAssetHostsQuery) (*dto.PageResult[dto.AssetHostListItem], error)
+	Detail(ctx context.Context, ipAddress string) (*dto.AssetHostDetail, error)
 }
 
 type assetHostService struct {
@@ -39,6 +40,14 @@ func (s *assetHostService) List(ctx context.Context, query dto.ListAssetHostsQue
 	}, nil
 }
 
+func (s *assetHostService) Detail(ctx context.Context, ipAddress string) (*dto.AssetHostDetail, error) {
+	detail, err := s.repository.Detail(ctx, ipAddress)
+	if err != nil {
+		return nil, err
+	}
+	return toAssetHostDetail(*detail), nil
+}
+
 func toAssetHostListItem(item repository.AssetHostListRecord) dto.AssetHostListItem {
 	return dto.AssetHostListItem{
 		ID:                 item.ID,
@@ -64,18 +73,42 @@ func toAssetHostListItem(item repository.AssetHostListRecord) dto.AssetHostListI
 }
 
 func assetHostRiskLevel(item repository.AssetHostListRecord) string {
-	switch {
-	case item.CriticalCount > 0:
-		return "critical"
-	case item.HighCount > 0:
-		return "high"
-	case item.MediumCount > 0:
-		return "medium"
-	case item.LowCount > 0:
-		return "low"
-	case item.VulnerabilityCount > 0:
-		return "unknown"
-	default:
-		return "info"
+	return assetRiskLevel(item.VulnerabilityCount, item.CriticalCount, item.HighCount, item.MediumCount, item.LowCount)
+}
+
+func toAssetHostDetail(item repository.AssetHostDetailRecord) *dto.AssetHostDetail {
+	ports := make([]dto.AssetHostPortDetailItem, 0, len(item.Ports))
+	for _, port := range item.Ports {
+		ports = append(ports, dto.AssetHostPortDetailItem{
+			PortProtocol:   port.PortProtocol,
+			PortNumber:     port.PortNumber,
+			ServiceName:    derefString(port.ServiceName),
+			AppName:        derefString(port.AppName),
+			AppVersion:     derefString(port.AppVersion),
+			IsAlive:        port.IsAlive,
+			IsHighRiskPort: port.IsHighRiskPort,
+			LastAliveAt:    port.LastAliveAt,
+			PortCreatedAt:  port.PortCreatedAt,
+		})
 	}
+
+	return &dto.AssetHostDetail{
+		IPAddress:          item.IPAddress,
+		Region:             derefString(item.Region),
+		Owner:              derefString(item.Owner),
+		OSType:             derefString(item.OSType),
+		OSVersion:          derefString(item.OSVersion),
+		ScanCreatedAt:      item.ScanCreatedAt,
+		LastAliveAt:        item.LastAliveAt,
+		ManualNote:         derefString(item.ManualNote),
+		IsAlive:            item.IsAlive,
+		RelatedDomains:     derefString(item.RelatedDomains),
+		RiskLevel:          assetHostDetailRiskLevel(item),
+		VulnerabilityCount: item.VulnerabilityCount,
+		Ports:              ports,
+	}
+}
+
+func assetHostDetailRiskLevel(item repository.AssetHostDetailRecord) string {
+	return assetRiskLevel(item.VulnerabilityCount, item.CriticalCount, item.HighCount, item.MediumCount, item.LowCount)
 }

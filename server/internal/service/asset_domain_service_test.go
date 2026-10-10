@@ -75,6 +75,8 @@ func TestToAssetDomainDetailIncludesRelatedAssetsAndTitleHistories(t *testing.T)
 			Response:       &response,
 			IsAlive:        true,
 		},
+		VulnerabilityCount: 2,
+		CriticalCount:      1,
 		ServiceAssets: []entity.AssetDomainServiceAsset{
 			{
 				AppName:      "nginx",
@@ -102,6 +104,9 @@ func TestToAssetDomainDetailIncludesRelatedAssetsAndTitleHistories(t *testing.T)
 	}
 	if detail.HTTPStatusCode == nil || *detail.HTTPStatusCode != statusCode || detail.Request != request || detail.Response != response {
 		t.Fatalf("probe fields = status:%v request:%q response:%q, want copied probe fields", detail.HTTPStatusCode, detail.Request, detail.Response)
+	}
+	if detail.RiskLevel != "critical" || detail.VulnerabilityCount != 2 {
+		t.Fatalf("risk fields = level:%q count:%d, want critical/2", detail.RiskLevel, detail.VulnerabilityCount)
 	}
 	if len(detail.ServiceAssets) != 1 || detail.ServiceAssets[0].AppName != "nginx" || detail.ServiceAssets[0].AppVersion != "1.24" || !detail.ServiceAssets[0].IsAlive {
 		t.Fatalf("service assets = %+v, want nginx detail", detail.ServiceAssets)

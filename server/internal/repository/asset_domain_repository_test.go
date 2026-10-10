@@ -227,7 +227,7 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 		t.Fatalf("gorm.Open() error = %v", err)
 	}
 
-	if err := db.AutoMigrate(&entity.AssetDomain{}, &entity.AssetDomainServiceAsset{}, &entity.AssetDomainTitleHistory{}); err != nil {
+	if err := db.AutoMigrate(&entity.AssetDomain{}, &entity.Vulnerability{}, &entity.AssetDomainServiceAsset{}, &entity.AssetDomainTitleHistory{}); err != nil {
 		t.Fatalf("AutoMigrate() error = %v", err)
 	}
 
@@ -254,6 +254,84 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 		IsAlive:        true,
 	}).Error; err != nil {
 		t.Fatalf("Create domain error = %v", err)
+	}
+	endpoint := "app.example.com:443"
+	otherEndpoint := "other.example.com:443"
+	if err := db.Create(&[]entity.Vulnerability{
+		{
+			TemplateID:         "tpl-critical",
+			VulnerabilityName:  "Critical Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "unreviewed",
+			AssetEndpoint:      &endpoint,
+			Severity:           "critical",
+			VulnFingerprint:    "detail-critical",
+		},
+		{
+			TemplateID:         "tpl-unknown",
+			VulnerabilityName:  "Unknown Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "confirmed",
+			AssetEndpoint:      &endpoint,
+			Severity:           "unknown",
+			VulnFingerprint:    "detail-unknown",
+		},
+		{
+			TemplateID:         "tpl-fixed",
+			VulnerabilityName:  "Fixed Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "fixed",
+			AssetEndpoint:      &endpoint,
+			Severity:           "high",
+			VulnFingerprint:    "detail-fixed",
+		},
+		{
+			TemplateID:         "tpl-false-positive",
+			VulnerabilityName:  "False Positive Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "false_positive",
+			AssetEndpoint:      &endpoint,
+			Severity:           "medium",
+			VulnFingerprint:    "detail-false-positive",
+		},
+		{
+			TemplateID:         "tpl-ignored",
+			VulnerabilityName:  "Ignored Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "ignored",
+			AssetEndpoint:      &endpoint,
+			Severity:           "low",
+			VulnFingerprint:    "detail-ignored",
+		},
+		{
+			TemplateID:         "tpl-other",
+			VulnerabilityName:  "Other Vulnerability",
+			LatestScanTaskName: "task",
+			LatestScanTaskID:   "1",
+			FirstFoundAt:       now,
+			LastFoundAt:        now,
+			Status:             "unreviewed",
+			AssetEndpoint:      &otherEndpoint,
+			Severity:           "critical",
+			VulnFingerprint:    "detail-other",
+		},
+	}).Error; err != nil {
+		t.Fatalf("Create vulnerabilities error = %v", err)
 	}
 	if err := db.Create(&[]entity.AssetDomainServiceAsset{
 		{
@@ -310,6 +388,16 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 
 	if detail.Domain != "app.example.com:443" || detail.Owner == nil || *detail.Owner != owner || !detail.HasForm || !detail.HasUpload {
 		t.Fatalf("detail domain = %+v, want saved domain fields", detail.AssetDomain)
+	}
+	if detail.VulnerabilityCount != 2 || detail.CriticalCount != 1 || detail.HighCount != 0 || detail.MediumCount != 0 || detail.LowCount != 0 {
+		t.Fatalf(
+			"detail vuln counts = vulnerability:%d critical:%d high:%d medium:%d low:%d, want filtered vulnerability:2 critical:1 high:0 medium:0 low:0",
+			detail.VulnerabilityCount,
+			detail.CriticalCount,
+			detail.HighCount,
+			detail.MediumCount,
+			detail.LowCount,
+		)
 	}
 	if len(detail.ServiceAssets) != 2 {
 		t.Fatalf("service assets = %+v, want two assets for requested domain", detail.ServiceAssets)

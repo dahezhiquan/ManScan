@@ -102,39 +102,49 @@ func toAssetDomainDetail(item repository.AssetDomainDetailRecord) *dto.AssetDoma
 	}
 
 	return &dto.AssetDomainDetail{
-		Domain:         item.Domain,
-		Owner:          derefString(item.Owner),
-		Title:          derefString(item.Title),
-		FirstAliveAt:   item.FirstAliveAt,
-		LastAliveAt:    item.LastAliveAt,
-		Region:         derefString(item.Region),
-		HasForm:        item.HasForm,
-		HasUpload:      item.HasUpload,
-		HasAdmin:       item.HasAdmin,
-		HasUCLogin:     item.HasUCLogin,
-		HasBaiduLogin:  item.HasBaiduLogin,
-		ScreenshotPath: derefString(item.ScreenshotPath),
-		ManualNote:     derefString(item.ManualNote),
-		HTTPStatusCode: item.HTTPStatusCode,
-		Request:        derefString(item.Request),
-		Response:       derefString(item.Response),
-		IsAlive:        item.IsAlive,
-		ServiceAssets:  serviceAssets,
-		TitleHistories: titleHistories,
+		Domain:             item.Domain,
+		Owner:              derefString(item.Owner),
+		Title:              derefString(item.Title),
+		FirstAliveAt:       item.FirstAliveAt,
+		LastAliveAt:        item.LastAliveAt,
+		Region:             derefString(item.Region),
+		HasForm:            item.HasForm,
+		HasUpload:          item.HasUpload,
+		HasAdmin:           item.HasAdmin,
+		HasUCLogin:         item.HasUCLogin,
+		HasBaiduLogin:      item.HasBaiduLogin,
+		ScreenshotPath:     derefString(item.ScreenshotPath),
+		ManualNote:         derefString(item.ManualNote),
+		HTTPStatusCode:     item.HTTPStatusCode,
+		Request:            derefString(item.Request),
+		Response:           derefString(item.Response),
+		IsAlive:            item.IsAlive,
+		RiskLevel:          assetDomainDetailRiskLevel(item),
+		VulnerabilityCount: item.VulnerabilityCount,
+		ServiceAssets:      serviceAssets,
+		TitleHistories:     titleHistories,
 	}
 }
 
 func assetDomainRiskLevel(item repository.AssetDomainListRecord) string {
+	return assetRiskLevel(item.VulnerabilityCount, item.CriticalCount, item.HighCount, item.MediumCount, item.LowCount)
+}
+
+func assetDomainDetailRiskLevel(item repository.AssetDomainDetailRecord) string {
+	return assetRiskLevel(item.VulnerabilityCount, item.CriticalCount, item.HighCount, item.MediumCount, item.LowCount)
+}
+
+func assetRiskLevel(vulnerabilityCount, criticalCount, highCount, mediumCount, lowCount int) string {
 	switch {
-	case item.CriticalCount > 0:
+	case criticalCount > 0:
 		return "critical"
-	case item.HighCount > 0:
+	case highCount > 0:
 		return "high"
-	case item.MediumCount > 0:
+	case mediumCount > 0:
 		return "medium"
-	case item.LowCount > 0:
+	case lowCount > 0:
 		return "low"
-	case item.VulnerabilityCount > 0:
+	case vulnerabilityCount > 0:
 		return "unknown"
 	default:
 		return "info"

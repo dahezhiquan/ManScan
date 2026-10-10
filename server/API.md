@@ -1588,6 +1588,8 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=exa
     "request": "GET / HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
     "response": "HTTP/1.1 200 OK\r\n\r\n<html>Example App</html>",
     "is_alive": true,
+    "risk_level": "critical",
+    "vulnerability_count": 2,
     "service_assets": [
       {
         "app_name": "nginx",
@@ -1612,6 +1614,8 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=exa
 - 说明：
   - `service_assets` 来自 `manscan_asset_domain_service_assets`，按当前域名精确匹配 `domain` 字段。
   - `title_histories` 来自 `manscan_asset_domain_title_history`，按当前域名精确匹配 `domain` 字段。
+  - `vulnerability_count` 表示漏洞表中 `asset_endpoint` 等于当前域名资产 `domain` 的记录数量，但不统计 `status` 为 `fixed`、`false_positive`、`ignored` 的漏洞。
+  - `risk_level` 表示过滤上述状态后的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
   - 组件数组默认按 `is_alive`、`last_found_at` 和 ID 倒序排序；标题历史数组默认按 `is_alive`、`latest_title_alive_at` 和 ID 倒序排序。
   - 主表中的可空字符串字段没有记录时返回空字符串；可空时间和状态码没有记录时返回 `null`。
 
@@ -1636,7 +1640,7 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets/detail?domain=app.example.com:4
 | --- | --- | --- | --- |
 | `page` | `int` | 否 | 页码，最小为 `1`，默认 `1` |
 | `page_size` | `int` | 否 | 每页数量，范围 `1-100`，默认 `10` |
-| `keyword` | `string` | 否 | 按 IP、操作系统类型或关联域名模糊搜索 |
+| `keyword` | `string` | 否 | 按 IP 模糊搜索 |
 | `owner` | `string` | 否 | 按负责人模糊筛选 |
 | `os_type` | `string` | 否 | 按操作系统类型模糊筛选 |
 | `region` | `string` | 否 | 按区域模糊筛选 |
@@ -1700,4 +1704,69 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets/detail?domain=app.example.com:4
 
 ```bash
 curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72&os_type=linux&region=生产&risk_level=critical&has_vulnerability=true&has_port=true"
+```
+
+## 32. 获取主机资产详情
+
+- 请求方法和路径：`GET /api/v1/host-assets/detail`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `ip_address` | `string` | 是 | 主机资产 IP 地址，需与 `manscan_asset_host.ip_address` 完全一致，例如 `10.72.160.123` |
+| `asset_address` | `string` | 否 | `ip_address` 的兼容别名；当 `ip_address` 为空时生效 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "ip_address": "10.72.160.123",
+    "region": "生产区",
+    "owner": "安全团队",
+    "os_type": "linux",
+    "os_version": "5.15",
+    "scan_created_at": "2026-10-10T10:00:00+08:00",
+    "last_alive_at": "2026-10-10T11:00:00+08:00",
+    "manual_note": "",
+    "is_alive": true,
+    "related_domains": "app.example.com",
+    "risk_level": "high",
+    "vulnerability_count": 2,
+    "ports": [
+      {
+        "port_protocol": "tcp",
+        "port_number": 8080,
+        "service_name": "http",
+        "app_name": "nginx",
+        "app_version": "1.24",
+        "is_alive": true,
+        "is_high_risk_port": false,
+        "last_alive_at": "2026-10-10T11:00:00+08:00",
+        "port_created_at": "2026-10-10T10:00:00+08:00"
+      }
+    ]
+  }
+}
+```
+
+- 说明：
+  - `ports` 来自 `manscan_asset_host_port`，按当前主机精确匹配 `ip_address` 字段。
+  - `vulnerability_count` 表示漏洞表中 `asset_host` 等于当前主机 `ip_address` 的记录数量，但不统计 `status` 为 `fixed`、`false_positive`、`ignored` 的漏洞。
+  - `risk_level` 表示过滤上述状态后的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
+  - 端口数组默认按 `is_alive` 倒序、`port_number` 升序和 ID 升序排序。
+  - 主表和端口表中的可空字符串字段没有记录时返回空字符串；可空时间没有记录时返回 `null`。
+
+- 错误码说明：
+  - `40001`：`ip_address` 参数为空
+  - `40401`：主机资产不存在
+  - `50001`：获取主机资产详情失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/host-assets/detail?ip_address=10.72.160.123"
 ```

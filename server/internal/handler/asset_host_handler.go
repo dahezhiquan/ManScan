@@ -1,16 +1,21 @@
 package handler
 
 import (
+	"errors"
+	"strings"
+
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/errcode"
 	"ManScan/server/internal/pkg/response"
 	"ManScan/server/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type AssetHostHandler interface {
 	List(c *gin.Context)
+	Detail(c *gin.Context)
 }
 
 type assetHostHandler struct {
@@ -71,6 +76,29 @@ func (h *assetHostHandler) List(c *gin.Context) {
 	data, serviceErr := h.service.List(c.Request.Context(), query)
 	if serviceErr != nil {
 		response.Fail(c, errcode.InternalServerError, "获取主机资产清单失败")
+		return
+	}
+
+	response.Success(c, data)
+}
+
+func (h *assetHostHandler) Detail(c *gin.Context) {
+	ipAddress := strings.TrimSpace(c.Query("ip_address"))
+	if ipAddress == "" {
+		ipAddress = strings.TrimSpace(c.Query("asset_address"))
+	}
+	if ipAddress == "" {
+		response.Fail(c, errcode.InvalidParams, "ip_address 参数不能为空")
+		return
+	}
+
+	data, serviceErr := h.service.Detail(c.Request.Context(), ipAddress)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
+			response.Fail(c, errcode.NotFound, "主机资产不存在")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "获取主机资产详情失败")
 		return
 	}
 

@@ -46,25 +46,27 @@ type AssetDomainListItem struct {
 }
 
 type AssetDomainDetail struct {
-	Domain         string                        `json:"domain"`
-	Owner          string                        `json:"owner"`
-	Title          string                        `json:"title"`
-	FirstAliveAt   *time.Time                    `json:"first_alive_at"`
-	LastAliveAt    *time.Time                    `json:"last_alive_at"`
-	Region         string                        `json:"region"`
-	HasForm        bool                          `json:"has_form"`
-	HasUpload      bool                          `json:"has_upload"`
-	HasAdmin       bool                          `json:"has_admin"`
-	HasUCLogin     bool                          `json:"has_uc_login"`
-	HasBaiduLogin  bool                          `json:"has_baidu_login"`
-	ScreenshotPath string                        `json:"screenshot_path"`
-	ManualNote     string                        `json:"manual_note"`
-	HTTPStatusCode *uint                         `json:"http_status_code"`
-	Request        string                        `json:"request"`
-	Response       string                        `json:"response"`
-	IsAlive        bool                          `json:"is_alive"`
-	ServiceAssets  []AssetDomainServiceAssetItem `json:"service_assets"`
-	TitleHistories []AssetDomainTitleHistoryItem `json:"title_histories"`
+	Domain             string                        `json:"domain"`
+	Owner              string                        `json:"owner"`
+	Title              string                        `json:"title"`
+	FirstAliveAt       *time.Time                    `json:"first_alive_at"`
+	LastAliveAt        *time.Time                    `json:"last_alive_at"`
+	Region             string                        `json:"region"`
+	HasForm            bool                          `json:"has_form"`
+	HasUpload          bool                          `json:"has_upload"`
+	HasAdmin           bool                          `json:"has_admin"`
+	HasUCLogin         bool                          `json:"has_uc_login"`
+	HasBaiduLogin      bool                          `json:"has_baidu_login"`
+	ScreenshotPath     string                        `json:"screenshot_path"`
+	ManualNote         string                        `json:"manual_note"`
+	HTTPStatusCode     *uint                         `json:"http_status_code"`
+	Request            string                        `json:"request"`
+	Response           string                        `json:"response"`
+	IsAlive            bool                          `json:"is_alive"`
+	RiskLevel          string                        `json:"risk_level"`
+	VulnerabilityCount int                           `json:"vulnerability_count"`
+	ServiceAssets      []AssetDomainServiceAssetItem `json:"service_assets"`
+	TitleHistories     []AssetDomainTitleHistoryItem `json:"title_histories"`
 }
 
 type AssetDomainServiceAssetItem struct {

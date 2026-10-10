@@ -38,6 +38,7 @@ func NewRouter(
 	v1.GET("/domain-assets", assetDomainHandler.List)
 	v1.GET("/domain-assets/detail", assetDomainHandler.Detail)
 	v1.GET("/host-assets", assetHostHandler.List)
+	v1.GET("/host-assets/detail", assetHostHandler.Detail)
 
 	v1.GET("/asset-config-centers", assetConfigCenterHandler.List)
 	v1.GET("/asset-config-centers/options/small-categories", assetConfigCenterHandler.SmallCategoryOptions)
