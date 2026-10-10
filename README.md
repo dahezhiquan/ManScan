@@ -114,7 +114,7 @@ go run ./examples/with_speed_control
 
 ### 2. 准备配置文件
 
-服务端默认读取仓库根目录下的 `config.yaml`。配置结构至少需要包含一个 `mysql` 段，例如：
+服务端默认读取仓库根目录下的 `config.yaml`。配置结构至少需要包含 `mysql` 和 `auth` 段，例如：
 
 ```yaml
 mysql:
@@ -123,6 +123,10 @@ mysql:
   host: 127.0.0.1
   port: 3306
   database: manscan_scan
+
+auth:
+  jwt_secret: "please-change-this-secret-at-least-32-chars"
+  token_ttl_minutes: 480
 ```
 
 `config.yaml` 仅用于本地服务端配置，密码等敏感信息不要提交到版本库。仓库根目录的 `*.yaml` 默认会被 Git 忽略；生产环境请使用独立配置文件，并通过 `MANSCAN_CONFIG_FILE` 指定。
@@ -133,6 +137,8 @@ mysql:
 - `MANSCAN_SERVER_ADDR`：覆盖默认监听地址，默认值为 `:8686`
 - `MANSCAN_TEMPLATES_DIR`：覆盖服务端模板目录
 - `NUCLEI_TEMPLATES_DIR`：作为模板目录回退来源之一
+- `MANSCAN_JWT_SECRET`：覆盖登录鉴权 JWT 密钥，长度至少 32 个字符
+- `MANSCAN_TOKEN_TTL_MINUTES`：覆盖登录令牌有效期，单位分钟
 
 ### 3. 启动服务
 
@@ -330,6 +336,8 @@ CLI 已内置多组调试参数，下面列出最常用的一批：
 - `MANSCAN_TEMPLATES_DIR`：显式覆盖服务端模板目录
 - `MANSCAN_CONFIG_FILE`：指定服务端配置文件
 - `MANSCAN_SERVER_ADDR`：覆盖服务端监听地址
+- `MANSCAN_JWT_SECRET`：覆盖服务端登录鉴权 JWT 密钥
+- `MANSCAN_TOKEN_TTL_MINUTES`：覆盖服务端登录令牌有效期，单位分钟
 - `MANSCAN_DATA_ROOT`：指定 CLI/SDK 的工作根目录；默认运行数据写入该目录下的 `data/`
 
 ## ❓ 常见问题
@@ -368,12 +376,13 @@ CLI 已内置多组调试参数，下面列出最常用的一批：
 
 ### 4. `go run ./server/cmd/server` 启动失败
 
-现象：启动时报配置文件读取失败、MySQL 连接失败或 `mysql.username 不能为空`。  
-原因：服务端默认依赖根目录 `config.yaml`，并且需要可用的 MySQL 配置。  
+现象：启动时报配置文件读取失败、MySQL 连接失败、`mysql.username 不能为空` 或 `auth.jwt_secret` 相关错误。  
+原因：服务端默认依赖根目录 `config.yaml`，并且需要可用的 MySQL 配置和登录鉴权 JWT 密钥。  
 解决：
 
 - 确认根目录存在可用的 `config.yaml`
 - 如配置文件不在根目录，设置 `MANSCAN_CONFIG_FILE=/path/to/config.yaml`
+- 确认配置了 `auth.jwt_secret` 或环境变量 `MANSCAN_JWT_SECRET`，且长度至少 32 个字符
 - 确认 MySQL 服务可连通，且目标数据库和表结构已初始化
 - 如需修改监听地址，可设置 `MANSCAN_SERVER_ADDR=:8686`
 

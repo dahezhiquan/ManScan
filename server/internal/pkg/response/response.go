@@ -38,10 +38,22 @@ func Fail(c *gin.Context, code int, message string) {
 	})
 }
 
+func FailWithData(c *gin.Context, code int, message string, data interface{}) {
+	c.JSON(httpStatus(code), Envelope{
+		Code:    code,
+		Message: message,
+		Data:    data,
+	})
+}
+
 func httpStatus(code int) int {
 	switch code {
 	case errcode.InvalidParams:
 		return http.StatusBadRequest
+	case errcode.Unauthorized:
+		return http.StatusUnauthorized
+	case errcode.Forbidden:
+		return http.StatusForbidden
 	case errcode.NotFound:
 		return http.StatusNotFound
 	case errcode.ServiceUnavailable:

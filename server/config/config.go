@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	templateconfig "ManScan/pkg/catalog/config"
 
@@ -16,6 +18,7 @@ const defaultServerAddress = ":8686"
 
 type runtimeConfigFile struct {
 	MySQL MySQLConfig `yaml:"mysql"`
+	Auth  AuthConfig  `yaml:"auth"`
 }
 
 type Config struct {
@@ -24,6 +27,7 @@ type Config struct {
 	ConfigFile  string
 	TemplateDir string
 	MySQL       MySQLConfig
+	Auth        AuthConfig
 }
 
 type MySQLConfig struct {
@@ -32,6 +36,11 @@ type MySQLConfig struct {
 	Host     string `yaml:"host"`
 	Port     int    `yaml:"port"`
 	Database string `yaml:"database"`
+}
+
+type AuthConfig struct {
+	JWTSecret       string `yaml:"jwt_secret"`
+	TokenTTLMinutes int    `yaml:"token_ttl_minutes"`
 }
 
 func Load() (*Config, error) {
@@ -61,6 +70,13 @@ func Load() (*Config, error) {
 	if err := fileConfig.MySQL.Validate(); err != nil {
 		return nil, err
 	}
+	fileConfig.Auth.ApplyEnv()
+	if fileConfig.Auth.TokenTTLMinutes <= 0 {
+		fileConfig.Auth.TokenTTLMinutes = 480
+	}
+	if err := fileConfig.Auth.Validate(); err != nil {
+		return nil, err
+	}
 
 	templateDir := resolveTemplateDir(rootDir)
 	if templateDir != "" {
@@ -78,6 +94,7 @@ func Load() (*Config, error) {
 		ConfigFile:  configFile,
 		TemplateDir: templateDir,
 		MySQL:       fileConfig.MySQL,
+		Auth:        fileConfig.Auth,
 	}, nil
 }
 
@@ -105,6 +122,31 @@ func (c MySQLConfig) DSN() string {
 		c.Port,
 		c.Database,
 	)
+}
+
+func (c *AuthConfig) ApplyEnv() {
+	if secret := strings.TrimSpace(os.Getenv("MANSCAN_JWT_SECRET")); secret != "" {
+		c.JWTSecret = secret
+	}
+	if rawTTL := strings.TrimSpace(os.Getenv("MANSCAN_TOKEN_TTL_MINUTES")); rawTTL != "" {
+		if ttl, err := strconv.Atoi(rawTTL); err == nil {
+			c.TokenTTLMinutes = ttl
+		}
+	}
+}
+
+func (c AuthConfig) Validate() error {
+	if len(strings.TrimSpace(c.JWTSecret)) < 32 {
+		return fmt.Errorf("auth.jwt_secret 或 MANSCAN_JWT_SECRET 必须至少 32 个字符")
+	}
+	if c.TokenTTLMinutes <= 0 {
+		return fmt.Errorf("auth.token_ttl_minutes 必须大于 0")
+	}
+	return nil
+}
+
+func (c AuthConfig) TokenTTL() time.Duration {
+	return time.Duration(c.TokenTTLMinutes) * time.Minute
 }
 
 func resolveTemplateDir(rootDir string) string {

@@ -1,7 +1,11 @@
 package api
 
 import (
+	"context"
 	"testing"
+
+	"ManScan/server/internal/model/dto"
+	"ManScan/server/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -9,9 +13,12 @@ import (
 func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(nil, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{})
+	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{})
 	routes := router.Routes()
 
+	assertRouteRegistered(t, routes, "POST", "/api/v1/auth/login")
+	assertRouteRegistered(t, routes, "POST", "/api/v1/auth/logout")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/auth/me")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/vulnerabilities")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
@@ -38,6 +45,30 @@ func assertRouteRegistered(t *testing.T, routes gin.RoutesInfo, method, path str
 		}
 	}
 	t.Fatalf("route %s %s is not registered", method, path)
+}
+
+type noopAuthHandler struct{}
+
+func (noopAuthHandler) Login(*gin.Context)  {}
+func (noopAuthHandler) Logout(*gin.Context) {}
+func (noopAuthHandler) Me(*gin.Context)     {}
+
+type noopAuthService struct{}
+
+func (noopAuthService) Login(context.Context, dto.LoginRequest, string, string) (*dto.LoginResponse, error) {
+	return nil, nil
+}
+
+func (noopAuthService) Authenticate(context.Context, string) (*service.AuthenticatedUser, error) {
+	return nil, service.ErrUnauthorized
+}
+
+func (noopAuthService) Logout(context.Context, string) (*dto.LogoutResponse, error) {
+	return nil, nil
+}
+
+func (noopAuthService) CurrentUser(context.Context, int64) (*dto.UserInfo, error) {
+	return nil, nil
 }
 
 type noopTemplateHandler struct{}

@@ -14,15 +14,161 @@
 
 - `0`：成功
 - `40001`：请求参数错误
+- `40101`：未登录或登录状态已失效
+- `40301`：已登录但无权访问当前资源
 - `40401`：资源不存在
 - `50001`：服务器内部错误
 - `50301`：服务暂不可用
 
 服务默认监听地址为 `:8686`，接口统一挂载在 `/api/v1` 下。
 
+除 `POST /api/v1/auth/login` 外，所有接口都需要在请求头中携带登录后获取的访问令牌：
+
+```http
+Authorization: Bearer <access_token>
+```
+
+服务端启动前必须配置 `auth.jwt_secret` 或环境变量 `MANSCAN_JWT_SECRET`，密钥长度至少 32 个字符；可通过 `auth.token_ttl_minutes` 或 `MANSCAN_TOKEN_TTL_MINUTES` 调整访问令牌有效期，默认 480 分钟。
+
 统计口径说明：
 
 - 扫描任务响应中的 `tech_count` 表示指纹命中数量，即命中结果中 `info.tags` 包含 `tech`、`detect` 或 `favicon` 任一标签的数量，不再根据模板名称或结果名称是否包含“指纹识别”判断。
+
+## 认证与鉴权
+
+### 登录
+
+- 请求方法和路径：`POST /api/v1/auth/login`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `username` | `string` | 是 | 登录用户名，最长 64 个字符 |
+| `password` | `string` | 是 | 登录密码，最长 256 个字符 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "access_token": "eyJhbGciOiJIUzI1NiIs...",
+    "token_type": "Bearer",
+    "expires_at": "2026-10-10T18:00:00+08:00",
+    "user": {
+      "id": 1,
+      "username": "admin",
+      "display_name": "管理员",
+      "role": "admin"
+    }
+  }
+}
+```
+
+- 错误码说明：
+  - `40001`：请求体格式错误或缺少用户名/密码
+  - `40101`：用户名或密码错误；已存在的启用账户密码错误时，响应 `data.remaining_attempts` 表示剩余可尝试次数，`data.locked` 表示本次失败后是否已锁定
+  - `40301`：用户已被禁用或账户已锁定
+  - `50001`：登录过程发生内部错误
+
+- 登录失败响应示例：
+
+```json
+{
+  "code": 40101,
+  "message": "用户名或密码错误，还可尝试 4 次",
+  "data": {
+    "remaining_attempts": 4,
+    "locked": false
+  }
+}
+```
+
+- 锁定说明：
+  - 同一账户连续密码错误达到 5 次后，服务端会将账户状态改为 `locked`。
+  - 账户锁定后，即使输入正确密码也无法登录，响应 `40301`，并返回 `data.locked=true`、`data.remaining_attempts=0`。
+  - 成功登录会清零该账户的连续登录失败次数。
+
+- 使用示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8686/api/v1/auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"YOUR_PASSWORD"}'
+```
+
+### 获取当前用户
+
+- 请求方法和路径：`GET /api/v1/auth/me`
+
+- 请求参数：无
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "username": "admin",
+    "display_name": "管理员",
+    "role": "admin"
+  }
+}
+```
+
+- 错误码说明：
+  - `40101`：未登录、访问令牌过期、已退出登录或用户被禁用
+  - `50001`：获取当前用户失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/auth/me" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 退出登录
+
+- 请求方法和路径：`POST /api/v1/auth/logout`
+
+- 请求参数：无
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "revoked": true
+  }
+}
+```
+
+- 错误码说明：
+  - `40101`：未登录或登录状态已失效
+  - `50001`：退出登录失败
+
+- 使用示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8686/api/v1/auth/logout" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 数据库表
+
+鉴权体系需要先执行以下建表 SQL：
+
+- `docs/SQL/create_manscan_users.sql`：用户表，存储用户名、bcrypt 密码哈希、角色、状态、连续登录失败次数和最后登录时间。
+- `docs/SQL/create_manscan_user_sessions.sql`：用户会话表，存储 JWT `jti`、访问令牌 SHA-256 哈希、过期时间和吊销时间。
+- `docs/SQL/alter_manscan_users_add_login_lock.sql`：存量用户表升级脚本，为已有部署补充账户锁定状态和连续登录失败次数字段。
+
+访问令牌本身不会明文入库；退出登录会写入会话 `revoked_at`，后续请求即使 JWT 尚未过期也会被拒绝。
 
 ## 1. 获取模板列表
 

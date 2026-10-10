@@ -7,6 +7,7 @@ import (
 	"ManScan/server/config"
 	"ManScan/server/internal/api"
 	"ManScan/server/internal/handler"
+	authpkg "ManScan/server/internal/pkg/auth"
 	"ManScan/server/internal/pkg/logx"
 	"ManScan/server/internal/repository"
 	"ManScan/server/internal/service"
@@ -37,10 +38,14 @@ func Run() error {
 	assetHostRepository := repository.NewAssetHostRepository(db)
 	assetHostPortRepository := repository.NewAssetHostPortRepository(db)
 	assetConfigCenterRepository := repository.NewAssetConfigCenterRepository(db)
+	userRepository := repository.NewUserRepository(db)
+	userSessionRepository := repository.NewUserSessionRepository(db)
+	tokenManager := authpkg.NewJWTManager(cfg.Auth.JWTSecret, "manscan-server")
 	vulnerabilityService := service.NewVulnerabilityService(vulnerabilityRepository)
 	assetDomainService := service.NewAssetDomainService(assetDomainRepository)
 	assetHostService := service.NewAssetHostService(assetHostRepository)
 	assetConfigCenterService := service.NewAssetConfigCenterService(assetConfigCenterRepository)
+	authService := service.NewAuthService(userRepository, userSessionRepository, tokenManager, cfg.Auth.TokenTTL())
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
 		vulnerabilityRepository,
@@ -54,6 +59,8 @@ func Run() error {
 
 	router := api.NewRouter(
 		logger,
+		handler.NewAuthHandler(authService),
+		authService,
 		handler.NewTemplateHandler(templateService),
 		handler.NewScanTaskHandler(scanTaskService),
 		handler.NewVulnerabilityHandler(vulnerabilityService),

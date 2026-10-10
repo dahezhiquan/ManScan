@@ -959,6 +959,44 @@ func TestAssetDomainFingerprintVersionIgnoresProductNameFallback(t *testing.T) {
 	}
 }
 
+func TestAssetDomainFingerprintJSONVersionFieldUsesDetectedComponent(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"nacos-version": {
+					ID:       "nacos-version",
+					Name:     "Nacos 指纹识别",
+					Tags:     []string{"detect", "discovery", "nacos", "tech"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+
+	observations, err := svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), map[string]interface{}{
+		"template-id":       "nacos-version",
+		"matched-at":        "http://10.72.140.179:8848/nacos/v1/console/server/state?accessToken=&username=",
+		"host":              "10.72.140.179",
+		"port":              "8848",
+		"extracted-results": []interface{}{`"version":"2.1.0-BETA"`},
+		"info": map[string]interface{}{
+			"name": "Nacos 指纹识别",
+			"tags": []interface{}{"detect", "discovery", "nacos", "tech"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayload() error = %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations = %+v, want one nacos component", observations)
+	}
+	if observations[0].Domain != "10.72.140.179:8848" || observations[0].AppName != "nacos" || observations[0].AppVersion != "2.1.0-BETA" {
+		t.Fatalf("observation = %+v, want nacos 2.1.0-BETA", observations[0])
+	}
+}
+
 func TestStreamAssetDomainFingerprintTemplateResultsRecordsStats(t *testing.T) {
 	t.Parallel()
 

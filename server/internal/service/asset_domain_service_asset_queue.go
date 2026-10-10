@@ -417,6 +417,9 @@ func assetDomainFingerprintComponentNames(payload map[string]interface{}, templa
 	for _, extracted := range interfaceStringSlice(payload["extracted-results"]) {
 		appName, _ := splitAssetDomainComponentVersion(extracted)
 		appName = normalizeAssetDomainComponentName(appName)
+		if isAssetDomainVersionFieldName(appName) {
+			continue
+		}
 		if appName != "" && appName != normalizeAssetDomainComponentName(extracted) {
 			names = append(names, appName)
 		}
@@ -439,6 +442,12 @@ func assetDomainFingerprintExtractedVersions(payload map[string]interface{}, com
 		appName, appVersion := splitAssetDomainComponentVersion(extracted)
 		appName = normalizeAssetDomainComponentName(appName)
 		appVersion = normalizeAssetDomainComponentVersion(appVersion)
+		if isAssetDomainVersionFieldName(appName) {
+			if len(componentNames) == 1 && appVersion != "" {
+				versions[componentNames[0]] = appVersion
+			}
+			continue
+		}
 		if appName != "" && appVersion != "" {
 			if _, ok := componentSet[appName]; ok {
 				versions[appName] = appVersion
@@ -453,6 +462,15 @@ func assetDomainFingerprintExtractedVersions(payload map[string]interface{}, com
 		}
 	}
 	return versions
+}
+
+func isAssetDomainVersionFieldName(value string) bool {
+	switch strings.Trim(strings.ToLower(strings.TrimSpace(value)), `"'`) {
+	case "version", "versions", "app_version", "app-version", "appversion", "version_info", "version-info", "versioninfo":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeAssetDomainComponentVersion(value string) string {
