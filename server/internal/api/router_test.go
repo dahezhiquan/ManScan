@@ -16,6 +16,7 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/detail")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/host-assets")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/asset-config-centers")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/asset-config-centers/options/small-categories")
@@ -72,7 +73,8 @@ func (noopVulnerabilityHandler) Delete(*gin.Context)            {}
 
 type noopAssetDomainHandler struct{}
 
-func (noopAssetDomainHandler) List(*gin.Context) {}
+func (noopAssetDomainHandler) List(*gin.Context)   {}
+func (noopAssetDomainHandler) Detail(*gin.Context) {}
 
 type noopAssetHostHandler struct{}
 

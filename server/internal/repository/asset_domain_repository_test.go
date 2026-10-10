@@ -216,6 +216,115 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 	}
 }
 
+func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+
+	if err := db.AutoMigrate(&entity.AssetDomain{}, &entity.AssetDomainServiceAsset{}, &entity.AssetDomainTitleHistory{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	now := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+	earlier := now.Add(-time.Hour)
+	owner := "安全团队"
+	title := "Example App"
+	region := "生产区"
+	request := "GET / HTTP/1.1\r\nHost: app.example.com\r\n\r\n"
+	response := "HTTP/1.1 200 OK\r\n\r\nok"
+	statusCode := uint(200)
+	if err := db.Create(&entity.AssetDomain{
+		Domain:         "app.example.com:443",
+		Owner:          &owner,
+		Title:          &title,
+		FirstAliveAt:   &earlier,
+		LastAliveAt:    &now,
+		Region:         &region,
+		HasForm:        true,
+		HasUpload:      true,
+		HTTPStatusCode: &statusCode,
+		Request:        &request,
+		Response:       &response,
+		IsAlive:        true,
+	}).Error; err != nil {
+		t.Fatalf("Create domain error = %v", err)
+	}
+	if err := db.Create(&[]entity.AssetDomainServiceAsset{
+		{
+			Domain:       "app.example.com:443",
+			AppName:      "nginx",
+			AppVersion:   "1.24",
+			FirstFoundAt: earlier,
+			LastFoundAt:  now,
+			IsAlive:      true,
+		},
+		{
+			Domain:       "app.example.com:443",
+			AppName:      "tomcat",
+			AppVersion:   "9",
+			FirstFoundAt: earlier,
+			LastFoundAt:  earlier,
+			IsAlive:      false,
+		},
+		{
+			Domain:       "other.example.com:443",
+			AppName:      "redis",
+			AppVersion:   "",
+			FirstFoundAt: earlier,
+			LastFoundAt:  now,
+			IsAlive:      true,
+		},
+	}).Error; err != nil {
+		t.Fatalf("Create service assets error = %v", err)
+	}
+	if err := db.Create(&[]entity.AssetDomainTitleHistory{
+		{
+			Domain:              "app.example.com:443",
+			HistoryTitle:        "Example App",
+			FirstTitleCreatedAt: earlier,
+			LatestTitleAliveAt:  now,
+			IsAlive:             true,
+		},
+		{
+			Domain:              "app.example.com:443",
+			HistoryTitle:        "Old App",
+			FirstTitleCreatedAt: earlier,
+			LatestTitleAliveAt:  earlier,
+			IsAlive:             false,
+		},
+	}).Error; err != nil {
+		t.Fatalf("Create title histories error = %v", err)
+	}
+
+	repo := NewAssetDomainRepository(db)
+	detail, err := repo.Detail(context.Background(), " app.example.com:443 ")
+	if err != nil {
+		t.Fatalf("Detail() error = %v", err)
+	}
+
+	if detail.Domain != "app.example.com:443" || detail.Owner == nil || *detail.Owner != owner || !detail.HasForm || !detail.HasUpload {
+		t.Fatalf("detail domain = %+v, want saved domain fields", detail.AssetDomain)
+	}
+	if len(detail.ServiceAssets) != 2 {
+		t.Fatalf("service assets = %+v, want two assets for requested domain", detail.ServiceAssets)
+	}
+	if detail.ServiceAssets[0].AppName != "nginx" || !detail.ServiceAssets[0].IsAlive {
+		t.Fatalf("first service asset = %+v, want alive nginx first", detail.ServiceAssets[0])
+	}
+	if len(detail.TitleHistories) != 2 {
+		t.Fatalf("title histories = %+v, want two histories", detail.TitleHistories)
+	}
+	if detail.TitleHistories[0].HistoryTitle != "Example App" || !detail.TitleHistories[0].IsAlive {
+		t.Fatalf("first title history = %+v, want alive title first", detail.TitleHistories[0])
+	}
+}
+
 func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	t.Parallel()
 

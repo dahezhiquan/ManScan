@@ -1004,6 +1004,10 @@ func (s *assetDomainRepositoryStub) List(context.Context, dto.ListAssetDomainsQu
 	return &dto.PageResult[repository.AssetDomainListRecord]{}, nil
 }
 
+func (s *assetDomainRepositoryStub) Detail(context.Context, string) (*repository.AssetDomainDetailRecord, error) {
+	return &repository.AssetDomainDetailRecord{}, nil
+}
+
 func (s *assetDomainRepositoryStub) ListNetworkItems(context.Context) ([]repository.AssetDomainNetworkItem, error) {
 	return s.networkItems, nil
 }

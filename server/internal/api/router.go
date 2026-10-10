@@ -36,6 +36,7 @@ func NewRouter(
 	v1.GET("/vulnerabilities/:id", vulnerabilityHandler.Detail)
 
 	v1.GET("/domain-assets", assetDomainHandler.List)
+	v1.GET("/domain-assets/detail", assetDomainHandler.Detail)
 	v1.GET("/host-assets", assetHostHandler.List)
 
 	v1.GET("/asset-config-centers", assetConfigCenterHandler.List)

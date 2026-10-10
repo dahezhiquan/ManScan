@@ -1554,7 +1554,79 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&title=Portal&region=internal&risk_level=high&has_vulnerability=true&has_component=true"
 ```
 
-## 30. 获取主机资产清单
+## 30. 获取域名资产详情
+
+- 请求方法和路径：`GET /api/v1/domain-assets/detail`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `domain` | `string` | 是 | 域名资产地址，需与 `manscan_asset_domain.domain` 完全一致，例如 `app.example.com:443` |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "domain": "app.example.com:443",
+    "owner": "安全团队",
+    "title": "Example App",
+    "first_alive_at": "2026-09-22T10:00:00+08:00",
+    "last_alive_at": "2026-09-22T11:00:00+08:00",
+    "region": "internal",
+    "has_form": true,
+    "has_upload": false,
+    "has_admin": false,
+    "has_uc_login": true,
+    "has_baidu_login": false,
+    "screenshot_path": "/screenshots/app.png",
+    "manual_note": "",
+    "http_status_code": 200,
+    "request": "GET / HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
+    "response": "HTTP/1.1 200 OK\r\n\r\n<html>Example App</html>",
+    "is_alive": true,
+    "service_assets": [
+      {
+        "app_name": "nginx",
+        "app_version": "1.24",
+        "last_found_at": "2026-09-22T11:00:00+08:00",
+        "first_found_at": "2026-09-22T10:00:00+08:00",
+        "is_alive": true
+      }
+    ],
+    "title_histories": [
+      {
+        "history_title": "Example App",
+        "is_alive": true,
+        "first_title_created_at": "2026-09-22T10:00:00+08:00",
+        "latest_title_alive_at": "2026-09-22T11:00:00+08:00"
+      }
+    ]
+  }
+}
+```
+
+- 说明：
+  - `service_assets` 来自 `manscan_asset_domain_service_assets`，按当前域名精确匹配 `domain` 字段。
+  - `title_histories` 来自 `manscan_asset_domain_title_history`，按当前域名精确匹配 `domain` 字段。
+  - 组件数组默认按 `is_alive`、`last_found_at` 和 ID 倒序排序；标题历史数组默认按 `is_alive`、`latest_title_alive_at` 和 ID 倒序排序。
+  - 主表中的可空字符串字段没有记录时返回空字符串；可空时间和状态码没有记录时返回 `null`。
+
+- 错误码说明：
+  - `40001`：`domain` 参数为空
+  - `40401`：域名资产不存在
+  - `50001`：获取域名资产详情失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/domain-assets/detail?domain=app.example.com:443"
+```
+
+## 31. 获取主机资产清单
 
 - 请求方法和路径：`GET /api/v1/host-assets`
 

@@ -14,6 +14,7 @@ import (
 
 type AssetDomainRepository interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[AssetDomainListRecord], error)
+	Detail(ctx context.Context, domain string) (*AssetDomainDetailRecord, error)
 	ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error)
 	SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error
 	SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error
@@ -51,6 +52,12 @@ type AssetDomainListRecord struct {
 	MediumCount        int `gorm:"column:medium_count"`
 	LowCount           int `gorm:"column:low_count"`
 	ComponentCount     int `gorm:"column:component_count"`
+}
+
+type AssetDomainDetailRecord struct {
+	entity.AssetDomain `gorm:"embedded"`
+	ServiceAssets      []entity.AssetDomainServiceAsset
+	TitleHistories     []entity.AssetDomainTitleHistory
 }
 
 func NewAssetDomainRepository(db *gorm.DB) AssetDomainRepository {
@@ -161,6 +168,46 @@ func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDom
 		Total:      int(total),
 		TotalPages: totalPages,
 		Items:      items,
+	}, nil
+}
+
+func (r *assetDomainRepository) Detail(ctx context.Context, domain string) (*AssetDomainDetailRecord, error) {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var asset entity.AssetDomain
+	if err := r.db.WithContext(ctx).
+		Where("domain = ?", domain).
+		First(&asset).Error; err != nil {
+		return nil, err
+	}
+
+	serviceAssets := make([]entity.AssetDomainServiceAsset, 0)
+	if err := r.db.WithContext(ctx).
+		Where("domain = ?", domain).
+		Order("is_alive DESC").
+		Order("last_found_at DESC").
+		Order("id DESC").
+		Find(&serviceAssets).Error; err != nil {
+		return nil, err
+	}
+
+	titleHistories := make([]entity.AssetDomainTitleHistory, 0)
+	if err := r.db.WithContext(ctx).
+		Where("domain = ?", domain).
+		Order("is_alive DESC").
+		Order("latest_title_alive_at DESC").
+		Order("id DESC").
+		Find(&titleHistories).Error; err != nil {
+		return nil, err
+	}
+
+	return &AssetDomainDetailRecord{
+		AssetDomain:    asset,
+		ServiceAssets:  serviceAssets,
+		TitleHistories: titleHistories,
 	}, nil
 }
 

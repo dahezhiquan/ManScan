@@ -1,16 +1,21 @@
 package handler
 
 import (
+	"errors"
+	"strings"
+
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/errcode"
 	"ManScan/server/internal/pkg/response"
 	"ManScan/server/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type AssetDomainHandler interface {
 	List(c *gin.Context)
+	Detail(c *gin.Context)
 }
 
 type assetDomainHandler struct {
@@ -71,6 +76,26 @@ func (h *assetDomainHandler) List(c *gin.Context) {
 	data, serviceErr := h.service.List(c.Request.Context(), query)
 	if serviceErr != nil {
 		response.Fail(c, errcode.InternalServerError, "获取域名资产清单失败")
+		return
+	}
+
+	response.Success(c, data)
+}
+
+func (h *assetDomainHandler) Detail(c *gin.Context) {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		response.Fail(c, errcode.InvalidParams, "domain 参数不能为空")
+		return
+	}
+
+	data, serviceErr := h.service.Detail(c.Request.Context(), domain)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
+			response.Fail(c, errcode.NotFound, "域名资产不存在")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "获取域名资产详情失败")
 		return
 	}
 
