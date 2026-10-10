@@ -203,7 +203,7 @@ func (r *assetDomainRepository) applyListFilters(db *gorm.DB, query dto.ListAsse
 		db = applyLikeAnyFilter(db, "a.domain", []string{query.AssetAddress})
 	}
 	if len(query.RiskLevels) > 0 {
-		db = applyAssetDomainRiskLevelFilter(db, query.RiskLevels)
+		db = applyAssetRiskLevelFilter(db, query.RiskLevels)
 	}
 	if query.HasVulnerability != nil {
 		if *query.HasVulnerability {
@@ -225,7 +225,7 @@ func (r *assetDomainRepository) applyListFilters(db *gorm.DB, query dto.ListAsse
 	return db
 }
 
-func applyAssetDomainRiskLevelFilter(db *gorm.DB, values []string) *gorm.DB {
+func applyAssetRiskLevelFilter(db *gorm.DB, values []string) *gorm.DB {
 	levels := normalizeFilterValues(values)
 	if len(levels) == 0 {
 		return db

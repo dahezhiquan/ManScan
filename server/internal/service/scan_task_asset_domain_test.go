@@ -1024,6 +1024,10 @@ type assetHostRepositoryStub struct {
 	observationValues [][]repository.AssetHostObservation
 }
 
+func (s *assetHostRepositoryStub) List(context.Context, dto.ListAssetHostsQuery) (*dto.PageResult[repository.AssetHostListRecord], error) {
+	return &dto.PageResult[repository.AssetHostListRecord]{}, nil
+}
+
 func (s *assetHostRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostObservation, _ time.Time) error {
 	s.observationValues = append(s.observationValues, append([]repository.AssetHostObservation(nil), observations...))
 	return nil

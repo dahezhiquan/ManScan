@@ -1553,3 +1553,79 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 ```bash
 curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&title=Portal&region=internal&risk_level=high&has_vulnerability=true&has_component=true"
 ```
+
+## 30. 获取主机资产清单
+
+- 请求方法和路径：`GET /api/v1/host-assets`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `page` | `int` | 否 | 页码，最小为 `1`，默认 `1` |
+| `page_size` | `int` | 否 | 每页数量，范围 `1-100`，默认 `10` |
+| `keyword` | `string` | 否 | 按 IP、操作系统类型或关联域名模糊搜索 |
+| `owner` | `string` | 否 | 按负责人模糊筛选 |
+| `os_type` | `string` | 否 | 按操作系统类型模糊筛选 |
+| `region` | `string` | 否 | 按区域模糊筛选 |
+| `asset_address` | `string` | 否 | 按资产地址模糊筛选，当前对应 `ip_address` 字段 |
+| `risk_level` | `string` / `string[]` | 否 | 按最高风险等级筛选，支持 `critical`、`high`、`medium`、`low`、`info`，支持逗号分隔和多参数 |
+| `has_vulnerability` | `bool` | 否 | 按是否存在漏洞筛选，`true` 表示 `vulnerability_count > 0`，`false` 表示 `vulnerability_count = 0` |
+| `has_port` | `bool` | 否 | 按是否存在存活端口筛选，`true` 表示 `port_count > 0`，`false` 表示 `port_count = 0` |
+| `is_alive` | `bool` | 否 | 按存活状态筛选 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 1,
+    "totalPages": 1,
+    "items": [
+      {
+        "id": 1,
+        "ip_address": "10.72.160.123",
+        "asset_address": "10.72.160.123",
+        "region": "生产区",
+        "owner": "安全团队",
+        "os_type": "linux",
+        "os_version": "5.15",
+        "scan_created_at": "2026-10-10T10:00:00+08:00",
+        "last_alive_at": "2026-10-10T11:00:00+08:00",
+        "manual_note": "",
+        "is_alive": true,
+        "related_domains": "app.example.com",
+        "risk_level": "critical",
+        "vulnerability_count": 2,
+        "critical_count": 1,
+        "high_count": 1,
+        "medium_count": 0,
+        "low_count": 0,
+        "port_count": 3
+      }
+    ]
+  }
+}
+```
+
+- 说明：
+  - `vulnerability_count` 表示漏洞表中 `asset_host` 等于当前主机 `ip_address` 的记录数量。
+  - `critical_count`、`high_count`、`medium_count`、`low_count` 表示上述关联漏洞中各严重等级的数量，按漏洞表 `severity` 字段统计。
+  - `risk_level` 表示当前资产的最高风险等级，计算方式暂时与域名资产一致：按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
+  - `port_count` 表示主机端口表中 `ip_address` 等于当前主机 `ip_address` 且 `is_alive = true` 的端口数量。
+  - `os_type`、`region` 为模糊筛选；`risk_level=high` 仅返回最高风险等级为高危的资产，存在严重漏洞的资产会归入 `critical`。
+  - 列表默认按最近存活时间和 ID 倒序排序。
+
+- 错误码说明：
+  - `40001`：分页参数非法，或 `is_alive`、`has_vulnerability`、`has_port` 不是布尔值
+  - `50001`：获取主机资产清单失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72&os_type=linux&region=生产&risk_level=critical&has_vulnerability=true&has_port=true"
+```

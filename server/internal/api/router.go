@@ -14,6 +14,7 @@ func NewRouter(
 	scanTaskHandler handler.ScanTaskHandler,
 	vulnerabilityHandler handler.VulnerabilityHandler,
 	assetDomainHandler handler.AssetDomainHandler,
+	assetHostHandler handler.AssetHostHandler,
 	assetConfigCenterHandler handler.AssetConfigCenterHandler,
 ) *gin.Engine {
 	router := gin.New()
@@ -35,6 +36,7 @@ func NewRouter(
 	v1.GET("/vulnerabilities/:id", vulnerabilityHandler.Detail)
 
 	v1.GET("/domain-assets", assetDomainHandler.List)
+	v1.GET("/host-assets", assetHostHandler.List)
 
 	v1.GET("/asset-config-centers", assetConfigCenterHandler.List)
 	v1.GET("/asset-config-centers/options/small-categories", assetConfigCenterHandler.SmallCategoryOptions)
