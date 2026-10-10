@@ -437,12 +437,25 @@ func TestSyncAssetServiceAssetsKeepsHTTPServiceForHTTPProbedIPEndpoint(t *testin
 		Domain:     "10.107.71.65:8889",
 		AppName:    "nginx",
 		AppVersion: "1.24.0",
-	}}, nil, networkRegions, []repository.AssetDomainObservation{{
+	}}, []string{"10.107.71.65:8889"}, networkRegions, []repository.AssetDomainObservation{{
 		Domain: "10.107.71.65:8889",
 	}}, time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("syncAssetServiceAssets() error = %v", err)
 	}
 
+	if len(domainRepo.syncServiceAssetObservations) != 1 || len(domainRepo.syncServiceAssetObservations[0]) != 1 {
+		t.Fatalf("domain service asset syncs = %+v, want one HTTP IP endpoint component", domainRepo.syncServiceAssetObservations)
+	}
+	domainAsset := domainRepo.syncServiceAssetObservations[0][0]
+	if domainAsset.Domain != "10.107.71.65:8889" || domainAsset.AppName != "nginx" || domainAsset.AppVersion != "1.24.0" {
+		t.Fatalf("domain service asset = %+v, want nginx component for HTTP IP endpoint", domainAsset)
+	}
+	if len(domainRepo.syncServiceAssetCheckedDomains) != 1 {
+		t.Fatalf("domain service checked domain calls = %+v, want one call", domainRepo.syncServiceAssetCheckedDomains)
+	}
+	if got := domainRepo.syncServiceAssetCheckedDomains[0]; len(got) != 1 || got[0] != "10.107.71.65:8889" {
+		t.Fatalf("domain service checked domains = %v, want HTTP IP endpoint checked domain", got)
+	}
 	if len(hostPortRepo.observationValues) != 1 || len(hostPortRepo.observationValues[0]) != 1 {
 		t.Fatalf("host port syncs = %+v, want one HTTP endpoint observation", hostPortRepo.observationValues)
 	}

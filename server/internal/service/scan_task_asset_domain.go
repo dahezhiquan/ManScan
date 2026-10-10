@@ -293,7 +293,7 @@ func (s *scanTaskService) syncInactiveAssetHostHTTPPorts(ctx context.Context, ch
 func (s *scanTaskService) syncAssetServiceAssets(ctx context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, networkRegions []assetDomainNetworkRegion, httpObservations []repository.AssetDomainObservation, observedAt time.Time) error {
 	emptyPreScanSync := len(observations) == 0 && checkedDomains == nil
 	domainObservations, hostPortObservations := splitAssetServiceAssetObservations(ctx, observations, networkRegions, httpObservations)
-	checkedDomains = filterDomainServiceAssetCheckedDomains(checkedDomains)
+	checkedDomains = filterDomainServiceAssetCheckedDomains(ctx, checkedDomains, httpObservations)
 	shouldSyncDomainAssets := len(domainObservations) > 0 || len(checkedDomains) > 0 || emptyPreScanSync
 	if s.assetDomainRepository != nil && shouldSyncDomainAssets {
 		if err := s.assetDomainRepository.SyncServiceAssets(ctx, domainObservations, checkedDomains, observedAt); err != nil {
@@ -408,9 +408,13 @@ func splitAssetServiceAssetObservations(ctx context.Context, observations []repo
 			}
 			continue
 		}
+		_, isHTTPAsset := httpEndpointKeys[assetHostPortEndpointKey(endpoint.Host, endpoint.PortNumber)]
+		if isHTTPAsset {
+			domainObservations = append(domainObservations, observation)
+		}
 		serviceName := normalizeAssetDomainComponentName(observation.AppName)
 		appVersion := observation.AppVersion
-		if _, ok := httpEndpointKeys[assetHostPortEndpointKey(endpoint.Host, endpoint.PortNumber)]; ok {
+		if isHTTPAsset {
 			serviceName = "http"
 			appVersion = ""
 		}
@@ -445,12 +449,15 @@ func assetHostPortEndpointKey(ipAddress string, portNumber uint) string {
 	return strings.TrimSpace(ipAddress) + "\x00" + strconv.FormatUint(uint64(portNumber), 10)
 }
 
-func filterDomainServiceAssetCheckedDomains(values []string) []string {
+func filterDomainServiceAssetCheckedDomains(ctx context.Context, values []string, httpObservations []repository.AssetDomainObservation) []string {
+	httpEndpointKeys := assetHostPortHTTPObservationKeys(ctx, httpObservations)
 	result := make([]string, 0, len(values))
 	for _, value := range uniqueNonEmptyStrings(values) {
 		endpoint, ok := assetHostPortEndpointFromAssetEndpoint(value)
 		if ok && !endpoint.IsDomain {
-			continue
+			if _, isHTTPAsset := httpEndpointKeys[assetHostPortEndpointKey(endpoint.Host, endpoint.PortNumber)]; !isHTTPAsset {
+				continue
+			}
 		}
 		result = append(result, value)
 	}
