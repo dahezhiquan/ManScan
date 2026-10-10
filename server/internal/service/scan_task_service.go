@@ -41,6 +41,7 @@ type ScanTaskService interface {
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int, direction string) (*dto.ScanTaskLogsResponse, error)
 	GetResponseArchive(ctx context.Context, taskID int64) (*dto.ScanTaskResponseArchive, error)
+	GetRawLogArchive(ctx context.Context, taskID int64) (*dto.ScanTaskRawLogArchive, error)
 	Subscribe(ctx context.Context, taskID, offset int64) (*dto.ScanTaskSummary, scanruntime.TaskProgressSnapshot, []scanruntime.TaskLogEvent, int64, chan scanruntime.TaskLogEvent, func() dto.ScanTaskSummary, func() scanruntime.TaskProgressSnapshot, func(), error)
 }
 
@@ -51,6 +52,7 @@ var ErrScanTaskNotDeletable = errors.New("当前任务状态不支持删除")
 var ErrScanTaskInvalidConfiguration = errors.New("原任务配置不完整，无法重新扫描")
 var ErrInvalidScanTaskIDs = errors.New("扫描任务 id 列表不合法")
 var ErrScanTaskResponseArchiveNotFound = errors.New("请求/响应压缩包不存在")
+var ErrScanTaskRawLogArchiveNotFound = errors.New("扫描原始日志目录不存在")
 
 const maxBatchScanTaskIDs = 1000
 
@@ -652,6 +654,33 @@ func (s *scanTaskService) GetResponseArchive(ctx context.Context, taskID int64) 
 	}, nil
 }
 
+func (s *scanTaskService) GetRawLogArchive(ctx context.Context, taskID int64) (*dto.ScanTaskRawLogArchive, error) {
+	if _, err := s.repository.FindByID(ctx, taskID); err != nil {
+		return nil, err
+	}
+
+	zipPath, err := s.archiveRawLogsToZip(taskID)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(zipPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, ErrScanTaskRawLogArchiveNotFound
+		}
+		return nil, err
+	}
+	if info.IsDir() || !info.Mode().IsRegular() {
+		return nil, ErrScanTaskRawLogArchiveNotFound
+	}
+
+	return &dto.ScanTaskRawLogArchive{
+		Path:     zipPath,
+		FileName: filepath.Base(zipPath),
+		Size:     info.Size(),
+	}, nil
+}
+
 func (s *scanTaskService) Subscribe(
 	ctx context.Context,
 	taskID int64,
@@ -1070,19 +1099,37 @@ func (s *scanTaskService) getProgress(ctx context.Context, taskID int64, status 
 }
 
 func (s *scanTaskService) logFilePath(taskID int64) string {
-	return filepath.Join(s.runtimeDir, fmt.Sprintf("%d", taskID), "events.jsonl")
+	return filepath.Join(s.runtimeTaskDir(taskID), "events.jsonl")
 }
 
 func (s *scanTaskService) matchLogFilePath(taskID int64) string {
-	return filepath.Join(s.runtimeDir, fmt.Sprintf("%d", taskID), "match.log")
+	return filepath.Join(s.runtimeTaskDir(taskID), "match.log")
 }
 
 func (s *scanTaskService) progressFilePath(taskID int64) string {
-	return filepath.Join(s.runtimeDir, fmt.Sprintf("%d", taskID), "progress.json")
+	return filepath.Join(s.runtimeTaskDir(taskID), "progress.json")
 }
 
 func (s *scanTaskService) resumeFilePath(taskID int64) string {
-	return filepath.Join(s.runtimeDir, fmt.Sprintf("%d", taskID), "resume.cfg")
+	return filepath.Join(s.runtimeTaskDir(taskID), "resume.cfg")
+}
+
+func (s *scanTaskService) runtimeRootDir() string {
+	if s.runtimeDir != "" {
+		return s.runtimeDir
+	}
+	if s.rootDir != "" {
+		return filepath.Join(s.rootDir, "data", "runtime")
+	}
+	return filepath.Join("data", "runtime")
+}
+
+func (s *scanTaskService) runtimeTaskDir(taskID int64) string {
+	return filepath.Join(s.runtimeRootDir(), fmt.Sprintf("%d", taskID))
+}
+
+func (s *scanTaskService) rawLogZipPath(taskID int64) string {
+	return s.runtimeTaskDir(taskID) + ".zip"
 }
 
 func (s *scanTaskService) storeResponseDir(taskID int64) string {
@@ -1098,6 +1145,42 @@ func (s *scanTaskService) storeResponseDir(taskID int64) string {
 
 func (s *scanTaskService) storeResponseZipPath(taskID int64) string {
 	return s.storeResponseDir(taskID) + ".zip"
+}
+
+func (s *scanTaskService) archiveRawLogsToZip(taskID int64) (string, error) {
+	sourceDir := s.runtimeTaskDir(taskID)
+	info, err := os.Stat(sourceDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", ErrScanTaskRawLogArchiveNotFound
+		}
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", ErrScanTaskRawLogArchiveNotFound
+	}
+
+	zipPath := s.rawLogZipPath(taskID)
+	tmpZipPath := zipPath + ".tmp"
+	if err := os.MkdirAll(filepath.Dir(zipPath), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.Remove(tmpZipPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := writeZipDirectory(sourceDir, tmpZipPath, strconv.FormatInt(taskID, 10)); err != nil {
+		_ = os.Remove(tmpZipPath)
+		return "", err
+	}
+	if err := os.Remove(zipPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = os.Remove(tmpZipPath)
+		return "", err
+	}
+	if err := os.Rename(tmpZipPath, zipPath); err != nil {
+		_ = os.Remove(tmpZipPath)
+		return "", err
+	}
+	return zipPath, nil
 }
 
 func (s *scanTaskService) cleanupResumeFile(taskID int64) {

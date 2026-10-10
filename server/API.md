@@ -1265,7 +1265,38 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/scans" \
 curl -OJ "http://127.0.0.1:8686/api/v1/scans/1/responses/archive"
 ```
 
-## 24. 获取资产配置中心列表
+## 24. 下载扫描任务原始日志压缩包
+
+- 请求方法和路径：`GET /api/v1/scans/:id/raw-logs/archive`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 扫描任务 ID，路径参数 |
+
+- 响应格式：
+  - 成功时直接返回 zip 文件流，不使用统一 JSON 包裹。
+  - 响应头包含 `Content-Type: application/zip`。
+  - 响应头包含 `Content-Disposition: attachment; filename="<任务ID>.zip"`。
+
+- 说明：
+  - 该接口会先校验 `manscan_scan_tasks` 中是否存在对应任务，再将 `data/runtime/<任务ID>` 实时压缩为 `data/runtime/<任务ID>.zip` 并返回。
+  - zip 内部保留 `<任务ID>/` 根目录，包含该任务运行期间生成的 `events.jsonl`、`match.log`、`error.log`、`progress.json`、`resume.cfg` 等原始运行文件；实际内容以对应 runtime 目录当前存在的文件为准。
+  - 原始 runtime 目录不会因下载而删除；当任务不存在或 `data/runtime/<任务ID>` 不存在时返回 `40401`。
+
+- 错误码说明：
+  - `40001`：任务 ID 非法
+  - `40401`：任务不存在，或扫描原始日志目录不存在
+  - `50001`：压缩或下载扫描原始日志失败
+
+- 使用示例：
+
+```bash
+curl -OJ "http://127.0.0.1:8686/api/v1/scans/225/raw-logs/archive"
+```
+
+## 25. 获取资产配置中心列表
 
 - 请求方法和路径：`GET /api/v1/asset-config-centers`
 
@@ -1315,7 +1346,7 @@ curl -OJ "http://127.0.0.1:8686/api/v1/scans/1/responses/archive"
 curl "http://127.0.0.1:8686/api/v1/asset-config-centers?page=1&page_size=10&item_name=登录&status=enabled"
 ```
 
-## 25. 获取资产配置中心小分类列表
+## 26. 获取资产配置中心小分类列表
 
 - 请求方法和路径：`GET /api/v1/asset-config-centers/options/small-categories`
 
@@ -1347,7 +1378,7 @@ curl "http://127.0.0.1:8686/api/v1/asset-config-centers?page=1&page_size=10&item
 curl "http://127.0.0.1:8686/api/v1/asset-config-centers/options/small-categories?big_category=app"
 ```
 
-## 26. 新增资产配置项
+## 27. 新增资产配置项
 
 - 请求方法和路径：`POST /api/v1/asset-config-centers`
 
@@ -1390,7 +1421,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/asset-config-centers" \
   -d '{"item_name":"登录页配置","big_category":"前端","small_category":"页面","status":"enabled","description":"登录页相关配置"}'
 ```
 
-## 27. 编辑资产配置项
+## 28. 编辑资产配置项
 
 - 请求方法和路径：`PUT /api/v1/asset-config-centers/:id`
 
@@ -1435,7 +1466,7 @@ curl -X PUT "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
   -d '{"item_name":"登录页配置","big_category":"前端","small_category":"页面","status":"disabled","description":"暂不启用"}'
 ```
 
-## 28. 删除资产配置项
+## 29. 删除资产配置项
 
 - 请求方法和路径：`DELETE /api/v1/asset-config-centers/:id`
 
@@ -1469,7 +1500,7 @@ curl -X PUT "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
 curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 ```
 
-## 29. 获取域名资产清单
+## 30. 获取域名资产清单
 
 - 请求方法和路径：`GET /api/v1/domain-assets`
 
@@ -1554,7 +1585,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1"
 curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&title=Portal&region=internal&risk_level=high&has_vulnerability=true&has_component=true"
 ```
 
-## 30. 获取域名资产详情
+## 31. 获取域名资产详情
 
 - 请求方法和路径：`GET /api/v1/domain-assets/detail`
 
@@ -1630,7 +1661,7 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=exa
 curl "http://127.0.0.1:8686/api/v1/domain-assets/detail?domain=app.example.com:443"
 ```
 
-## 31. 获取主机资产清单
+## 32. 获取主机资产清单
 
 - 请求方法和路径：`GET /api/v1/host-assets`
 
@@ -1706,7 +1737,7 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets/detail?domain=app.example.com:4
 curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72&os_type=linux&region=生产&risk_level=critical&has_vulnerability=true&has_port=true"
 ```
 
-## 32. 获取主机资产详情
+## 33. 获取主机资产详情
 
 - 请求方法和路径：`GET /api/v1/host-assets/detail`
 

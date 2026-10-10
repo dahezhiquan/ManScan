@@ -31,6 +31,7 @@ type ScanTaskHandler interface {
 	Get(c *gin.Context)
 	Logs(c *gin.Context)
 	DownloadResponsesArchive(c *gin.Context)
+	DownloadRawLogsArchive(c *gin.Context)
 	Stream(c *gin.Context)
 }
 
@@ -347,6 +348,31 @@ func (h *scanTaskHandler) DownloadResponsesArchive(c *gin.Context) {
 			return
 		}
 		response.Fail(c, errcode.InternalServerError, "下载请求/响应压缩包失败")
+		return
+	}
+
+	c.Header("Content-Type", "application/zip")
+	c.FileAttachment(archive.Path, archive.FileName)
+}
+
+func (h *scanTaskHandler) DownloadRawLogsArchive(c *gin.Context) {
+	taskID, err := parseTaskID(c.Param("id"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+
+	archive, serviceErr := h.service.GetRawLogArchive(c.Request.Context(), taskID)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
+			response.Fail(c, errcode.NotFound, "任务不存在")
+			return
+		}
+		if errors.Is(serviceErr, service.ErrScanTaskRawLogArchiveNotFound) {
+			response.Fail(c, errcode.NotFound, "扫描原始日志目录不存在")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "下载扫描原始日志压缩包失败")
 		return
 	}
 

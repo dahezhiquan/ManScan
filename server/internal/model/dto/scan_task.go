@@ -198,3 +198,9 @@ type ScanTaskResponseArchive struct {
 	FileName string `json:"file_name"`
 	Size     int64  `json:"size"`
 }
+
+type ScanTaskRawLogArchive struct {
+	Path     string `json:"-"`
+	FileName string `json:"file_name"`
+	Size     int64  `json:"size"`
+}

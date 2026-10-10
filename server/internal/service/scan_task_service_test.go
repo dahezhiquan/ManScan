@@ -391,6 +391,66 @@ func TestGetResponseArchiveReturnsNotFoundWhenZipMissing(t *testing.T) {
 	}
 }
 
+func TestGetRawLogArchiveCreatesZipFromRuntimeDirectory(t *testing.T) {
+	t.Parallel()
+
+	rootDir := t.TempDir()
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				225: {ID: 225, TaskNo: "task-225", Name: "runtime-task", Status: "success", CreatedBy: "tester"},
+			},
+		},
+		rootDir: rootDir,
+	}
+	logFile := filepath.Join(rootDir, "data", "runtime", "225", "events.jsonl")
+	if err := os.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(logFile, []byte(`{"message":"raw-log"}`), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	archive, err := svc.GetRawLogArchive(context.Background(), 225)
+	if err != nil {
+		t.Fatalf("GetRawLogArchive() error = %v", err)
+	}
+	wantZipPath := filepath.Join(rootDir, "data", "runtime", "225.zip")
+	if archive.Path != wantZipPath {
+		t.Fatalf("Path = %q, want %q", archive.Path, wantZipPath)
+	}
+	if archive.FileName != "225.zip" {
+		t.Fatalf("FileName = %q, want 225.zip", archive.FileName)
+	}
+	if archive.Size <= 0 {
+		t.Fatalf("Size = %d, want positive", archive.Size)
+	}
+	if _, err := os.Stat(filepath.Join(rootDir, "data", "runtime", "225")); err != nil {
+		t.Fatalf("runtime directory should be retained: %v", err)
+	}
+	if content := readZipEntry(t, archive.Path, "225/events.jsonl"); content != `{"message":"raw-log"}` {
+		t.Fatalf("zip entry content = %q, want raw log content", content)
+	}
+}
+
+func TestGetRawLogArchiveReturnsNotFoundWhenRuntimeDirectoryMissing(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		repository: &scanTaskRepositoryStub{
+			tasks: map[int64]*entity.ScanTask{
+				226: {ID: 226, TaskNo: "task-226", Name: "runtime-task", Status: "success", CreatedBy: "tester"},
+			},
+		},
+		rootDir: t.TempDir(),
+	}
+
+	_, err := svc.GetRawLogArchive(context.Background(), 226)
+	if !errors.Is(err, ErrScanTaskRawLogArchiveNotFound) {
+		t.Fatalf("GetRawLogArchive() error = %v, want ErrScanTaskRawLogArchiveNotFound", err)
+	}
+}
+
 func readZipEntry(t *testing.T, zipPath, entryName string) string {
 	t.Helper()
 
