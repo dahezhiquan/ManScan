@@ -268,6 +268,28 @@ func (s *scanTaskService) syncAliveAssetHostPortsFromDomainObservations(ctx cont
 	return nil
 }
 
+func (s *scanTaskService) syncInactiveAssetHostHTTPPorts(ctx context.Context, checkedDomains []string, aliveObservations []repository.AssetDomainObservation, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) error {
+	if s.assetHostPortRepository == nil {
+		return nil
+	}
+	hostPortObservations := buildInactiveAssetHostHTTPPortObservations(checkedDomains, aliveObservations, networkRegions)
+	if len(hostPortObservations) == 0 {
+		return nil
+	}
+	if err := s.assetHostPortRepository.MarkHTTPPortsInactive(ctx, hostPortObservations); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if s.logger != nil {
+			s.logger.Error("sync inactive asset host http ports failed", "port_count", len(hostPortObservations), "error", err)
+		}
+		if state != nil {
+			state.Append("warn", "asset_host_port_inactive_sync_failed", "扫描完成，但同步不存活 HTTP 端口失败")
+		}
+	}
+	return nil
+}
+
 func (s *scanTaskService) syncAssetServiceAssets(ctx context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, networkRegions []assetDomainNetworkRegion, httpObservations []repository.AssetDomainObservation, observedAt time.Time) error {
 	emptyPreScanSync := len(observations) == 0 && checkedDomains == nil
 	domainObservations, hostPortObservations := splitAssetServiceAssetObservations(ctx, observations, networkRegions, httpObservations)
@@ -284,6 +306,45 @@ func (s *scanTaskService) syncAssetServiceAssets(ctx context.Context, observatio
 		}
 	}
 	return nil
+}
+
+func buildInactiveAssetHostHTTPPortObservations(checkedDomains []string, aliveObservations []repository.AssetDomainObservation, networkRegions []assetDomainNetworkRegion) []repository.AssetHostPortObservation {
+	aliveDomains := make(map[string]struct{}, len(aliveObservations))
+	for _, observation := range uniqueAssetDomainObservations(aliveObservations) {
+		aliveDomains[observation.Domain] = struct{}{}
+	}
+
+	hostPortObservations := make([]repository.AssetHostPortObservation, 0, len(checkedDomains))
+	for _, domain := range uniqueNonEmptyStrings(checkedDomains) {
+		if _, ok := aliveDomains[domain]; ok {
+			continue
+		}
+		observation, ok := inactiveAssetHostHTTPPortObservationFromDomain(domain, networkRegions)
+		if !ok {
+			continue
+		}
+		hostPortObservations = append(hostPortObservations, observation)
+	}
+	return uniqueAssetHostPortObservations(hostPortObservations)
+}
+
+func inactiveAssetHostHTTPPortObservationFromDomain(domain string, networkRegions []assetDomainNetworkRegion) (repository.AssetHostPortObservation, bool) {
+	if strings.Contains(domain, "://") {
+		return repository.AssetHostPortObservation{}, false
+	}
+	endpoint, ok := assetHostPortEndpointFromAssetEndpoint(domain)
+	if !ok || endpoint.IsDomain {
+		return repository.AssetHostPortObservation{}, false
+	}
+
+	return repository.AssetHostPortObservation{
+		IPAddress:   endpoint.Host,
+		Region:      assetDomainRegion(endpoint.Host, networkRegions),
+		PortNumber:  endpoint.PortNumber,
+		ServiceName: "http",
+		AppName:     "http",
+		IsAlive:     false,
+	}, true
 }
 
 func buildAssetHostObservations(targets []string, networkRegions []assetDomainNetworkRegion) []repository.AssetHostObservation {

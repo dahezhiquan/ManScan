@@ -6,12 +6,15 @@ import (
 	"strings"
 	"time"
 
+	"ManScan/server/internal/model/entity"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 type AssetHostPortRepository interface {
 	SyncObservations(ctx context.Context, observations []AssetHostPortObservation, observedAt time.Time) error
+	MarkHTTPPortsInactive(ctx context.Context, observations []AssetHostPortObservation) error
 }
 
 type assetHostPortRepository struct {
@@ -31,6 +34,24 @@ type AssetHostPortObservation struct {
 
 func NewAssetHostPortRepository(db *gorm.DB) AssetHostPortRepository {
 	return &assetHostPortRepository{db: db}
+}
+
+func (r *assetHostPortRepository) MarkHTTPPortsInactive(ctx context.Context, observations []AssetHostPortObservation) error {
+	observations = uniqueAssetHostPortObservations(observations)
+	if len(observations) == 0 {
+		return nil
+	}
+
+	for _, observation := range observations {
+		if err := r.db.WithContext(ctx).
+			Model(&entity.AssetHostPort{}).
+			Where("ip_address = ? AND port_number = ?", observation.IPAddress, observation.PortNumber).
+			Where("(LOWER(COALESCE(service_name, '')) = ? OR LOWER(COALESCE(app_name, '')) = ?)", "http", "http").
+			Update("is_alive", false).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *assetHostPortRepository) SyncObservations(ctx context.Context, observations []AssetHostPortObservation, observedAt time.Time) error {

@@ -452,6 +452,34 @@ func TestSyncAssetServiceAssetsKeepsHTTPServiceForHTTPProbedIPEndpoint(t *testin
 	}
 }
 
+func TestBuildInactiveAssetHostHTTPPortObservationsUsesInactiveIPDomains(t *testing.T) {
+	t.Parallel()
+
+	observations := buildInactiveAssetHostHTTPPortObservations([]string{
+		"10.72.160.153:80",
+		"app.example.com:80",
+		"10.72.160.156",
+		"10.72.160.157:70000",
+		"10.72.160.158:8080",
+		"http://10.72.160.158:8080",
+	}, []repository.AssetDomainObservation{{
+		Domain: "10.72.160.158:8080",
+	}}, buildAssetDomainNetworkRegions([]repository.AssetDomainNetworkItem{
+		{ItemName: "10.72.160.0/24", SmallCategory: "生产内网"},
+	}))
+
+	if len(observations) != 1 {
+		t.Fatalf("observations = %+v, want one inactive http port", observations)
+	}
+	got := observations[0]
+	if got.IPAddress != "10.72.160.153" || got.PortNumber != 80 || got.ServiceName != "http" || got.AppName != "http" || got.IsAlive {
+		t.Fatalf("observation = %+v, want inactive http port for down IP domain", got)
+	}
+	if got.Region != "生产内网" {
+		t.Fatalf("Region = %q, want 生产内网", got.Region)
+	}
+}
+
 func TestAssetDomainProbeFinishedMessage(t *testing.T) {
 	t.Parallel()
 
@@ -1042,6 +1070,11 @@ type assetHostPortRepositoryStub struct {
 }
 
 func (s *assetHostPortRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostPortObservation, _ time.Time) error {
+	s.observationValues = append(s.observationValues, append([]repository.AssetHostPortObservation(nil), observations...))
+	return nil
+}
+
+func (s *assetHostPortRepositoryStub) MarkHTTPPortsInactive(_ context.Context, observations []repository.AssetHostPortObservation) error {
 	s.observationValues = append(s.observationValues, append([]repository.AssetHostPortObservation(nil), observations...))
 	return nil
 }

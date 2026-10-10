@@ -325,6 +325,78 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 	}
 }
 
+func TestAssetDomainRepositorySyncObservationsMarksTitleHistoriesStaleForInactiveDomains(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	if err := db.AutoMigrate(&entity.AssetDomain{}, &entity.AssetDomainTitleHistory{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	now := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
+	if err := db.Create(&entity.AssetDomain{
+		Domain:       "down.example.com:443",
+		IsAlive:      true,
+		FirstAliveAt: &now,
+		LastAliveAt:  &now,
+	}).Error; err != nil {
+		t.Fatalf("Create domain error = %v", err)
+	}
+	if err := db.Create(&[]entity.AssetDomainTitleHistory{
+		{
+			Domain:              "down.example.com:443",
+			HistoryTitle:        "Old Title",
+			FirstTitleCreatedAt: now,
+			LatestTitleAliveAt:  now,
+			IsAlive:             true,
+		},
+		{
+			Domain:              "other.example.com:443",
+			HistoryTitle:        "Other Title",
+			FirstTitleCreatedAt: now,
+			LatestTitleAliveAt:  now,
+			IsAlive:             true,
+		},
+	}).Error; err != nil {
+		t.Fatalf("Create title histories error = %v", err)
+	}
+
+	repo := NewAssetDomainRepository(db)
+	if err := repo.SyncObservations(context.Background(), nil, []string{"down.example.com:443"}, now.Add(time.Hour)); err != nil {
+		t.Fatalf("SyncObservations() error = %v", err)
+	}
+
+	var domain entity.AssetDomain
+	if err := db.Where("domain = ?", "down.example.com:443").First(&domain).Error; err != nil {
+		t.Fatalf("First domain error = %v", err)
+	}
+	if domain.IsAlive {
+		t.Fatal("domain IsAlive = true, want false")
+	}
+
+	var staleTitle entity.AssetDomainTitleHistory
+	if err := db.Where("domain = ? AND history_title = ?", "down.example.com:443", "Old Title").First(&staleTitle).Error; err != nil {
+		t.Fatalf("First stale title error = %v", err)
+	}
+	if staleTitle.IsAlive {
+		t.Fatal("stale title IsAlive = true, want false")
+	}
+
+	var otherTitle entity.AssetDomainTitleHistory
+	if err := db.Where("domain = ? AND history_title = ?", "other.example.com:443", "Other Title").First(&otherTitle).Error; err != nil {
+		t.Fatalf("First other title error = %v", err)
+	}
+	if !otherTitle.IsAlive {
+		t.Fatal("other title IsAlive = false, want true")
+	}
+}
+
 func TestAssetDomainRepositorySyncLivenessUpdatesAliveFields(t *testing.T) {
 	t.Parallel()
 

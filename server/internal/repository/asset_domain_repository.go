@@ -99,10 +99,13 @@ func (r *assetDomainRepository) SyncObservations(ctx context.Context, observatio
 		if len(notAliveDomains) == 0 {
 			return nil
 		}
-		return tx.WithContext(ctx).
+		if err := tx.WithContext(ctx).
 			Model(&entity.AssetDomain{}).
 			Where("domain IN ?", notAliveDomains).
-			Update("is_alive", false).Error
+			Update("is_alive", false).Error; err != nil {
+			return err
+		}
+		return markStaleAssetDomainTitleHistories(ctx, tx, notAliveDomains)
 	})
 }
 
@@ -496,6 +499,17 @@ func syncAssetDomainTitleHistory(ctx context.Context, db *gorm.DB, observations 
 		}
 	}
 	return nil
+}
+
+func markStaleAssetDomainTitleHistories(ctx context.Context, db *gorm.DB, domains []string) error {
+	domains = uniqueNonEmptyAssetDomains(domains)
+	if len(domains) == 0 {
+		return nil
+	}
+	return db.WithContext(ctx).
+		Model(&entity.AssetDomainTitleHistory{}).
+		Where("domain IN ?", domains).
+		Update("is_alive", false).Error
 }
 
 func assetDomainObservationsWithTitle(values []AssetDomainObservation) []AssetDomainObservation {
