@@ -40,12 +40,13 @@ func Run() error {
 	assetConfigCenterRepository := repository.NewAssetConfigCenterRepository(db)
 	userRepository := repository.NewUserRepository(db)
 	userSessionRepository := repository.NewUserSessionRepository(db)
+	authChallengeRepository := repository.NewAuthChallengeRepository(db)
 	tokenManager := authpkg.NewJWTManager(cfg.Auth.JWTSecret, "manscan-server")
 	vulnerabilityService := service.NewVulnerabilityService(vulnerabilityRepository)
 	assetDomainService := service.NewAssetDomainService(assetDomainRepository)
 	assetHostService := service.NewAssetHostService(assetHostRepository)
 	assetConfigCenterService := service.NewAssetConfigCenterService(assetConfigCenterRepository)
-	authService := service.NewAuthService(userRepository, userSessionRepository, tokenManager, cfg.Auth.TokenTTL())
+	authService := service.NewAuthService(userRepository, userSessionRepository, authChallengeRepository, tokenManager, cfg.Auth.TokenTTL())
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
 		vulnerabilityRepository,

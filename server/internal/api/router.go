@@ -26,6 +26,7 @@ func NewRouter(
 
 	v1 := router.Group("/api/v1")
 
+	v1.GET("/auth/challenge", authHandler.Challenge)
 	v1.POST("/auth/login", authHandler.Login)
 
 	protected := v1.Group("")

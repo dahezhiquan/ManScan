@@ -22,7 +22,7 @@
 
 服务默认监听地址为 `:8686`，接口统一挂载在 `/api/v1` 下。
 
-除 `POST /api/v1/auth/login` 外，所有接口都需要在请求头中携带登录后获取的访问令牌：
+除 `GET /api/v1/auth/challenge` 和 `POST /api/v1/auth/login` 外，所有接口都需要在请求头中携带登录后获取的访问令牌：
 
 ```http
 Authorization: Bearer <access_token>
@@ -36,6 +36,55 @@ Authorization: Bearer <access_token>
 
 ## 认证与鉴权
 
+### 获取登录验证码挑战
+
+- 请求方法和路径：`GET /api/v1/auth/challenge`
+
+- 请求参数：无
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "challenge_id": "86d4f193-6fbf-4a74-a1f1-75f0c71d6a9b",
+    "challenge_type": "orbital_slider",
+    "expires_at": "2026-10-12T18:05:00+08:00",
+    "scene": {
+      "theme": "neo_orbit",
+      "seed": 1219102391,
+      "canvas_size": 320,
+      "center_x": 160,
+      "center_y": 160,
+      "radius": 112,
+      "start_angle": 28.2,
+      "target_angle": 246.4,
+      "decoy_angles": [293.4, 5.4, 89.4, 177.4]
+    },
+    "requirements": {
+      "angle_tolerance": 6,
+      "min_drag_duration_ms": 300,
+      "max_drag_duration_ms": 10000,
+      "min_track_points": 3,
+      "max_track_points": 240
+    }
+  }
+}
+```
+
+- 错误码说明：
+  - `50001`：生成验证码失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/auth/challenge"
+```
+
+验证码挑战为一次性使用，默认 5 分钟过期。前端应按 `scene` 渲染轨道滑块交互，并在登录时提交最终角度、拖动耗时和轨迹点。
+
 ### 登录
 
 - 请求方法和路径：`POST /api/v1/auth/login`
@@ -46,6 +95,10 @@ Authorization: Bearer <access_token>
 |------|------|------|------|
 | `username` | `string` | 是 | 登录用户名，最长 64 个字符 |
 | `password` | `string` | 是 | 登录密码，最长 256 个字符 |
+| `challenge_id` | `string` | 是 | `GET /api/v1/auth/challenge` 返回的验证码挑战 ID |
+| `challenge_answer.angle` | `number` | 是 | 前端拖动结束后的角度，单位为度 |
+| `challenge_answer.drag_duration_ms` | `int` | 是 | 用户完成拖动的耗时，单位毫秒 |
+| `challenge_answer.track` | `array<object>` | 是 | 拖动轨迹点数组，每个点包含 `x`、`y`、`t` |
 
 - 响应格式：
 
@@ -68,10 +121,22 @@ Authorization: Bearer <access_token>
 ```
 
 - 错误码说明：
-  - `40001`：请求体格式错误或缺少用户名/密码
+  - `40001`：请求体格式错误、缺少用户名/密码/验证码参数，或验证码校验失败；验证码失败时响应 `data.refresh_required=true`
   - `40101`：用户名或密码错误；已存在的启用账户密码错误时，响应 `data.remaining_attempts` 表示剩余可尝试次数，`data.locked` 表示本次失败后是否已锁定
   - `40301`：用户已被禁用或账户已锁定
   - `50001`：登录过程发生内部错误
+
+- 验证码失败响应示例：
+
+```json
+{
+  "code": 40001,
+  "message": "验证码校验失败，请刷新后重试",
+  "data": {
+    "refresh_required": true
+  }
+}
+```
 
 - 登录失败响应示例：
 
@@ -96,7 +161,20 @@ Authorization: Bearer <access_token>
 ```bash
 curl -X POST "http://127.0.0.1:8686/api/v1/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"YOUR_PASSWORD"}'
+  -d '{
+    "username":"admin",
+    "password":"YOUR_PASSWORD",
+    "challenge_id":"86d4f193-6fbf-4a74-a1f1-75f0c71d6a9b",
+    "challenge_answer":{
+      "angle":246.4,
+      "drag_duration_ms":820,
+      "track":[
+        {"x":160,"y":160,"t":0},
+        {"x":190,"y":148,"t":320},
+        {"x":220,"y":130,"t":820}
+      ]
+    }
+  }'
 ```
 
 ### 获取当前用户
@@ -166,6 +244,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/auth/logout" \
 
 - `docs/SQL/create_manscan_users.sql`：用户表，存储用户名、bcrypt 密码哈希、角色、状态、连续登录失败次数和最后登录时间。
 - `docs/SQL/create_manscan_user_sessions.sql`：用户会话表，存储 JWT `jti`、访问令牌 SHA-256 哈希、过期时间和吊销时间。
+- `docs/SQL/create_manscan_auth_challenges.sql`：登录验证码挑战表，存储一次性轨道滑块验证码的答案、渲染种子、过期时间和使用时间。
 - `docs/SQL/alter_manscan_users_add_login_lock.sql`：存量用户表升级脚本，为已有部署补充账户锁定状态和连续登录失败次数字段。
 
 访问令牌本身不会明文入库；退出登录会写入会话 `revoked_at`，后续请求即使 JWT 尚未过期也会被拒绝。

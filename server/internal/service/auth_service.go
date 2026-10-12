@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"errors"
+	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -13,11 +16,13 @@ import (
 	authpkg "ManScan/server/internal/pkg/auth"
 	"ManScan/server/internal/repository"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
 type AuthService interface {
+	Challenge(ctx context.Context, clientIP string) (*dto.AuthChallengeResponse, error)
 	Login(ctx context.Context, request dto.LoginRequest, clientIP, userAgent string) (*dto.LoginResponse, error)
 	Authenticate(ctx context.Context, token string) (*AuthenticatedUser, error)
 	Logout(ctx context.Context, token string) (*dto.LogoutResponse, error)
@@ -31,23 +36,36 @@ type AuthenticatedUser struct {
 }
 
 type authService struct {
-	users    repository.UserRepository
-	sessions repository.UserSessionRepository
-	tokens   authpkg.TokenManager
-	tokenTTL time.Duration
+	users      repository.UserRepository
+	sessions   repository.UserSessionRepository
+	challenges repository.AuthChallengeRepository
+	tokens     authpkg.TokenManager
+	tokenTTL   time.Duration
 }
 
 var ErrInvalidCredentials = errors.New("用户名或密码错误")
 var ErrUnauthorized = errors.New("未登录或登录状态已失效")
 var ErrUserDisabled = errors.New("用户已被禁用")
 var ErrUserLocked = errors.New("账户已锁定")
+var ErrInvalidChallenge = errors.New("验证码校验失败，请刷新后重试")
 
 const (
-	userStatusEnabled  = "enabled"
-	userStatusDisabled = "disabled"
-	userStatusLocked   = "locked"
-	defaultUserRole    = "user"
-	maxLoginFailures   = 5
+	userStatusEnabled                 = "enabled"
+	userStatusDisabled                = "disabled"
+	userStatusLocked                  = "locked"
+	defaultUserRole                   = "user"
+	maxLoginFailures                  = 5
+	authChallengeTypeOrbitalSlider    = "orbital_slider"
+	authChallengeThemeNeoOrbit        = "neo_orbit"
+	authChallengeTTL                  = 5 * time.Minute
+	authChallengeAngleTolerance       = 6.0
+	authChallengeMinDragDurationMS    = 300
+	authChallengeMaxDragDurationMS    = 10000
+	authChallengeMinTrackPoints       = 3
+	authChallengeMaxTrackPoints       = 240
+	authChallengeCanvasSize           = 320
+	authChallengeOrbitRadius          = 112
+	authChallengeTrackCoordinateLimit = 10000
 )
 
 type LoginFailedError struct {
@@ -66,13 +84,67 @@ func (e *LoginFailedError) Is(target error) bool {
 	return target == ErrInvalidCredentials || (e.Locked && target == ErrUserLocked)
 }
 
-func NewAuthService(users repository.UserRepository, sessions repository.UserSessionRepository, tokens authpkg.TokenManager, tokenTTL time.Duration) AuthService {
+func NewAuthService(users repository.UserRepository, sessions repository.UserSessionRepository, challenges repository.AuthChallengeRepository, tokens authpkg.TokenManager, tokenTTL time.Duration) AuthService {
 	return &authService{
-		users:    users,
-		sessions: sessions,
-		tokens:   tokens,
-		tokenTTL: tokenTTL,
+		users:      users,
+		sessions:   sessions,
+		challenges: challenges,
+		tokens:     tokens,
+		tokenTTL:   tokenTTL,
 	}
+}
+
+func (s *authService) Challenge(ctx context.Context, clientIP string) (*dto.AuthChallengeResponse, error) {
+	targetAngle, err := secureRandomAngle()
+	if err != nil {
+		return nil, err
+	}
+	startAngle, err := secureRandomAngle()
+	if err != nil {
+		return nil, err
+	}
+	sceneSeed, err := secureRandomInt64()
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	challenge := &entity.AuthChallenge{
+		ChallengeID:     uuid.NewString(),
+		ChallengeType:   authChallengeTypeOrbitalSlider,
+		TargetAngle:     targetAngle,
+		AnswerTolerance: authChallengeAngleTolerance,
+		SceneSeed:       sceneSeed,
+		ClientIP:        nullableAuthString(clientIP, 64),
+		ExpiresAt:       now.Add(authChallengeTTL),
+	}
+	if err := s.challenges.Create(ctx, challenge); err != nil {
+		return nil, err
+	}
+
+	return &dto.AuthChallengeResponse{
+		ChallengeID:   challenge.ChallengeID,
+		ChallengeType: challenge.ChallengeType,
+		ExpiresAt:     challenge.ExpiresAt,
+		Scene: dto.OrbitalSliderScene{
+			Theme:       authChallengeThemeNeoOrbit,
+			Seed:        sceneSeed,
+			CanvasSize:  authChallengeCanvasSize,
+			CenterX:     authChallengeCanvasSize / 2,
+			CenterY:     authChallengeCanvasSize / 2,
+			Radius:      authChallengeOrbitRadius,
+			StartAngle:  roundAngle(startAngle),
+			TargetAngle: roundAngle(targetAngle),
+			DecoyAngles: buildDecoyAngles(targetAngle),
+		},
+		Requirements: dto.ChallengeRules{
+			AngleTolerance:    authChallengeAngleTolerance,
+			MinDragDurationMS: authChallengeMinDragDurationMS,
+			MaxDragDurationMS: authChallengeMaxDragDurationMS,
+			MinTrackPoints:    authChallengeMinTrackPoints,
+			MaxTrackPoints:    authChallengeMaxTrackPoints,
+		},
+	}, nil
 }
 
 func (s *authService) Login(ctx context.Context, request dto.LoginRequest, clientIP, userAgent string) (*dto.LoginResponse, error) {
@@ -80,6 +152,9 @@ func (s *authService) Login(ctx context.Context, request dto.LoginRequest, clien
 	password := request.Password
 	if username == "" || password == "" || len(username) > 64 || len(password) > 256 {
 		return nil, ErrInvalidCredentials
+	}
+	if err := s.validateChallenge(ctx, request); err != nil {
+		return nil, err
 	}
 
 	user, err := s.users.FindByUsername(ctx, username)
@@ -135,6 +210,108 @@ func (s *authService) Login(ctx context.Context, request dto.LoginRequest, clien
 		ExpiresAt:   expiresAt,
 		User:        toUserInfo(*user),
 	}, nil
+}
+
+func (s *authService) validateChallenge(ctx context.Context, request dto.LoginRequest) error {
+	challengeID := strings.TrimSpace(request.ChallengeID)
+	if challengeID == "" || len(challengeID) > 64 || request.ChallengeAnswer == nil {
+		return ErrInvalidChallenge
+	}
+
+	challenge, err := s.challenges.ConsumeByChallengeID(ctx, challengeID, time.Now())
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrInvalidChallenge
+		}
+		return err
+	}
+	if challenge.ChallengeType != authChallengeTypeOrbitalSlider {
+		return ErrInvalidChallenge
+	}
+	if !isValidChallengeAnswer(*request.ChallengeAnswer, challenge.TargetAngle, challenge.AnswerTolerance) {
+		return ErrInvalidChallenge
+	}
+	return nil
+}
+
+func isValidChallengeAnswer(answer dto.LoginChallengeAnswer, targetAngle, tolerance float64) bool {
+	if math.IsNaN(answer.Angle) || math.IsInf(answer.Angle, 0) {
+		return false
+	}
+	if angleDistance(answer.Angle, targetAngle) > tolerance {
+		return false
+	}
+	if answer.DragDurationMS < authChallengeMinDragDurationMS || answer.DragDurationMS > authChallengeMaxDragDurationMS {
+		return false
+	}
+	if len(answer.Track) < authChallengeMinTrackPoints || len(answer.Track) > authChallengeMaxTrackPoints {
+		return false
+	}
+
+	lastT := -1
+	for _, point := range answer.Track {
+		if point.T < 0 || point.T < lastT {
+			return false
+		}
+		if absInt(point.X) > authChallengeTrackCoordinateLimit || absInt(point.Y) > authChallengeTrackCoordinateLimit {
+			return false
+		}
+		lastT = point.T
+	}
+	return lastT <= answer.DragDurationMS+500
+}
+
+func buildDecoyAngles(targetAngle float64) []float64 {
+	offsets := []float64{47, 119, 203, 291}
+	decoys := make([]float64, 0, len(offsets))
+	for _, offset := range offsets {
+		decoys = append(decoys, roundAngle(targetAngle+offset))
+	}
+	return decoys
+}
+
+func angleDistance(left, right float64) float64 {
+	diff := math.Mod(math.Abs(normalizeAngle(left)-normalizeAngle(right)), 360)
+	if diff > 180 {
+		return 360 - diff
+	}
+	return diff
+}
+
+func normalizeAngle(angle float64) float64 {
+	value := math.Mod(angle, 360)
+	if value < 0 {
+		return value + 360
+	}
+	return value
+}
+
+func roundAngle(angle float64) float64 {
+	return math.Round(normalizeAngle(angle)*100) / 100
+}
+
+func secureRandomAngle() (float64, error) {
+	value, err := rand.Int(rand.Reader, big.NewInt(36000))
+	if err != nil {
+		return 0, err
+	}
+	return float64(value.Int64()) / 100, nil
+}
+
+func secureRandomInt64() (int64, error) {
+	const maxInt64 = int64(1<<63 - 1)
+	value, err := rand.Int(rand.Reader, big.NewInt(maxInt64))
+	if err != nil {
+		return 0, err
+	}
+	return value.Int64(), nil
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func (s *authService) Authenticate(ctx context.Context, token string) (*AuthenticatedUser, error) {

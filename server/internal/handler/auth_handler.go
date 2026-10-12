@@ -14,6 +14,7 @@ import (
 )
 
 type AuthHandler interface {
+	Challenge(c *gin.Context)
 	Login(c *gin.Context)
 	Logout(c *gin.Context)
 	Me(c *gin.Context)
@@ -27,10 +28,19 @@ func NewAuthHandler(authService service.AuthService) AuthHandler {
 	return &authHandler{service: authService}
 }
 
+func (h *authHandler) Challenge(c *gin.Context) {
+	data, serviceErr := h.service.Challenge(c.Request.Context(), c.ClientIP())
+	if serviceErr != nil {
+		handleAuthError(c, serviceErr, "生成验证码失败")
+		return
+	}
+	response.Success(c, data)
+}
+
 func (h *authHandler) Login(c *gin.Context) {
 	var request dto.LoginRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
-		response.Fail(c, errcode.InvalidParams, "用户名和密码不能为空")
+		response.Fail(c, errcode.InvalidParams, "用户名、密码和验证码不能为空")
 		return
 	}
 
@@ -94,6 +104,12 @@ func handleAuthError(c *gin.Context, err error, fallbackMessage string) {
 	}
 	if errors.Is(err, service.ErrInvalidCredentials) {
 		response.Fail(c, errcode.Unauthorized, "用户名或密码错误")
+		return
+	}
+	if errors.Is(err, service.ErrInvalidChallenge) {
+		response.FailWithData(c, errcode.InvalidParams, service.ErrInvalidChallenge.Error(), dto.ChallengeFailureResponse{
+			RefreshRequired: true,
+		})
 		return
 	}
 	if errors.Is(err, service.ErrUserLocked) {

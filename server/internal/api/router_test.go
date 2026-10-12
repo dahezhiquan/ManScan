@@ -16,6 +16,7 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{})
 	routes := router.Routes()
 
+	assertRouteRegistered(t, routes, "GET", "/api/v1/auth/challenge")
 	assertRouteRegistered(t, routes, "POST", "/api/v1/auth/login")
 	assertRouteRegistered(t, routes, "POST", "/api/v1/auth/logout")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/auth/me")
@@ -49,11 +50,16 @@ func assertRouteRegistered(t *testing.T, routes gin.RoutesInfo, method, path str
 
 type noopAuthHandler struct{}
 
-func (noopAuthHandler) Login(*gin.Context)  {}
-func (noopAuthHandler) Logout(*gin.Context) {}
-func (noopAuthHandler) Me(*gin.Context)     {}
+func (noopAuthHandler) Challenge(*gin.Context) {}
+func (noopAuthHandler) Login(*gin.Context)     {}
+func (noopAuthHandler) Logout(*gin.Context)    {}
+func (noopAuthHandler) Me(*gin.Context)        {}
 
 type noopAuthService struct{}
+
+func (noopAuthService) Challenge(context.Context, string) (*dto.AuthChallengeResponse, error) {
+	return nil, nil
+}
 
 func (noopAuthService) Login(context.Context, dto.LoginRequest, string, string) (*dto.LoginResponse, error) {
 	return nil, nil

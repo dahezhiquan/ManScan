@@ -34,10 +34,7 @@ func TestAuthServiceLoginAuthenticateAndLogout(t *testing.T) {
 	}
 
 	authService := newAuthServiceForTest(db, time.Hour)
-	loginResponse, err := authService.Login(context.Background(), dto.LoginRequest{
-		Username: " admin ",
-		Password: "secret-password",
-	}, "127.0.0.1", "go-test")
+	loginResponse, err := authService.Login(context.Background(), newValidLoginRequestForTest(t, authService, " admin ", "secret-password"), "127.0.0.1", "go-test")
 	if err != nil {
 		t.Fatalf("Login() error = %v", err)
 	}
@@ -88,10 +85,7 @@ func TestAuthServiceRejectsInvalidCredentials(t *testing.T) {
 	}
 
 	authService := newAuthServiceForTest(db, time.Hour)
-	if _, err := authService.Login(context.Background(), dto.LoginRequest{
-		Username: "admin",
-		Password: "wrong-password",
-	}, "", ""); !errors.Is(err, ErrInvalidCredentials) {
+	if _, err := authService.Login(context.Background(), newValidLoginRequestForTest(t, authService, "admin", "wrong-password"), "", ""); !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("Login() error = %v, want ErrInvalidCredentials", err)
 	}
 }
@@ -109,10 +103,7 @@ func TestAuthServiceRejectsDisabledUser(t *testing.T) {
 	}
 
 	authService := newAuthServiceForTest(db, time.Hour)
-	if _, err := authService.Login(context.Background(), dto.LoginRequest{
-		Username: "disabled",
-		Password: "secret-password",
-	}, "", ""); !errors.Is(err, ErrUserDisabled) {
+	if _, err := authService.Login(context.Background(), newValidLoginRequestForTest(t, authService, "disabled", "secret-password"), "", ""); !errors.Is(err, ErrUserDisabled) {
 		t.Fatalf("Login() error = %v, want ErrUserDisabled", err)
 	}
 }
@@ -131,10 +122,7 @@ func TestAuthServiceFailedPasswordTracksRemainingAttemptsAndLocksUser(t *testing
 
 	authService := newAuthServiceForTest(db, time.Hour)
 	for i := 1; i <= maxLoginFailures; i++ {
-		_, err := authService.Login(context.Background(), dto.LoginRequest{
-			Username: "admin",
-			Password: "wrong-password",
-		}, "", "")
+		_, err := authService.Login(context.Background(), newValidLoginRequestForTest(t, authService, "admin", "wrong-password"), "", "")
 		var loginFailedErr *LoginFailedError
 		if !errors.As(err, &loginFailedErr) {
 			t.Fatalf("Login() attempt %d error = %v, want LoginFailedError", i, err)
@@ -160,11 +148,130 @@ func TestAuthServiceFailedPasswordTracksRemainingAttemptsAndLocksUser(t *testing
 		t.Fatalf("failed attempts = %d, want %d", storedUser.FailedLoginAttempts, maxLoginFailures)
 	}
 
-	if _, err := authService.Login(context.Background(), dto.LoginRequest{
-		Username: "admin",
-		Password: "secret-password",
-	}, "", ""); !errors.Is(err, ErrUserLocked) {
+	if _, err := authService.Login(context.Background(), newValidLoginRequestForTest(t, authService, "admin", "secret-password"), "", ""); !errors.Is(err, ErrUserLocked) {
 		t.Fatalf("Login() locked user error = %v, want ErrUserLocked", err)
+	}
+}
+
+func TestAuthServiceChallengeResponse(t *testing.T) {
+	db := newAuthServiceTestDB(t)
+	authService := newAuthServiceForTest(db, time.Hour)
+
+	challenge, err := authService.Challenge(context.Background(), "127.0.0.1")
+	if err != nil {
+		t.Fatalf("Challenge() error = %v", err)
+	}
+	if challenge.ChallengeID == "" || challenge.ChallengeType != authChallengeTypeOrbitalSlider {
+		t.Fatalf("Challenge() = %+v, want orbital slider challenge", challenge)
+	}
+	if challenge.Scene.Theme == "" || challenge.Scene.CanvasSize <= 0 || challenge.Scene.Radius <= 0 {
+		t.Fatalf("Challenge() scene = %+v, want renderable scene", challenge.Scene)
+	}
+	if !challenge.ExpiresAt.After(time.Now()) {
+		t.Fatalf("Challenge() expires_at = %v, want future time", challenge.ExpiresAt)
+	}
+}
+
+func TestAuthServiceRejectsInvalidChallengeWithoutRecordingPasswordFailure(t *testing.T) {
+	db := newAuthServiceTestDB(t)
+	user := entity.User{
+		Username:     "admin",
+		PasswordHash: bcryptHashForTest(t, "secret-password"),
+		Role:         "admin",
+		Status:       userStatusEnabled,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("Create user error = %v", err)
+	}
+
+	authService := newAuthServiceForTest(db, time.Hour)
+	_, err := authService.Login(context.Background(), dto.LoginRequest{
+		Username:    "admin",
+		Password:    "wrong-password",
+		ChallengeID: "missing-challenge",
+		ChallengeAnswer: &dto.LoginChallengeAnswer{
+			Angle:          0,
+			DragDurationMS: 800,
+			Track: []dto.ChallengeTrackPoint{
+				{X: 1, Y: 1, T: 0},
+				{X: 2, Y: 2, T: 400},
+				{X: 3, Y: 3, T: 800},
+			},
+		},
+	}, "", "")
+	if !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("Login() error = %v, want ErrInvalidChallenge", err)
+	}
+
+	var storedUser entity.User
+	if err := db.First(&storedUser, user.ID).Error; err != nil {
+		t.Fatalf("Find stored user error = %v", err)
+	}
+	if storedUser.FailedLoginAttempts != 0 {
+		t.Fatalf("FailedLoginAttempts = %d, want 0 when challenge fails", storedUser.FailedLoginAttempts)
+	}
+}
+
+func TestAuthServiceRejectsReplayedChallenge(t *testing.T) {
+	db := newAuthServiceTestDB(t)
+	user := entity.User{
+		Username:     "admin",
+		PasswordHash: bcryptHashForTest(t, "secret-password"),
+		Role:         "admin",
+		Status:       userStatusEnabled,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("Create user error = %v", err)
+	}
+
+	authService := newAuthServiceForTest(db, time.Hour)
+	request := newValidLoginRequestForTest(t, authService, "admin", "secret-password")
+	if _, err := authService.Login(context.Background(), request, "", ""); err != nil {
+		t.Fatalf("first Login() error = %v", err)
+	}
+	if _, err := authService.Login(context.Background(), request, "", ""); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("replayed Login() error = %v, want ErrInvalidChallenge", err)
+	}
+}
+
+func TestAuthServiceRejectsExpiredChallenge(t *testing.T) {
+	db := newAuthServiceTestDB(t)
+	user := entity.User{
+		Username:     "admin",
+		PasswordHash: bcryptHashForTest(t, "secret-password"),
+		Role:         "admin",
+		Status:       userStatusEnabled,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("Create user error = %v", err)
+	}
+	expiredChallenge := entity.AuthChallenge{
+		ChallengeID:     "expired-challenge",
+		ChallengeType:   authChallengeTypeOrbitalSlider,
+		TargetAngle:     180,
+		AnswerTolerance: authChallengeAngleTolerance,
+		ExpiresAt:       time.Now().Add(-time.Minute),
+	}
+	if err := db.Create(&expiredChallenge).Error; err != nil {
+		t.Fatalf("Create challenge error = %v", err)
+	}
+
+	authService := newAuthServiceForTest(db, time.Hour)
+	if _, err := authService.Login(context.Background(), dto.LoginRequest{
+		Username:    "admin",
+		Password:    "secret-password",
+		ChallengeID: expiredChallenge.ChallengeID,
+		ChallengeAnswer: &dto.LoginChallengeAnswer{
+			Angle:          expiredChallenge.TargetAngle,
+			DragDurationMS: 800,
+			Track: []dto.ChallengeTrackPoint{
+				{X: 1, Y: 1, T: 0},
+				{X: 2, Y: 2, T: 400},
+				{X: 3, Y: 3, T: 800},
+			},
+		},
+	}, "", ""); !errors.Is(err, ErrInvalidChallenge) {
+		t.Fatalf("Login() error = %v, want ErrInvalidChallenge", err)
 	}
 }
 
@@ -177,7 +284,7 @@ func newAuthServiceTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("gorm.Open() error = %v", err)
 	}
-	if err := db.AutoMigrate(&entity.User{}, &entity.UserSession{}); err != nil {
+	if err := db.AutoMigrate(&entity.User{}, &entity.UserSession{}, &entity.AuthChallenge{}); err != nil {
 		t.Fatalf("AutoMigrate() error = %v", err)
 	}
 	return db
@@ -188,9 +295,33 @@ func newAuthServiceForTest(db *gorm.DB, ttl time.Duration) AuthService {
 	return NewAuthService(
 		repository.NewUserRepository(db),
 		repository.NewUserSessionRepository(db),
+		repository.NewAuthChallengeRepository(db),
 		tokenManager,
 		ttl,
 	)
+}
+
+func newValidLoginRequestForTest(t *testing.T, authService AuthService, username, password string) dto.LoginRequest {
+	t.Helper()
+
+	challenge, err := authService.Challenge(context.Background(), "127.0.0.1")
+	if err != nil {
+		t.Fatalf("Challenge() error = %v", err)
+	}
+	return dto.LoginRequest{
+		Username:    username,
+		Password:    password,
+		ChallengeID: challenge.ChallengeID,
+		ChallengeAnswer: &dto.LoginChallengeAnswer{
+			Angle:          challenge.Scene.TargetAngle,
+			DragDurationMS: 800,
+			Track: []dto.ChallengeTrackPoint{
+				{X: 160, Y: 160, T: 0},
+				{X: 190, Y: 148, T: 320},
+				{X: 220, Y: 130, T: 800},
+			},
+		},
+	}
 }
 
 func bcryptHashForTest(t *testing.T, password string) string {
