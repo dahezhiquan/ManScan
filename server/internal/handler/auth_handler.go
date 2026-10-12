@@ -12,6 +12,7 @@ import (
 	"ManScan/server/internal/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type AuthHandler interface {
@@ -21,6 +22,8 @@ type AuthHandler interface {
 	Me(c *gin.Context)
 	ListUsers(c *gin.Context)
 	CreateUser(c *gin.Context)
+	UpdateUser(c *gin.Context)
+	DeleteUser(c *gin.Context)
 }
 
 type authHandler struct {
@@ -144,6 +147,40 @@ func (h *authHandler) CreateUser(c *gin.Context) {
 	response.Success(c, data)
 }
 
+func (h *authHandler) UpdateUser(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可修改用户")
+		return
+	}
+
+	var request dto.UpdateUserRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.Fail(c, errcode.InvalidParams, "请求体解析失败")
+		return
+	}
+
+	data, serviceErr := h.service.UpdateUser(c.Request.Context(), c.Param("username"), request)
+	if serviceErr != nil {
+		handleAuthError(c, serviceErr, "修改用户失败")
+		return
+	}
+	response.Success(c, data)
+}
+
+func (h *authHandler) DeleteUser(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可删除用户")
+		return
+	}
+
+	data, serviceErr := h.service.DeleteUser(c.Request.Context(), c.Param("username"))
+	if serviceErr != nil {
+		handleAuthError(c, serviceErr, "删除用户失败")
+		return
+	}
+	response.Success(c, data)
+}
+
 func isAdminRequest(c *gin.Context) bool {
 	rawRole, ok := c.Get(middleware.ContextUserRoleKey)
 	if !ok {
@@ -184,11 +221,15 @@ func handleAuthError(c *gin.Context, err error, fallbackMessage string) {
 		return
 	}
 	if errors.Is(err, service.ErrInvalidUser) {
-		response.Fail(c, errcode.InvalidParams, "username 和 password 不能为空，role 只能是 admin 或 user，status 只能是 enabled、disabled 或 locked")
+		response.Fail(c, errcode.InvalidParams, "username 不能为空，password 长度必须大于 8 且包含字母、数字、标点或符号")
 		return
 	}
 	if errors.Is(err, service.ErrDuplicateUser) {
 		response.Fail(c, errcode.InvalidParams, "username 已存在")
+		return
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		response.Fail(c, errcode.NotFound, "用户不存在")
 		return
 	}
 	if errors.Is(err, service.ErrUnauthorized) || errors.Is(err, auth.ErrInvalidToken) {

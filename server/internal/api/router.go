@@ -35,6 +35,8 @@ func NewRouter(
 	protected.GET("/auth/me", authHandler.Me)
 	protected.GET("/users", authHandler.ListUsers)
 	protected.POST("/users", authHandler.CreateUser)
+	protected.PUT("/users/:username", authHandler.UpdateUser)
+	protected.DELETE("/users/:username", authHandler.DeleteUser)
 
 	protected.GET("/templates", templateHandler.List)
 	protected.GET("/templates/:id", templateHandler.Detail)

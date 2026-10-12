@@ -81,6 +81,17 @@ type CreateUserRequest struct {
 	Status   string `json:"status"`
 }
 
+type UpdateUserRequest struct {
+	Password *string `json:"password"`
+	Role     *string `json:"role"`
+	Status   *string `json:"status"`
+}
+
+type DeleteUserResponse struct {
+	Username     string `json:"username"`
+	DeletedCount int64  `json:"deleted_count"`
+}
+
 type LogoutResponse struct {
 	Revoked bool `json:"revoked"`
 }

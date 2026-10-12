@@ -32,6 +32,11 @@ func NewAssetConfigCenterHandler(assetConfigCenterService service.AssetConfigCen
 }
 
 func (h *assetConfigCenterHandler) Create(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可新增资产配置项")
+		return
+	}
+
 	var request dto.CreateAssetConfigCenterRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		response.Fail(c, errcode.InvalidParams, "请求体解析失败")
@@ -96,6 +101,11 @@ func (h *assetConfigCenterHandler) SmallCategoryOptions(c *gin.Context) {
 }
 
 func (h *assetConfigCenterHandler) Update(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可编辑资产配置项")
+		return
+	}
+
 	itemID, err := parseAssetConfigCenterID(c.Param("id"))
 	if err != nil {
 		response.Fail(c, errcode.InvalidParams, err.Error())
@@ -118,6 +128,11 @@ func (h *assetConfigCenterHandler) Update(c *gin.Context) {
 }
 
 func (h *assetConfigCenterHandler) Delete(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可删除资产配置项")
+		return
+	}
+
 	itemID, err := parseAssetConfigCenterID(c.Param("id"))
 	if err != nil {
 		response.Fail(c, errcode.InvalidParams, err.Error())

@@ -22,6 +22,8 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "GET", "/api/v1/auth/me")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/users")
 	assertRouteRegistered(t, routes, "POST", "/api/v1/users")
+	assertRouteRegistered(t, routes, "PUT", "/api/v1/users/:username")
+	assertRouteRegistered(t, routes, "DELETE", "/api/v1/users/:username")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/vulnerabilities")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
@@ -61,6 +63,10 @@ func (noopAuthHandler) Me(*gin.Context)        {}
 func (noopAuthHandler) ListUsers(*gin.Context) {}
 func (noopAuthHandler) CreateUser(*gin.Context) {
 }
+func (noopAuthHandler) UpdateUser(*gin.Context) {
+}
+func (noopAuthHandler) DeleteUser(*gin.Context) {
+}
 
 type noopAuthService struct{}
 
@@ -89,6 +95,14 @@ func (noopAuthService) ListUsers(context.Context, dto.ListUsersQuery) (*dto.Page
 }
 
 func (noopAuthService) CreateUser(context.Context, dto.CreateUserRequest) (*dto.UserListItem, error) {
+	return nil, nil
+}
+
+func (noopAuthService) UpdateUser(context.Context, string, dto.UpdateUserRequest) (*dto.UserListItem, error) {
+	return nil, nil
+}
+
+func (noopAuthService) DeleteUser(context.Context, string) (*dto.DeleteUserResponse, error) {
 	return nil, nil
 }
 

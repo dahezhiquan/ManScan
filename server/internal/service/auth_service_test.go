@@ -280,7 +280,7 @@ func TestAuthServiceCreateUserAndListUsers(t *testing.T) {
 
 	created, err := authService.CreateUser(context.Background(), dto.CreateUserRequest{
 		Username: " operator ",
-		Password: "secret-password",
+		Password: "secret-password1!",
 		Role:     " USER ",
 		Status:   " enabled ",
 	})
@@ -295,10 +295,10 @@ func TestAuthServiceCreateUserAndListUsers(t *testing.T) {
 	if err := db.Where("username = ?", "operator").First(&storedUser).Error; err != nil {
 		t.Fatalf("Find stored user error = %v", err)
 	}
-	if storedUser.PasswordHash == "secret-password" {
+	if storedUser.PasswordHash == "secret-password1!" {
 		t.Fatalf("PasswordHash stored plaintext password")
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(storedUser.PasswordHash), []byte("secret-password")); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(storedUser.PasswordHash), []byte("secret-password1!")); err != nil {
 		t.Fatalf("stored PasswordHash does not match original password: %v", err)
 	}
 
@@ -319,7 +319,7 @@ func TestAuthServiceCreateUserRejectsDuplicateUsername(t *testing.T) {
 	authService := newAuthServiceForTest(db, time.Hour)
 	request := dto.CreateUserRequest{
 		Username: "admin",
-		Password: "secret-password",
+		Password: "secret-password1!",
 		Role:     "admin",
 		Status:   userStatusEnabled,
 	}
@@ -337,7 +337,7 @@ func TestAuthServiceCreateUserRejectsInvalidInput(t *testing.T) {
 
 	_, err := authService.CreateUser(context.Background(), dto.CreateUserRequest{
 		Username: "viewer",
-		Password: "secret-password",
+		Password: "secret-password1!",
 		Role:     "owner",
 		Status:   userStatusEnabled,
 	})
@@ -347,12 +347,108 @@ func TestAuthServiceCreateUserRejectsInvalidInput(t *testing.T) {
 
 	_, err = authService.CreateUser(context.Background(), dto.CreateUserRequest{
 		Username: "viewer",
-		Password: "secret-password",
+		Password: "secret-password1!",
 		Role:     defaultUserRole,
 		Status:   "pending",
 	})
 	if !errors.Is(err, ErrInvalidUser) {
 		t.Fatalf("CreateUser() invalid status error = %v, want ErrInvalidUser", err)
+	}
+
+	_, err = authService.CreateUser(context.Background(), dto.CreateUserRequest{
+		Username: "viewer",
+		Password: "weakpass1",
+		Role:     defaultUserRole,
+		Status:   userStatusEnabled,
+	})
+	if !errors.Is(err, ErrInvalidUser) {
+		t.Fatalf("CreateUser() weak password error = %v, want ErrInvalidUser", err)
+	}
+}
+
+func TestAuthServiceUpdateUserUpdatesPasswordRoleAndStatus(t *testing.T) {
+	db := newAuthServiceTestDB(t)
+	user := entity.User{
+		Username:            "operator",
+		PasswordHash:        bcryptHashForTest(t, "old-password1!"),
+		Role:                defaultUserRole,
+		Status:              userStatusLocked,
+		FailedLoginAttempts: 5,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("Create user error = %v", err)
+	}
+
+	authService := newAuthServiceForTest(db, time.Hour)
+	updated, err := authService.UpdateUser(context.Background(), "operator", dto.UpdateUserRequest{
+		Password: authStringPtr("new-password1!"),
+		Role:     authStringPtr(adminUserRole),
+		Status:   authStringPtr(userStatusEnabled),
+	})
+	if err != nil {
+		t.Fatalf("UpdateUser() error = %v", err)
+	}
+	if updated.Username != "operator" || updated.Role != adminUserRole || updated.Status != userStatusEnabled {
+		t.Fatalf("UpdateUser() = %+v, want updated user", updated)
+	}
+
+	var storedUser entity.User
+	if err := db.Where("username = ?", "operator").First(&storedUser).Error; err != nil {
+		t.Fatalf("Find stored user error = %v", err)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(storedUser.PasswordHash), []byte("new-password1!")); err != nil {
+		t.Fatalf("stored PasswordHash does not match updated password: %v", err)
+	}
+	if storedUser.FailedLoginAttempts != 0 {
+		t.Fatalf("FailedLoginAttempts = %d, want 0 after enabling user", storedUser.FailedLoginAttempts)
+	}
+}
+
+func TestAuthServiceUpdateUserRejectsInvalidInput(t *testing.T) {
+	db := newAuthServiceTestDB(t)
+	user := entity.User{
+		Username:     "operator",
+		PasswordHash: bcryptHashForTest(t, "old-password1!"),
+		Role:         defaultUserRole,
+		Status:       userStatusEnabled,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("Create user error = %v", err)
+	}
+
+	authService := newAuthServiceForTest(db, time.Hour)
+	if _, err := authService.UpdateUser(context.Background(), "operator", dto.UpdateUserRequest{}); !errors.Is(err, ErrInvalidUser) {
+		t.Fatalf("UpdateUser() empty request error = %v, want ErrInvalidUser", err)
+	}
+	if _, err := authService.UpdateUser(context.Background(), "operator", dto.UpdateUserRequest{
+		Password: authStringPtr("weakpass1"),
+	}); !errors.Is(err, ErrInvalidUser) {
+		t.Fatalf("UpdateUser() weak password error = %v, want ErrInvalidUser", err)
+	}
+}
+
+func TestAuthServiceDeleteUser(t *testing.T) {
+	db := newAuthServiceTestDB(t)
+	user := entity.User{
+		Username:     "operator",
+		PasswordHash: bcryptHashForTest(t, "old-password1!"),
+		Role:         defaultUserRole,
+		Status:       userStatusEnabled,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("Create user error = %v", err)
+	}
+
+	authService := newAuthServiceForTest(db, time.Hour)
+	deleted, err := authService.DeleteUser(context.Background(), "operator")
+	if err != nil {
+		t.Fatalf("DeleteUser() error = %v", err)
+	}
+	if deleted.Username != "operator" || deleted.DeletedCount != 1 {
+		t.Fatalf("DeleteUser() = %+v, want deleted operator", deleted)
+	}
+	if err := db.Where("username = ?", "operator").First(&entity.User{}).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("Find deleted user error = %v, want gorm.ErrRecordNotFound", err)
 	}
 }
 
@@ -413,4 +509,8 @@ func bcryptHashForTest(t *testing.T, password string) string {
 		t.Fatalf("GenerateFromPassword() error = %v", err)
 	}
 	return string(hash)
+}
+
+func authStringPtr(value string) *string {
+	return &value
 }

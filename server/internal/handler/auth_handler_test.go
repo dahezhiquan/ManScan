@@ -41,7 +41,7 @@ func TestAuthHandlerCreateUserCallsServiceForAdmin(t *testing.T) {
 		},
 	}
 	handler := NewAuthHandler(stub)
-	body := bytes.NewBufferString(`{"username":"operator","password":"secret-password","role":"user","status":"enabled"}`)
+	body := bytes.NewBufferString(`{"username":"operator","password":"secret-password1!","role":"user","status":"enabled"}`)
 	context, recorder := newAuthHandlerTestContext(http.MethodPost, "/api/v1/users", body)
 	context.Set(middleware.ContextUserRoleKey, "admin")
 
@@ -52,6 +52,43 @@ func TestAuthHandlerCreateUserCallsServiceForAdmin(t *testing.T) {
 	}
 	if !stub.createUserCalled {
 		t.Fatalf("CreateUser service was not called")
+	}
+}
+
+func TestAuthHandlerUpdateUserRequiresAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stub := &authServiceStub{}
+	handler := NewAuthHandler(stub)
+	body := bytes.NewBufferString(`{"status":"disabled"}`)
+	context, recorder := newAuthHandlerTestContext(http.MethodPut, "/api/v1/users/operator", body)
+	context.Params = gin.Params{{Key: "username", Value: "operator"}}
+	context.Set(middleware.ContextUserRoleKey, "user")
+
+	handler.UpdateUser(context)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if stub.updateUserCalled {
+		t.Fatalf("UpdateUser service should not be called for non-admin role")
+	}
+}
+
+func TestAuthHandlerDeleteUserCallsServiceForAdmin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	stub := &authServiceStub{}
+	handler := NewAuthHandler(stub)
+	context, recorder := newAuthHandlerTestContext(http.MethodDelete, "/api/v1/users/operator", nil)
+	context.Params = gin.Params{{Key: "username", Value: "operator"}}
+	context.Set(middleware.ContextUserRoleKey, "admin")
+
+	handler.DeleteUser(context)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if !stub.deleteUserCalled {
+		t.Fatalf("DeleteUser service was not called")
 	}
 }
 
@@ -72,6 +109,8 @@ func newAuthHandlerTestContext(method, target string, body *bytes.Buffer) (*gin.
 type authServiceStub struct {
 	listUsersCalled    bool
 	createUserCalled   bool
+	updateUserCalled   bool
+	deleteUserCalled   bool
 	createUserResponse *dto.UserListItem
 }
 
@@ -115,5 +154,22 @@ func (s *authServiceStub) CreateUser(context.Context, dto.CreateUserRequest) (*d
 		Username: "operator",
 		Role:     "user",
 		Status:   "enabled",
+	}, nil
+}
+
+func (s *authServiceStub) UpdateUser(context.Context, string, dto.UpdateUserRequest) (*dto.UserListItem, error) {
+	s.updateUserCalled = true
+	return &dto.UserListItem{
+		Username: "operator",
+		Role:     "user",
+		Status:   "disabled",
+	}, nil
+}
+
+func (s *authServiceStub) DeleteUser(context.Context, string) (*dto.DeleteUserResponse, error) {
+	s.deleteUserCalled = true
+	return &dto.DeleteUserResponse{
+		Username:     "operator",
+		DeletedCount: 1,
 	}, nil
 }

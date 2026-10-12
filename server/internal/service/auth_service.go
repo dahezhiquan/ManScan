@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
@@ -29,6 +31,8 @@ type AuthService interface {
 	CurrentUser(ctx context.Context, userID int64) (*dto.UserInfo, error)
 	ListUsers(ctx context.Context, query dto.ListUsersQuery) (*dto.PageResult[dto.UserListItem], error)
 	CreateUser(ctx context.Context, request dto.CreateUserRequest) (*dto.UserListItem, error)
+	UpdateUser(ctx context.Context, username string, request dto.UpdateUserRequest) (*dto.UserListItem, error)
+	DeleteUser(ctx context.Context, username string) (*dto.DeleteUserResponse, error)
 }
 
 type AuthenticatedUser struct {
@@ -60,6 +64,7 @@ const (
 	defaultUserRole                   = "user"
 	adminUserRole                     = "admin"
 	maxLoginFailures                  = 5
+	minCreateUserPasswordLength       = 8
 	maxBCryptPasswordLength           = 72
 	authChallengeTypeOrbitalSlider    = "orbital_slider"
 	authChallengeThemeNeoOrbit        = "neo_orbit"
@@ -425,7 +430,7 @@ func (s *authService) CreateUser(ctx context.Context, request dto.CreateUserRequ
 	if status == "" {
 		status = userStatusEnabled
 	}
-	if username == "" || len(username) > 64 || password == "" || len(password) > maxBCryptPasswordLength || !isValidUserRole(role) || !isValidUserStatus(status) {
+	if username == "" || len(username) > 64 || !isValidCreateUserPassword(password) || !isValidUserRole(role) || !isValidUserStatus(status) {
 		return nil, ErrInvalidUser
 	}
 	if _, err := s.users.FindByUsername(ctx, username); err == nil {
@@ -449,6 +454,77 @@ func (s *authService) CreateUser(ctx context.Context, request dto.CreateUserRequ
 	}
 	result := toUserListItem(*user)
 	return &result, nil
+}
+
+func (s *authService) UpdateUser(ctx context.Context, username string, request dto.UpdateUserRequest) (*dto.UserListItem, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || len(username) > 64 {
+		return nil, ErrInvalidUser
+	}
+	user, err := s.users.FindByUsername(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+
+	changed := false
+	if request.Password != nil {
+		if !isValidCreateUserPassword(*request.Password) {
+			return nil, ErrInvalidUser
+		}
+		passwordHash, err := bcrypt.GenerateFromPassword([]byte(*request.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, err
+		}
+		user.PasswordHash = string(passwordHash)
+		changed = true
+	}
+	if request.Role != nil {
+		role := normalizeUserRole(*request.Role)
+		if !isValidUserRole(role) {
+			return nil, ErrInvalidUser
+		}
+		user.Role = role
+		changed = true
+	}
+	if request.Status != nil {
+		status := normalizeCreateUserStatus(*request.Status)
+		if !isValidUserStatus(status) {
+			return nil, ErrInvalidUser
+		}
+		user.Status = status
+		if status == userStatusEnabled {
+			user.FailedLoginAttempts = 0
+		}
+		changed = true
+	}
+	if !changed {
+		return nil, ErrInvalidUser
+	}
+
+	if err := s.users.Update(ctx, user); err != nil {
+		return nil, err
+	}
+	result := toUserListItem(*user)
+	return &result, nil
+}
+
+func (s *authService) DeleteUser(ctx context.Context, username string) (*dto.DeleteUserResponse, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || len(username) > 64 {
+		return nil, ErrInvalidUser
+	}
+	user, err := s.users.FindByUsername(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+	deletedCount, err := s.users.Delete(ctx, user.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.DeleteUserResponse{
+		Username:     user.Username,
+		DeletedCount: deletedCount,
+	}, nil
 }
 
 func toUserInfo(user entity.User) dto.UserInfo {
@@ -504,6 +580,27 @@ func isValidUserStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func isValidCreateUserPassword(password string) bool {
+	if utf8.RuneCountInString(password) <= minCreateUserPasswordLength || len(password) > maxBCryptPasswordLength {
+		return false
+	}
+
+	hasLetter := false
+	hasDigit := false
+	hasPunctuation := false
+	for _, r := range password {
+		switch {
+		case unicode.IsLetter(r):
+			hasLetter = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		case unicode.IsPunct(r) || unicode.IsSymbol(r):
+			hasPunctuation = true
+		}
+	}
+	return hasLetter && hasDigit && hasPunctuation
 }
 
 func isEnabledUser(user *entity.User) bool {

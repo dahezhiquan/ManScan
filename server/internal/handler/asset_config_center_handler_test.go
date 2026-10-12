@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"ManScan/server/internal/middleware"
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/service"
 
@@ -71,6 +72,7 @@ func TestAssetConfigCenterHandlerCreateReturnsInvalidParamsForDuplicateItemName(
 	h := NewAssetConfigCenterHandler(svc)
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
+	router.Use(setTestUserRole("admin"))
 	router.POST("/asset-config-centers", h.Create)
 
 	body := bytes.NewBufferString(`{"item_name":"Alpha","big_category":"app","small_category":"web","status":"enabled"}`)
@@ -81,6 +83,63 @@ func TestAssetConfigCenterHandlerCreateReturnsInvalidParamsForDuplicateItemName(
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAssetConfigCenterHandlerWriteActionsRequireAdmin(t *testing.T) {
+	t.Parallel()
+
+	svc := &assetConfigCenterServiceStub{}
+	h := NewAssetConfigCenterHandler(svc)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(setTestUserRole("user"))
+	router.POST("/asset-config-centers", h.Create)
+	router.PUT("/asset-config-centers/:id", h.Update)
+	router.DELETE("/asset-config-centers/:id", h.Delete)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{
+			name:   "create",
+			method: http.MethodPost,
+			path:   "/asset-config-centers",
+			body:   `{"item_name":"Alpha","big_category":"app","small_category":"web","status":"enabled"}`,
+		},
+		{
+			name:   "update",
+			method: http.MethodPut,
+			path:   "/asset-config-centers/1",
+			body:   `{"item_name":"Alpha","big_category":"app","small_category":"web","status":"disabled"}`,
+		},
+		{
+			name:   "delete",
+			method: http.MethodDelete,
+			path:   "/asset-config-centers/1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var body *bytes.Buffer
+			if tt.body == "" {
+				body = bytes.NewBuffer(nil)
+			} else {
+				body = bytes.NewBufferString(tt.body)
+			}
+			req := httptest.NewRequest(tt.method, tt.path, body)
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status code = %d, want %d", rec.Code, http.StatusForbidden)
+			}
+		})
 	}
 }
 
@@ -107,6 +166,13 @@ func TestAssetConfigCenterHandlerSmallCategoryOptionsParsesBigCategories(t *test
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status code = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func setTestUserRole(role string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set(middleware.ContextUserRoleKey, role)
+		c.Next()
 	}
 }
 

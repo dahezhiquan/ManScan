@@ -12,6 +12,8 @@ import (
 
 type UserRepository interface {
 	Create(ctx context.Context, user *entity.User) error
+	Update(ctx context.Context, user *entity.User) error
+	Delete(ctx context.Context, userID int64) (int64, error)
 	FindByID(ctx context.Context, userID int64) (*entity.User, error)
 	FindByUsername(ctx context.Context, username string) (*entity.User, error)
 	List(ctx context.Context, page, pageSize int) ([]entity.User, int, error)
@@ -29,6 +31,25 @@ func NewUserRepository(db *gorm.DB) UserRepository {
 
 func (r *userRepository) Create(ctx context.Context, user *entity.User) error {
 	return r.db.WithContext(ctx).Create(user).Error
+}
+
+func (r *userRepository) Update(ctx context.Context, user *entity.User) error {
+	return r.db.WithContext(ctx).Model(&entity.User{}).
+		Where("id = ?", user.ID).
+		Updates(map[string]interface{}{
+			"password_hash":         user.PasswordHash,
+			"role":                  user.Role,
+			"status":                user.Status,
+			"failed_login_attempts": user.FailedLoginAttempts,
+		}).Error
+}
+
+func (r *userRepository) Delete(ctx context.Context, userID int64) (int64, error) {
+	result := r.db.WithContext(ctx).Delete(&entity.User{}, userID)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
 }
 
 func (r *userRepository) FindByID(ctx context.Context, userID int64) (*entity.User, error) {
