@@ -113,7 +113,6 @@ curl "http://127.0.0.1:8686/api/v1/auth/challenge"
     "user": {
       "id": 1,
       "username": "admin",
-      "display_name": "管理员",
       "role": "admin"
     }
   }
@@ -192,7 +191,6 @@ curl -X POST "http://127.0.0.1:8686/api/v1/auth/login" \
   "data": {
     "id": 1,
     "username": "admin",
-    "display_name": "管理员",
     "role": "admin"
   }
 }
@@ -207,6 +205,101 @@ curl -X POST "http://127.0.0.1:8686/api/v1/auth/login" \
 ```bash
 curl "http://127.0.0.1:8686/api/v1/auth/me" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 获取用户列表
+
+- 请求方法和路径：`GET /api/v1/users`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `page` | `int` | 否 | 页码，最小为 `1`，默认 `1` |
+| `page_size` | `int` | 否 | 每页数量，范围 `1-100`，默认 `10` |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 1,
+    "totalPages": 1,
+    "items": [
+      {
+        "username": "admin",
+        "role": "admin",
+        "status": "enabled",
+        "last_login_at": "2026-10-10T18:00:00+08:00"
+      }
+    ]
+  }
+}
+```
+
+- 错误码说明：
+  - `40001`：`page` 或 `page_size` 参数不合法
+  - `40101`：未登录、访问令牌过期、已退出登录或用户被禁用
+  - `40301`：当前用户不是管理员
+  - `50001`：获取用户列表失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/users?page=1&page_size=10" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 新增用户
+
+- 请求方法和路径：`POST /api/v1/users`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `username` | `string` | 是 | 登录用户名，最长 64 个字符，必须唯一 |
+| `password` | `string` | 是 | 登录密码，最长 72 个字符，服务端使用 bcrypt 哈希后入库 |
+| `role` | `string` | 否 | 角色，可选值：`admin`、`user`，默认 `user` |
+| `status` | `string` | 否 | 状态，可选值：`enabled`、`disabled`、`locked`，默认 `enabled` |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "username": "operator",
+    "role": "user",
+    "status": "enabled",
+    "last_login_at": null
+  }
+}
+```
+
+- 错误码说明：
+  - `40001`：请求体格式错误、缺少 `username` 或 `password`、字段长度不合法、`username` 已存在，或 `role`/`status` 取值不合法
+  - `40101`：未登录、访问令牌过期、已退出登录或用户被禁用
+  - `40301`：当前用户不是管理员
+  - `50001`：新增用户失败
+
+- 使用示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8686/api/v1/users" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username":"operator",
+    "password":"YOUR_PASSWORD",
+    "role":"user",
+    "status":"enabled"
+  }'
 ```
 
 ### 退出登录
@@ -246,6 +339,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/auth/logout" \
 - `docs/SQL/create_manscan_user_sessions.sql`：用户会话表，存储 JWT `jti`、访问令牌 SHA-256 哈希、过期时间和吊销时间。
 - `docs/SQL/create_manscan_auth_challenges.sql`：登录验证码挑战表，存储一次性轨道滑块验证码的答案、渲染种子、过期时间和使用时间。
 - `docs/SQL/alter_manscan_users_add_login_lock.sql`：存量用户表升级脚本，为已有部署补充账户锁定状态和连续登录失败次数字段。
+- `docs/SQL/alter_manscan_users_drop_display_name.sql`：存量用户表升级脚本，删除不再使用的展示名称字段。
 
 访问令牌本身不会明文入库；退出登录会写入会话 `revoked_at`，后续请求即使 JWT 尚未过期也会被拒绝。
 

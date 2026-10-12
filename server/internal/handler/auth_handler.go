@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"strings"
 
 	"ManScan/server/internal/middleware"
 	"ManScan/server/internal/model/dto"
@@ -18,6 +19,8 @@ type AuthHandler interface {
 	Login(c *gin.Context)
 	Logout(c *gin.Context)
 	Me(c *gin.Context)
+	ListUsers(c *gin.Context)
+	CreateUser(c *gin.Context)
 }
 
 type authHandler struct {
@@ -93,6 +96,63 @@ func (h *authHandler) Me(c *gin.Context) {
 	response.Success(c, data)
 }
 
+func (h *authHandler) ListUsers(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可查看用户列表")
+		return
+	}
+
+	page, err := parsePositiveIntQuery(c.Query("page"), 1)
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, "page 参数必须是大于等于 1 的整数")
+		return
+	}
+	pageSize, err := parsePositiveIntQuery(c.Query("page_size"), 10)
+	if err != nil || pageSize > 100 {
+		response.Fail(c, errcode.InvalidParams, "page_size 参数必须在 1-100 之间")
+		return
+	}
+
+	data, serviceErr := h.service.ListUsers(c.Request.Context(), dto.ListUsersQuery{
+		Page:     page,
+		PageSize: pageSize,
+	})
+	if serviceErr != nil {
+		handleAuthError(c, serviceErr, "获取用户列表失败")
+		return
+	}
+	response.Success(c, data)
+}
+
+func (h *authHandler) CreateUser(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可新增用户")
+		return
+	}
+
+	var request dto.CreateUserRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.Fail(c, errcode.InvalidParams, "username 和 password 不能为空")
+		return
+	}
+
+	data, serviceErr := h.service.CreateUser(c.Request.Context(), request)
+	if serviceErr != nil {
+		handleAuthError(c, serviceErr, "新增用户失败")
+		return
+	}
+	response.Success(c, data)
+}
+
+func isAdminRequest(c *gin.Context) bool {
+	rawRole, ok := c.Get(middleware.ContextUserRoleKey)
+	if !ok {
+		return false
+	}
+	role, ok := rawRole.(string)
+	return ok && strings.EqualFold(strings.TrimSpace(role), "admin")
+}
+
 func handleAuthError(c *gin.Context, err error, fallbackMessage string) {
 	var loginFailedErr *service.LoginFailedError
 	if errors.As(err, &loginFailedErr) {
@@ -121,6 +181,14 @@ func handleAuthError(c *gin.Context, err error, fallbackMessage string) {
 	}
 	if errors.Is(err, service.ErrUserDisabled) {
 		response.Fail(c, errcode.Forbidden, "用户已被禁用")
+		return
+	}
+	if errors.Is(err, service.ErrInvalidUser) {
+		response.Fail(c, errcode.InvalidParams, "username 和 password 不能为空，role 只能是 admin 或 user，status 只能是 enabled、disabled 或 locked")
+		return
+	}
+	if errors.Is(err, service.ErrDuplicateUser) {
+		response.Fail(c, errcode.InvalidParams, "username 已存在")
 		return
 	}
 	if errors.Is(err, service.ErrUnauthorized) || errors.Is(err, auth.ErrInvalidToken) {

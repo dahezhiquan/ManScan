@@ -57,10 +57,28 @@ type LoginResponse struct {
 }
 
 type UserInfo struct {
-	ID          int64  `json:"id"`
-	Username    string `json:"username"`
-	DisplayName string `json:"display_name"`
-	Role        string `json:"role"`
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
+type ListUsersQuery struct {
+	Page     int
+	PageSize int
+}
+
+type UserListItem struct {
+	Username    string     `json:"username"`
+	Role        string     `json:"role"`
+	Status      string     `json:"status"`
+	LastLoginAt *time.Time `json:"last_login_at"`
+}
+
+type CreateUserRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
+	Role     string `json:"role"`
+	Status   string `json:"status"`
 }
 
 type LogoutResponse struct {

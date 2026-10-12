@@ -20,6 +20,8 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "POST", "/api/v1/auth/login")
 	assertRouteRegistered(t, routes, "POST", "/api/v1/auth/logout")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/auth/me")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/users")
+	assertRouteRegistered(t, routes, "POST", "/api/v1/users")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/vulnerabilities")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
@@ -56,6 +58,9 @@ func (noopAuthHandler) Challenge(*gin.Context) {}
 func (noopAuthHandler) Login(*gin.Context)     {}
 func (noopAuthHandler) Logout(*gin.Context)    {}
 func (noopAuthHandler) Me(*gin.Context)        {}
+func (noopAuthHandler) ListUsers(*gin.Context) {}
+func (noopAuthHandler) CreateUser(*gin.Context) {
+}
 
 type noopAuthService struct{}
 
@@ -76,6 +81,14 @@ func (noopAuthService) Logout(context.Context, string) (*dto.LogoutResponse, err
 }
 
 func (noopAuthService) CurrentUser(context.Context, int64) (*dto.UserInfo, error) {
+	return nil, nil
+}
+
+func (noopAuthService) ListUsers(context.Context, dto.ListUsersQuery) (*dto.PageResult[dto.UserListItem], error) {
+	return nil, nil
+}
+
+func (noopAuthService) CreateUser(context.Context, dto.CreateUserRequest) (*dto.UserListItem, error) {
 	return nil, nil
 }
 

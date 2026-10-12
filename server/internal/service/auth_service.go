@@ -27,6 +27,8 @@ type AuthService interface {
 	Authenticate(ctx context.Context, token string) (*AuthenticatedUser, error)
 	Logout(ctx context.Context, token string) (*dto.LogoutResponse, error)
 	CurrentUser(ctx context.Context, userID int64) (*dto.UserInfo, error)
+	ListUsers(ctx context.Context, query dto.ListUsersQuery) (*dto.PageResult[dto.UserListItem], error)
+	CreateUser(ctx context.Context, request dto.CreateUserRequest) (*dto.UserListItem, error)
 }
 
 type AuthenticatedUser struct {
@@ -48,13 +50,17 @@ var ErrUnauthorized = errors.New("未登录或登录状态已失效")
 var ErrUserDisabled = errors.New("用户已被禁用")
 var ErrUserLocked = errors.New("账户已锁定")
 var ErrInvalidChallenge = errors.New("验证码校验失败，请刷新后重试")
+var ErrInvalidUser = errors.New("用户参数不合法")
+var ErrDuplicateUser = errors.New("用户名已存在")
 
 const (
 	userStatusEnabled                 = "enabled"
 	userStatusDisabled                = "disabled"
 	userStatusLocked                  = "locked"
 	defaultUserRole                   = "user"
+	adminUserRole                     = "admin"
 	maxLoginFailures                  = 5
+	maxBCryptPasswordLength           = 72
 	authChallengeTypeOrbitalSlider    = "orbital_slider"
 	authChallengeThemeNeoOrbit        = "neo_orbit"
 	authChallengeTTL                  = 5 * time.Minute
@@ -381,16 +387,122 @@ func (s *authService) CurrentUser(ctx context.Context, userID int64) (*dto.UserI
 	return &result, nil
 }
 
+func (s *authService) ListUsers(ctx context.Context, query dto.ListUsersQuery) (*dto.PageResult[dto.UserListItem], error) {
+	if query.Page <= 0 || query.PageSize <= 0 {
+		return nil, ErrInvalidUser
+	}
+	users, total, err := s.users.List(ctx, query.Page, query.PageSize)
+	if err != nil {
+		return nil, err
+	}
+
+	items := make([]dto.UserListItem, 0, len(users))
+	for _, user := range users {
+		items = append(items, toUserListItem(user))
+	}
+
+	totalPages := 0
+	if total > 0 {
+		totalPages = (total + query.PageSize - 1) / query.PageSize
+	}
+	return &dto.PageResult[dto.UserListItem]{
+		Page:       query.Page,
+		PageSize:   query.PageSize,
+		Total:      total,
+		TotalPages: totalPages,
+		Items:      items,
+	}, nil
+}
+
+func (s *authService) CreateUser(ctx context.Context, request dto.CreateUserRequest) (*dto.UserListItem, error) {
+	username := strings.TrimSpace(request.Username)
+	password := request.Password
+	role := normalizeUserRole(request.Role)
+	if role == "" {
+		role = defaultUserRole
+	}
+	status := normalizeCreateUserStatus(request.Status)
+	if status == "" {
+		status = userStatusEnabled
+	}
+	if username == "" || len(username) > 64 || password == "" || len(password) > maxBCryptPasswordLength || !isValidUserRole(role) || !isValidUserStatus(status) {
+		return nil, ErrInvalidUser
+	}
+	if _, err := s.users.FindByUsername(ctx, username); err == nil {
+		return nil, ErrDuplicateUser
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	user := &entity.User{
+		Username:     username,
+		PasswordHash: string(passwordHash),
+		Role:         role,
+		Status:       status,
+	}
+	if err := s.users.Create(ctx, user); err != nil {
+		return nil, err
+	}
+	result := toUserListItem(*user)
+	return &result, nil
+}
+
 func toUserInfo(user entity.User) dto.UserInfo {
 	role := strings.TrimSpace(user.Role)
 	if role == "" {
 		role = defaultUserRole
 	}
 	return dto.UserInfo{
-		ID:          user.ID,
+		ID:       user.ID,
+		Username: user.Username,
+		Role:     role,
+	}
+}
+
+func toUserListItem(user entity.User) dto.UserListItem {
+	role := normalizeUserRole(user.Role)
+	if role == "" {
+		role = defaultUserRole
+	}
+	status := normalizeCreateUserStatus(user.Status)
+	if status == "" {
+		status = userStatusEnabled
+	}
+	return dto.UserListItem{
 		Username:    user.Username,
-		DisplayName: user.DisplayName,
 		Role:        role,
+		Status:      status,
+		LastLoginAt: user.LastLoginAt,
+	}
+}
+
+func normalizeUserRole(role string) string {
+	return strings.ToLower(strings.TrimSpace(role))
+}
+
+func normalizeCreateUserStatus(status string) string {
+	return strings.ToLower(strings.TrimSpace(status))
+}
+
+func isValidUserRole(role string) bool {
+	switch role {
+	case defaultUserRole, adminUserRole:
+		return true
+	default:
+		return false
+	}
+}
+
+func isValidUserStatus(status string) bool {
+	switch status {
+	case userStatusEnabled, userStatusDisabled, userStatusLocked:
+		return true
+	default:
+		return false
 	}
 }
 

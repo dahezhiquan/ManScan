@@ -33,6 +33,8 @@ func NewRouter(
 	protected.Use(middleware.JWTAuth(authService))
 	protected.POST("/auth/logout", authHandler.Logout)
 	protected.GET("/auth/me", authHandler.Me)
+	protected.GET("/users", authHandler.ListUsers)
+	protected.POST("/users", authHandler.CreateUser)
 
 	protected.GET("/templates", templateHandler.List)
 	protected.GET("/templates/:id", templateHandler.Detail)
