@@ -68,9 +68,6 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	if serviceAssetQueue != nil {
 		serviceAssetQueue.SetNetworkRegions(networkRegions)
 	}
-	if err := s.syncAliveAssetHostsBeforeScan(ctx, targets, networkRegions, state); err != nil {
-		return err
-	}
 	if request.DisableHTTPProbe {
 		return nil
 	}
@@ -224,28 +221,6 @@ func assetDomainProbeHostCounts(result assetDomainLivenessProbeResult) (int, int
 	return aliveCount, notAliveCount
 }
 
-func (s *scanTaskService) syncAliveAssetHostsBeforeScan(ctx context.Context, targets []string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) error {
-	if s.assetHostRepository == nil {
-		return nil
-	}
-	observations := buildAssetHostObservations(targets, networkRegions)
-	if len(observations) == 0 {
-		return nil
-	}
-	if err := s.assetHostRepository.SyncObservations(ctx, observations, time.Now()); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return err
-		}
-		if s.logger != nil {
-			s.logger.Error("sync asset host observations before scan failed", "host_count", len(observations), "error", err)
-		}
-		if state != nil {
-			state.Append("warn", "asset_host_sync_failed", "扫描前主机资产同步失败，已继续后续扫描")
-		}
-	}
-	return nil
-}
-
 func (s *scanTaskService) syncAliveAssetHostPortsFromDomainObservations(ctx context.Context, observations []repository.AssetDomainObservation, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) error {
 	if s.assetHostPortRepository == nil {
 		return nil
@@ -300,6 +275,11 @@ func (s *scanTaskService) syncAssetServiceAssets(ctx context.Context, observatio
 			return err
 		}
 	}
+	if s.assetHostRepository != nil && len(hostPortObservations) > 0 {
+		if err := s.assetHostRepository.SyncObservations(ctx, buildAssetHostObservationsFromHostPortObservations(hostPortObservations, networkRegions), observedAt); err != nil {
+			return err
+		}
+	}
 	if s.assetHostPortRepository != nil && len(hostPortObservations) > 0 {
 		if err := s.assetHostPortRepository.SyncObservations(ctx, hostPortObservations, observedAt); err != nil {
 			return err
@@ -338,29 +318,52 @@ func inactiveAssetHostHTTPPortObservationFromDomain(domain string, networkRegion
 	}
 
 	return repository.AssetHostPortObservation{
-		IPAddress:   endpoint.Host,
-		Region:      assetDomainRegion(endpoint.Host, networkRegions),
-		PortNumber:  endpoint.PortNumber,
-		ServiceName: "http",
-		AppName:     "http",
-		IsAlive:     false,
+		IPAddress:    endpoint.Host,
+		Region:       assetDomainRegion(endpoint.Host, networkRegions),
+		PortProtocol: "tcp",
+		PortNumber:   endpoint.PortNumber,
+		ServiceName:  "http",
+		AppName:      "http",
+		IsAlive:      false,
 	}, true
 }
 
-func buildAssetHostObservations(targets []string, networkRegions []assetDomainNetworkRegion) []repository.AssetHostObservation {
-	observations := make([]repository.AssetHostObservation, 0, len(targets))
-	for _, target := range targets {
-		ipAddress := assetHostIPAddressFromTarget(target)
+func buildAssetHostObservationsFromHostPortObservations(values []repository.AssetHostPortObservation, networkRegions []assetDomainNetworkRegion) []repository.AssetHostObservation {
+	observations := make([]repository.AssetHostObservation, 0, len(values))
+	for _, value := range values {
+		ipAddress := strings.TrimSpace(value.IPAddress)
 		if ipAddress == "" {
 			continue
 		}
+		region := strings.TrimSpace(value.Region)
+		if region == "" {
+			region = assetDomainRegion(ipAddress, networkRegions)
+		}
 		observations = append(observations, repository.AssetHostObservation{
 			IPAddress: ipAddress,
-			Region:    assetDomainRegion(ipAddress, networkRegions),
+			Region:    region,
 			IsAlive:   true,
 		})
 	}
-	return observations
+	return uniqueAssetHostObservations(observations)
+}
+
+func uniqueAssetHostObservations(values []repository.AssetHostObservation) []repository.AssetHostObservation {
+	result := make([]repository.AssetHostObservation, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.IPAddress = strings.TrimSpace(value.IPAddress)
+		value.Region = strings.TrimSpace(value.Region)
+		if value.IPAddress == "" {
+			continue
+		}
+		if _, ok := seen[value.IPAddress]; ok {
+			continue
+		}
+		seen[value.IPAddress] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func buildAssetHostPortObservationsFromDomainObservations(ctx context.Context, observations []repository.AssetDomainObservation, networkRegions []assetDomainNetworkRegion) []repository.AssetHostPortObservation {
@@ -372,12 +375,13 @@ func buildAssetHostPortObservationsFromDomainObservations(ctx context.Context, o
 		}
 		for _, ipAddress := range resolveAssetHostIPAddresses(ctx, endpoint.Host) {
 			hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
-				IPAddress:   ipAddress,
-				Region:      assetDomainRegion(ipAddress, networkRegions),
-				PortNumber:  endpoint.PortNumber,
-				ServiceName: "http",
-				AppName:     "http",
-				IsAlive:     true,
+				IPAddress:    ipAddress,
+				Region:       assetDomainRegion(ipAddress, networkRegions),
+				PortProtocol: "tcp",
+				PortNumber:   endpoint.PortNumber,
+				ServiceName:  "http",
+				AppName:      "http",
+				IsAlive:      true,
 			})
 		}
 	}
@@ -397,13 +401,17 @@ func splitAssetServiceAssetObservations(ctx context.Context, observations []repo
 		if endpoint.IsDomain {
 			domainObservations = append(domainObservations, observation)
 			for _, ipAddress := range resolveAssetHostIPAddresses(ctx, endpoint.Host) {
+				_, isHTTPAsset := httpEndpointKeys[assetHostPortEndpointKey(ipAddress, endpoint.PortNumber)]
+				serviceName, appVersion := assetHostPortServiceFromServiceAssetObservation(observation, isHTTPAsset)
 				hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
-					IPAddress:   ipAddress,
-					Region:      assetDomainRegion(ipAddress, networkRegions),
-					PortNumber:  endpoint.PortNumber,
-					ServiceName: "http",
-					AppName:     "http",
-					IsAlive:     true,
+					IPAddress:    ipAddress,
+					Region:       assetDomainRegion(ipAddress, networkRegions),
+					PortProtocol: assetHostPortProtocolFromServiceAssetObservation(observation, serviceName, isHTTPAsset),
+					PortNumber:   endpoint.PortNumber,
+					ServiceName:  serviceName,
+					AppName:      serviceName,
+					AppVersion:   appVersion,
+					IsAlive:      true,
 				})
 			}
 			continue
@@ -412,23 +420,37 @@ func splitAssetServiceAssetObservations(ctx context.Context, observations []repo
 		if isHTTPAsset {
 			domainObservations = append(domainObservations, observation)
 		}
-		serviceName := normalizeAssetDomainComponentName(observation.AppName)
-		appVersion := observation.AppVersion
-		if isHTTPAsset {
-			serviceName = "http"
-			appVersion = ""
-		}
+		serviceName, appVersion := assetHostPortServiceFromServiceAssetObservation(observation, isHTTPAsset)
 		hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
-			IPAddress:   endpoint.Host,
-			Region:      assetDomainRegion(endpoint.Host, networkRegions),
-			PortNumber:  endpoint.PortNumber,
-			ServiceName: serviceName,
-			AppName:     serviceName,
-			AppVersion:  appVersion,
-			IsAlive:     true,
+			IPAddress:    endpoint.Host,
+			Region:       assetDomainRegion(endpoint.Host, networkRegions),
+			PortProtocol: assetHostPortProtocolFromServiceAssetObservation(observation, serviceName, isHTTPAsset),
+			PortNumber:   endpoint.PortNumber,
+			ServiceName:  serviceName,
+			AppName:      serviceName,
+			AppVersion:   appVersion,
+			IsAlive:      true,
 		})
 	}
 	return uniqueAssetDomainServiceAssetObservations(domainObservations), uniqueAssetHostPortObservations(hostPortObservations)
+}
+
+func assetHostPortServiceFromServiceAssetObservation(observation repository.AssetDomainServiceAssetObservation, isHTTPAsset bool) (string, string) {
+	if isHTTPAsset {
+		return "http", ""
+	}
+	serviceName := normalizeAssetDomainComponentName(observation.AppName)
+	return serviceName, observation.AppVersion
+}
+
+func assetHostPortProtocolFromServiceAssetObservation(observation repository.AssetDomainServiceAssetObservation, serviceName string, isHTTPAsset bool) string {
+	if isHTTPAsset {
+		return "tcp"
+	}
+	if protocol := normalizeAssetHostPortProtocol(observation.PortProtocol); protocol != "" {
+		return protocol
+	}
+	return assetHostPortProtocolFromServiceName(serviceName)
 }
 
 func assetHostPortHTTPObservationKeys(ctx context.Context, observations []repository.AssetDomainObservation) map[string]struct{} {
@@ -470,7 +492,7 @@ func uniqueAssetHostPortObservations(values []repository.AssetHostPortObservatio
 	for _, value := range values {
 		value.IPAddress = strings.TrimSpace(value.IPAddress)
 		value.Region = strings.TrimSpace(value.Region)
-		value.PortProtocol = strings.TrimSpace(value.PortProtocol)
+		value.PortProtocol = normalizeAssetHostPortProtocol(value.PortProtocol)
 		value.ServiceName = normalizeAssetDomainComponentName(value.ServiceName)
 		value.AppName = normalizeAssetDomainComponentName(value.AppName)
 		value.AppVersion = normalizeAssetDomainComponentVersion(value.AppVersion)
@@ -485,37 +507,6 @@ func uniqueAssetHostPortObservations(values []repository.AssetHostPortObservatio
 		result = append(result, value)
 	}
 	return result
-}
-
-func assetHostIPAddressFromTarget(target string) string {
-	target = strings.TrimSpace(target)
-	if target == "" {
-		return ""
-	}
-	endpoint, _, _ := strings.Cut(target, ",")
-	endpoint = strings.TrimSpace(endpoint)
-	if endpoint == "" {
-		return ""
-	}
-
-	host := ""
-	if strings.Contains(endpoint, "://") {
-		parsed, err := url.Parse(endpoint)
-		if err != nil {
-			return ""
-		}
-		host = parsed.Hostname()
-	} else if splitHost, _, err := net.SplitHostPort(endpoint); err == nil {
-		host = splitHost
-	} else {
-		host = strings.Trim(endpoint, "[]")
-	}
-
-	addr, err := netip.ParseAddr(strings.TrimSpace(host))
-	if err != nil {
-		return ""
-	}
-	return addr.String()
 }
 
 type assetHostPortEndpoint struct {
@@ -808,9 +799,10 @@ type assetDomainFingerprintCacheEntry struct {
 }
 
 type assetDomainFingerprintCacheComponent struct {
-	Domain     string `json:"domain"`
-	AppName    string `json:"app_name"`
-	AppVersion string `json:"app_version"`
+	Domain       string `json:"domain"`
+	AppName      string `json:"app_name"`
+	AppVersion   string `json:"app_version"`
+	PortProtocol string `json:"port_protocol,omitempty"`
 }
 
 type assetDomainProbeHTTPResponse struct {
@@ -1288,9 +1280,10 @@ func assetDomainWappalyzerComponents(wappalyzerClient *wappalyzer.Wappalyze, dom
 			continue
 		}
 		components = append(components, repository.AssetDomainServiceAssetObservation{
-			Domain:     domain,
-			AppName:    appName,
-			AppVersion: strings.TrimSpace(appVersion),
+			Domain:       domain,
+			AppName:      appName,
+			AppVersion:   strings.TrimSpace(appVersion),
+			PortProtocol: "tcp",
 		})
 	}
 	return uniqueAssetDomainServiceAssetObservations(components)
@@ -1316,21 +1309,49 @@ func normalizeAssetDomainComponentName(value string) string {
 	return strings.ToLower(value)
 }
 
+func normalizeAssetHostPortProtocol(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "tcp", "udp":
+		return value
+	default:
+		return ""
+	}
+}
+
+func assetHostPortProtocolFromServiceName(value string) string {
+	switch normalizeAssetDomainComponentName(value) {
+	case "ftp", "http", "https", "imap", "mysql", "pop3", "postgres", "postgresql", "rdp", "redis", "smtp", "smb", "ssh", "telnet":
+		return "tcp"
+	case "snmp", "ntp", "tftp":
+		return "udp"
+	default:
+		return ""
+	}
+}
+
 func uniqueAssetDomainServiceAssetObservations(values []repository.AssetDomainServiceAssetObservation) []repository.AssetDomainServiceAssetObservation {
 	result := make([]repository.AssetDomainServiceAssetObservation, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	seen := make(map[string]int, len(values))
 	for _, value := range values {
 		value.Domain = strings.TrimSpace(value.Domain)
 		value.AppName = normalizeAssetDomainComponentName(value.AppName)
 		value.AppVersion = strings.TrimSpace(value.AppVersion)
+		value.PortProtocol = normalizeAssetHostPortProtocol(value.PortProtocol)
 		if value.Domain == "" || value.AppName == "" {
 			continue
 		}
 		key := value.Domain + "\x00" + value.AppName
-		if _, ok := seen[key]; ok {
+		if index, ok := seen[key]; ok {
+			if result[index].AppVersion == "" && value.AppVersion != "" {
+				result[index].AppVersion = value.AppVersion
+			}
+			if result[index].PortProtocol == "" && value.PortProtocol != "" {
+				result[index].PortProtocol = value.PortProtocol
+			}
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(result)
 		result = append(result, value)
 	}
 	return result
@@ -1359,9 +1380,10 @@ func assetDomainFingerprintCacheComponents(values []repository.AssetDomainServic
 	components := make([]assetDomainFingerprintCacheComponent, 0, len(values))
 	for _, value := range uniqueAssetDomainServiceAssetObservations(values) {
 		components = append(components, assetDomainFingerprintCacheComponent{
-			Domain:     value.Domain,
-			AppName:    value.AppName,
-			AppVersion: value.AppVersion,
+			Domain:       value.Domain,
+			AppName:      value.AppName,
+			AppVersion:   value.AppVersion,
+			PortProtocol: value.PortProtocol,
 		})
 	}
 	return components
@@ -1369,19 +1391,26 @@ func assetDomainFingerprintCacheComponents(values []repository.AssetDomainServic
 
 func uniqueAssetDomainFingerprintCacheComponents(values []assetDomainFingerprintCacheComponent) []assetDomainFingerprintCacheComponent {
 	result := make([]assetDomainFingerprintCacheComponent, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	seen := make(map[string]int, len(values))
 	for _, value := range values {
 		value.Domain = strings.TrimSpace(value.Domain)
 		value.AppName = normalizeAssetDomainComponentName(value.AppName)
 		value.AppVersion = strings.TrimSpace(value.AppVersion)
+		value.PortProtocol = normalizeAssetHostPortProtocol(value.PortProtocol)
 		if value.Domain == "" || value.AppName == "" {
 			continue
 		}
 		key := value.Domain + "\x00" + value.AppName
-		if _, ok := seen[key]; ok {
+		if index, ok := seen[key]; ok {
+			if result[index].AppVersion == "" && value.AppVersion != "" {
+				result[index].AppVersion = value.AppVersion
+			}
+			if result[index].PortProtocol == "" && value.PortProtocol != "" {
+				result[index].PortProtocol = value.PortProtocol
+			}
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(result)
 		result = append(result, value)
 	}
 	return result

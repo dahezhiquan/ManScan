@@ -39,9 +39,10 @@ type AssetDomainNetworkItem struct {
 }
 
 type AssetDomainServiceAssetObservation struct {
-	Domain     string
-	AppName    string
-	AppVersion string
+	Domain       string
+	AppName      string
+	AppVersion   string
+	PortProtocol string
 }
 
 type AssetDomainListRecord struct {
@@ -712,19 +713,26 @@ func uniqueNonEmptyAssetDomains(values []string) []string {
 
 func uniqueAssetDomainServiceAssetObservations(values []AssetDomainServiceAssetObservation) []AssetDomainServiceAssetObservation {
 	result := make([]AssetDomainServiceAssetObservation, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	seen := make(map[string]int, len(values))
 	for _, value := range values {
 		value.Domain = strings.TrimSpace(value.Domain)
 		value.AppName = strings.TrimSpace(value.AppName)
 		value.AppVersion = strings.TrimSpace(value.AppVersion)
+		value.PortProtocol = strings.ToLower(strings.TrimSpace(value.PortProtocol))
 		if value.Domain == "" || value.AppName == "" {
 			continue
 		}
 		key := value.Domain + "\x00" + value.AppName
-		if _, ok := seen[key]; ok {
+		if index, ok := seen[key]; ok {
+			if result[index].AppVersion == "" && value.AppVersion != "" {
+				result[index].AppVersion = value.AppVersion
+			}
+			if result[index].PortProtocol == "" && value.PortProtocol != "" {
+				result[index].PortProtocol = value.PortProtocol
+			}
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(result)
 		result = append(result, value)
 	}
 	return result

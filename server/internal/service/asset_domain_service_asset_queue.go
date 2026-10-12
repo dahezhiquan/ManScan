@@ -10,6 +10,7 @@ import (
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/scanruntime"
+	"ManScan/server/internal/pkg/templateprotocol"
 	"ManScan/server/internal/repository"
 )
 
@@ -295,12 +296,71 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayloadWithResolver(c
 	versionsByName := assetDomainFingerprintExtractedVersions(payload, componentNames)
 	for _, componentName := range componentNames {
 		components = append(components, repository.AssetDomainServiceAssetObservation{
-			Domain:     domain,
-			AppName:    componentName,
-			AppVersion: versionsByName[componentName],
+			Domain:       domain,
+			AppName:      componentName,
+			AppVersion:   versionsByName[componentName],
+			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, matchedAt, domain, componentName),
 		})
 	}
 	return uniqueAssetDomainServiceAssetObservations(components), nil
+}
+
+func assetDomainFingerprintPortProtocol(payload map[string]interface{}, templateDetail *dto.TemplateDetail, matchedAt, domain, componentName string) string {
+	for _, values := range []map[string]interface{}{
+		payload,
+		payloadInfo(payload),
+		interfaceMap(payload["metadata"]),
+	} {
+		for _, key := range []string{"port_protocol", "port-protocol", "transport", "network", "proto", "protocol"} {
+			if protocol := normalizeAssetHostPortProtocol(scanruntime.AsString(values[key])); protocol != "" {
+				return protocol
+			}
+		}
+	}
+
+	for _, value := range []string{
+		scanruntime.AsString(payload["type"]),
+		scanruntime.AsString(payload["scheme"]),
+	} {
+		if protocol := assetHostPortProtocolFromTemplateProtocol(value); protocol != "" {
+			return protocol
+		}
+	}
+	if templateDetail != nil {
+		for _, value := range templateDetail.Protocols {
+			if protocol := assetHostPortProtocolFromTemplateProtocol(value); protocol != "" {
+				return protocol
+			}
+		}
+	}
+	for _, value := range []string{matchedAt, scanruntime.AsString(payload["url"]), scanruntime.AsString(payload["host"]), domain} {
+		if parsed, ok := parseEndpoint(value); ok {
+			if protocol := assetHostPortProtocolFromScheme(parsed.Scheme); protocol != "" {
+				return protocol
+			}
+		}
+	}
+	return assetHostPortProtocolFromServiceName(componentName)
+}
+
+func assetHostPortProtocolFromTemplateProtocol(value string) string {
+	switch templateprotocol.Normalize(value) {
+	case "http", "tcp", "ssl", "headless", "websocket":
+		return "tcp"
+	default:
+		return normalizeAssetHostPortProtocol(value)
+	}
+}
+
+func assetHostPortProtocolFromScheme(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "http", "https", "ws", "wss", "tcp", "tls", "ssl":
+		return "tcp"
+	case "udp":
+		return "udp"
+	default:
+		return ""
+	}
 }
 
 type assetDomainFingerprintTargetResolver struct {

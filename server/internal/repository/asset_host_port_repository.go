@@ -128,7 +128,7 @@ func uniqueAssetHostPortObservations(values []AssetHostPortObservation) []AssetH
 	for _, value := range values {
 		value.IPAddress = strings.TrimSpace(value.IPAddress)
 		value.Region = strings.TrimSpace(value.Region)
-		value.PortProtocol = strings.TrimSpace(value.PortProtocol)
+		value.PortProtocol = strings.ToLower(strings.TrimSpace(value.PortProtocol))
 		value.ServiceName = strings.TrimSpace(value.ServiceName)
 		value.AppName = strings.TrimSpace(value.AppName)
 		value.AppVersion = strings.TrimSpace(value.AppVersion)

@@ -278,48 +278,7 @@ func TestAssetDomainRegion(t *testing.T) {
 	}
 }
 
-func TestAssetHostIPAddressFromTarget(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name   string
-		target string
-		want   string
-	}{
-		{
-			name:   "ip port service tuple",
-			target: "10.72.160.123:8660,mysql",
-			want:   "10.72.160.123",
-		},
-		{
-			name:   "ip url",
-			target: "http://10.72.160.153:8670",
-			want:   "10.72.160.153",
-		},
-		{
-			name:   "domain target ignored",
-			target: "redis.internal.example.com:6379,redis",
-			want:   "",
-		},
-		{
-			name:   "bare ip",
-			target: "10.72.160.153",
-			want:   "10.72.160.153",
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := assetHostIPAddressFromTarget(tc.target); got != tc.want {
-				t.Fatalf("assetHostIPAddressFromTarget(%q) = %q, want %q", tc.target, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestSyncAliveAssetDomainsBeforeScanSyncsIPTargetsToAssetHosts(t *testing.T) {
+func TestSyncAliveAssetDomainsBeforeScanDoesNotSyncRawIPTargetsToAssetHosts(t *testing.T) {
 	t.Parallel()
 
 	domainRepo := &assetDomainRepositoryStub{
@@ -343,18 +302,8 @@ func TestSyncAliveAssetDomainsBeforeScanSyncsIPTargetsToAssetHosts(t *testing.T)
 		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
 	}
 
-	if len(hostRepo.observationValues) != 1 {
-		t.Fatalf("SyncObservations calls = %d, want 1", len(hostRepo.observationValues))
-	}
-	got := hostRepo.observationValues[0]
-	if len(got) != 2 {
-		t.Fatalf("host observations = %+v, want two IP hosts", got)
-	}
-	if got[0].IPAddress != "10.72.160.123" || got[0].Region != "生产内网" || !got[0].IsAlive {
-		t.Fatalf("first host observation = %+v, want matched alive host", got[0])
-	}
-	if got[1].IPAddress != "10.72.160.153" || got[1].Region != "生产内网" || !got[1].IsAlive {
-		t.Fatalf("second host observation = %+v, want matched alive host", got[1])
+	if len(hostRepo.observationValues) != 0 {
+		t.Fatalf("host observations = %+v, want no host records before fingerprint evidence", hostRepo.observationValues)
 	}
 	if len(domainRepo.syncObservationValues) != 0 {
 		t.Fatalf("domain observations = %+v, want HTTP probe skipped", domainRepo.syncObservationValues)
@@ -392,9 +341,11 @@ func TestSyncAssetServiceAssetsRoutesIPEndpointsToHostPorts(t *testing.T) {
 	t.Parallel()
 
 	domainRepo := &assetDomainRepositoryStub{}
+	hostRepo := &assetHostRepositoryStub{}
 	hostPortRepo := &assetHostPortRepositoryStub{}
 	svc := &scanTaskService{
 		assetDomainRepository:   domainRepo,
+		assetHostRepository:     hostRepo,
 		assetHostPortRepository: hostPortRepo,
 	}
 
@@ -411,11 +362,18 @@ func TestSyncAssetServiceAssetsRoutesIPEndpointsToHostPorts(t *testing.T) {
 	if len(domainRepo.syncServiceAssetObservations) != 0 {
 		t.Fatalf("domain service asset syncs = %+v, want none for IP endpoint", domainRepo.syncServiceAssetObservations)
 	}
+	if len(hostRepo.observationValues) != 1 || len(hostRepo.observationValues[0]) != 1 {
+		t.Fatalf("host syncs = %+v, want one fingerprint-backed IP host", hostRepo.observationValues)
+	}
+	host := hostRepo.observationValues[0][0]
+	if host.IPAddress != "10.72.160.153" || host.Region != "生产内网" || !host.IsAlive {
+		t.Fatalf("host observation = %+v, want fingerprint-backed alive host", host)
+	}
 	if len(hostPortRepo.observationValues) != 1 || len(hostPortRepo.observationValues[0]) != 1 {
 		t.Fatalf("host port syncs = %+v, want one IP endpoint observation", hostPortRepo.observationValues)
 	}
 	got := hostPortRepo.observationValues[0][0]
-	if got.IPAddress != "10.72.160.153" || got.PortNumber != 8664 || got.ServiceName != "redis" || got.AppName != "redis" || got.AppVersion != "7.2.1" || got.Region != "生产内网" {
+	if got.IPAddress != "10.72.160.153" || got.PortProtocol != "tcp" || got.PortNumber != 8664 || got.ServiceName != "redis" || got.AppName != "redis" || got.AppVersion != "7.2.1" || got.Region != "生产内网" {
 		t.Fatalf("host port observation = %+v, want redis endpoint with version", got)
 	}
 }
@@ -424,9 +382,11 @@ func TestSyncAssetServiceAssetsKeepsHTTPServiceForHTTPProbedIPEndpoint(t *testin
 	t.Parallel()
 
 	domainRepo := &assetDomainRepositoryStub{}
+	hostRepo := &assetHostRepositoryStub{}
 	hostPortRepo := &assetHostPortRepositoryStub{}
 	svc := &scanTaskService{
 		assetDomainRepository:   domainRepo,
+		assetHostRepository:     hostRepo,
 		assetHostPortRepository: hostPortRepo,
 	}
 
@@ -459,8 +419,11 @@ func TestSyncAssetServiceAssetsKeepsHTTPServiceForHTTPProbedIPEndpoint(t *testin
 	if len(hostPortRepo.observationValues) != 1 || len(hostPortRepo.observationValues[0]) != 1 {
 		t.Fatalf("host port syncs = %+v, want one HTTP endpoint observation", hostPortRepo.observationValues)
 	}
+	if len(hostRepo.observationValues) != 1 || len(hostRepo.observationValues[0]) != 1 {
+		t.Fatalf("host syncs = %+v, want one HTTP fingerprint-backed IP host", hostRepo.observationValues)
+	}
 	got := hostPortRepo.observationValues[0][0]
-	if got.IPAddress != "10.107.71.65" || got.PortNumber != 8889 || got.ServiceName != "http" || got.AppName != "http" || got.AppVersion != "" || got.Region != "生产内网" {
+	if got.IPAddress != "10.107.71.65" || got.PortProtocol != "tcp" || got.PortNumber != 8889 || got.ServiceName != "http" || got.AppName != "http" || got.AppVersion != "" || got.Region != "生产内网" {
 		t.Fatalf("host port observation = %+v, want HTTP service/app for probed HTTP endpoint", got)
 	}
 }
@@ -485,7 +448,7 @@ func TestBuildInactiveAssetHostHTTPPortObservationsUsesInactiveIPDomains(t *test
 		t.Fatalf("observations = %+v, want one inactive http port", observations)
 	}
 	got := observations[0]
-	if got.IPAddress != "10.72.160.153" || got.PortNumber != 80 || got.ServiceName != "http" || got.AppName != "http" || got.IsAlive {
+	if got.IPAddress != "10.72.160.153" || got.PortProtocol != "tcp" || got.PortNumber != 80 || got.ServiceName != "http" || got.AppName != "http" || got.IsAlive {
 		t.Fatalf("observation = %+v, want inactive http port for down IP domain", got)
 	}
 	if got.Region != "生产内网" {
@@ -897,6 +860,44 @@ func TestAssetDomainFingerprintResultPrefersOriginalInputForSharedRedirect(t *te
 	}
 	if observations[0].Domain != "baoxian.duxiaoman-int.com:443" {
 		t.Fatalf("observations[0].Domain = %q, want original input endpoint", observations[0].Domain)
+	}
+}
+
+func TestAssetDomainFingerprintResultInfersPortProtocolFromNetworkType(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"redis-detect": {
+					ID:        "redis-detect",
+					Name:      "Redis Detect",
+					Protocols: []string{"network"},
+					Tags:      []string{"tech", "redis"},
+					Severity:  "info",
+				},
+			},
+		},
+	}
+
+	observations, err := svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), map[string]interface{}{
+		"template-id":  "redis-detect",
+		"matched-at":   "10.72.160.153:6379",
+		"type":         "network",
+		"matcher-name": "redis",
+		"info": map[string]interface{}{
+			"name": "Redis Detect",
+			"tags": []interface{}{"tech", "redis"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayload() error = %v", err)
+	}
+	if len(observations) != 1 {
+		t.Fatalf("observations = %+v, want one redis component", observations)
+	}
+	if observations[0].PortProtocol != "tcp" {
+		t.Fatalf("PortProtocol = %q, want tcp", observations[0].PortProtocol)
 	}
 }
 
