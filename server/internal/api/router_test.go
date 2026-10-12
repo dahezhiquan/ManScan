@@ -13,7 +13,7 @@ import (
 func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{})
+	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopSettingHandler{})
 	routes := router.Routes()
 
 	assertRouteRegistered(t, routes, "GET", "/api/v1/auth/challenge")
@@ -38,6 +38,8 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "POST", "/api/v1/asset-config-centers")
 	assertRouteRegistered(t, routes, "PUT", "/api/v1/asset-config-centers/:id")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/asset-config-centers/:id")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/settings/theme")
+	assertRouteRegistered(t, routes, "PUT", "/api/v1/settings/theme")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/scans")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/scans/:id/responses/archive")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/scans/:id/raw-logs/archive")
@@ -160,3 +162,8 @@ func (noopAssetConfigCenterHandler) List(*gin.Context)                 {}
 func (noopAssetConfigCenterHandler) SmallCategoryOptions(*gin.Context) {}
 func (noopAssetConfigCenterHandler) Update(*gin.Context)               {}
 func (noopAssetConfigCenterHandler) Delete(*gin.Context)               {}
+
+type noopSettingHandler struct{}
+
+func (noopSettingHandler) GetTheme(*gin.Context)    {}
+func (noopSettingHandler) UpdateTheme(*gin.Context) {}

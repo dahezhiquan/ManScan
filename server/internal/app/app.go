@@ -38,6 +38,7 @@ func Run() error {
 	assetHostRepository := repository.NewAssetHostRepository(db)
 	assetHostPortRepository := repository.NewAssetHostPortRepository(db)
 	assetConfigCenterRepository := repository.NewAssetConfigCenterRepository(db)
+	userSettingRepository := repository.NewUserSettingRepository(db)
 	userRepository := repository.NewUserRepository(db)
 	userSessionRepository := repository.NewUserSessionRepository(db)
 	authChallengeRepository := repository.NewAuthChallengeRepository(db)
@@ -46,6 +47,7 @@ func Run() error {
 	assetDomainService := service.NewAssetDomainService(assetDomainRepository)
 	assetHostService := service.NewAssetHostService(assetHostRepository)
 	assetConfigCenterService := service.NewAssetConfigCenterService(assetConfigCenterRepository)
+	settingService := service.NewSettingService(userSettingRepository)
 	authService := service.NewAuthService(userRepository, userSessionRepository, authChallengeRepository, tokenManager, cfg.Auth.TokenTTL())
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
@@ -68,6 +70,7 @@ func Run() error {
 		handler.NewAssetDomainHandler(assetDomainService),
 		handler.NewAssetHostHandler(assetHostService),
 		handler.NewAssetConfigCenterHandler(assetConfigCenterService),
+		handler.NewSettingHandler(settingService),
 	)
 
 	server := &http.Server{

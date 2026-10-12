@@ -19,6 +19,7 @@ func NewRouter(
 	assetDomainHandler handler.AssetDomainHandler,
 	assetHostHandler handler.AssetHostHandler,
 	assetConfigCenterHandler handler.AssetConfigCenterHandler,
+	settingHandler handler.SettingHandler,
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -62,6 +63,9 @@ func NewRouter(
 	protected.POST("/asset-config-centers", assetConfigCenterHandler.Create)
 	protected.PUT("/asset-config-centers/:id", assetConfigCenterHandler.Update)
 	protected.DELETE("/asset-config-centers/:id", assetConfigCenterHandler.Delete)
+
+	protected.GET("/settings/theme", settingHandler.GetTheme)
+	protected.PUT("/settings/theme", settingHandler.UpdateTheme)
 
 	protected.GET("/scans", scanTaskHandler.List)
 	protected.GET("/scans/stats", scanTaskHandler.Stats)
