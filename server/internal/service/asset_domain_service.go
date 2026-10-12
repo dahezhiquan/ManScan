@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"strings"
+	"unicode/utf8"
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/repository"
@@ -10,11 +13,20 @@ import (
 type AssetDomainService interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[dto.AssetDomainListItem], error)
 	Detail(ctx context.Context, domain string) (*dto.AssetDomainDetail, error)
+	UpdateManualNote(ctx context.Context, request dto.UpdateAssetDomainManualNoteRequest) (*dto.UpdateAssetDomainManualNoteResponse, error)
 }
 
 type assetDomainService struct {
 	repository repository.AssetDomainRepository
 }
+
+var (
+	ErrInvalidAssetDomain        = errors.New("域名资产地址不合法")
+	ErrInvalidAssetManualNote    = errors.New("资产手工备注不合法")
+	ErrInvalidAssetHostIPAddress = errors.New("主机资产 IP 不合法")
+)
+
+const maxAssetManualNoteRunes = 5000
 
 func NewAssetDomainService(repo repository.AssetDomainRepository) AssetDomainService {
 	return &assetDomainService{repository: repo}
@@ -46,6 +58,40 @@ func (s *assetDomainService) Detail(ctx context.Context, domain string) (*dto.As
 		return nil, err
 	}
 	return toAssetDomainDetail(*detail), nil
+}
+
+func (s *assetDomainService) UpdateManualNote(ctx context.Context, request dto.UpdateAssetDomainManualNoteRequest) (*dto.UpdateAssetDomainManualNoteResponse, error) {
+	domain := strings.TrimSpace(request.Domain)
+	if domain == "" {
+		domain = strings.TrimSpace(request.AssetAddress)
+	}
+	if domain == "" {
+		return nil, ErrInvalidAssetDomain
+	}
+
+	manualNote, noteValue, err := normalizeAssetManualNote(request.ManualNote)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repository.UpdateManualNote(ctx, domain, noteValue); err != nil {
+		return nil, err
+	}
+
+	return &dto.UpdateAssetDomainManualNoteResponse{
+		Domain:     domain,
+		ManualNote: manualNote,
+	}, nil
+}
+
+func normalizeAssetManualNote(value string) (string, *string, error) {
+	manualNote := strings.TrimSpace(value)
+	if utf8.RuneCountInString(manualNote) > maxAssetManualNoteRunes {
+		return "", nil, ErrInvalidAssetManualNote
+	}
+	if manualNote == "" {
+		return "", nil, nil
+	}
+	return manualNote, &manualNote, nil
 }
 
 func toAssetDomainListItem(item repository.AssetDomainListRecord) dto.AssetDomainListItem {

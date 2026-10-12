@@ -1886,7 +1886,55 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=exa
 curl "http://127.0.0.1:8686/api/v1/domain-assets/detail?domain=app.example.com:443"
 ```
 
-## 32. 获取主机资产清单
+## 32. 修改域名资产人工备注
+
+- 请求方法和路径：`PATCH /api/v1/domain-assets/manual-note`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `domain` | `string` | 是 | 域名资产地址，需与 `manscan_asset_domain.domain` 完全一致，例如 `app.example.com:443` |
+| `asset_address` | `string` | 否 | `domain` 的兼容别名；当 `domain` 为空时生效 |
+| `manual_note` | `string` | 否 | 人工备注，服务端会去除首尾空白，最多 5000 个字符；传空字符串或仅空白字符串表示清空备注 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "domain": "app.example.com:443",
+    "manual_note": "重点关注登录入口"
+  }
+}
+```
+
+- 错误码说明：
+  - `40001`：请求体格式错误、`domain` 为空或 `manual_note` 超过 5000 个字符
+  - `40401`：域名资产不存在
+  - `50001`：更新域名资产人工备注失败
+
+- 使用示例：
+
+```bash
+curl -X PATCH "http://127.0.0.1:8686/api/v1/domain-assets/manual-note" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"app.example.com:443","manual_note":"重点关注登录入口"}'
+```
+
+清空备注示例：
+
+```bash
+curl -X PATCH "http://127.0.0.1:8686/api/v1/domain-assets/manual-note" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"domain":"app.example.com:443","manual_note":""}'
+```
+
+## 33. 获取主机资产清单
 
 - 请求方法和路径：`GET /api/v1/host-assets`
 
@@ -1962,7 +2010,7 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets/detail?domain=app.example.com:4
 curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72&os_type=linux&region=生产&risk_level=critical&has_vulnerability=true&has_port=true"
 ```
 
-## 33. 获取主机资产详情
+## 34. 获取主机资产详情
 
 - 请求方法和路径：`GET /api/v1/host-assets/detail`
 
@@ -2025,4 +2073,52 @@ curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72
 
 ```bash
 curl "http://127.0.0.1:8686/api/v1/host-assets/detail?ip_address=10.72.160.123"
+```
+
+## 35. 修改主机资产人工备注
+
+- 请求方法和路径：`PATCH /api/v1/host-assets/manual-note`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `ip_address` | `string` | 是 | 主机资产 IP 地址，需与 `manscan_asset_host.ip_address` 完全一致，例如 `10.72.160.123` |
+| `asset_address` | `string` | 否 | `ip_address` 的兼容别名；当 `ip_address` 为空时生效 |
+| `manual_note` | `string` | 否 | 人工备注，服务端会去除首尾空白，最多 5000 个字符；传空字符串或仅空白字符串表示清空备注 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "ip_address": "10.72.160.123",
+    "manual_note": "堡垒机入口"
+  }
+}
+```
+
+- 错误码说明：
+  - `40001`：请求体格式错误、`ip_address` 为空、`ip_address` 不是合法 IP 地址或 `manual_note` 超过 5000 个字符
+  - `40401`：主机资产不存在
+  - `50001`：更新主机资产人工备注失败
+
+- 使用示例：
+
+```bash
+curl -X PATCH "http://127.0.0.1:8686/api/v1/host-assets/manual-note" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ip_address":"10.72.160.123","manual_note":"堡垒机入口"}'
+```
+
+清空备注示例：
+
+```bash
+curl -X PATCH "http://127.0.0.1:8686/api/v1/host-assets/manual-note" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"ip_address":"10.72.160.123","manual_note":""}'
 ```

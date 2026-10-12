@@ -48,8 +48,10 @@ func NewRouter(
 
 	protected.GET("/domain-assets", assetDomainHandler.List)
 	protected.GET("/domain-assets/detail", assetDomainHandler.Detail)
+	protected.PATCH("/domain-assets/manual-note", assetDomainHandler.UpdateManualNote)
 	protected.GET("/host-assets", assetHostHandler.List)
 	protected.GET("/host-assets/detail", assetHostHandler.Detail)
+	protected.PATCH("/host-assets/manual-note", assetHostHandler.UpdateManualNote)
 
 	protected.GET("/asset-config-centers", assetConfigCenterHandler.List)
 	protected.GET("/asset-config-centers/options/small-categories", assetConfigCenterHandler.SmallCategoryOptions)

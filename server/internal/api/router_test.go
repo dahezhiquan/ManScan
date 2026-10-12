@@ -25,8 +25,10 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/detail")
+	assertRouteRegistered(t, routes, "PATCH", "/api/v1/domain-assets/manual-note")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/host-assets")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/host-assets/detail")
+	assertRouteRegistered(t, routes, "PATCH", "/api/v1/host-assets/manual-note")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/asset-config-centers")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/asset-config-centers/options/small-categories")
 	assertRouteRegistered(t, routes, "POST", "/api/v1/asset-config-centers")
@@ -114,13 +116,15 @@ func (noopVulnerabilityHandler) Delete(*gin.Context)            {}
 
 type noopAssetDomainHandler struct{}
 
-func (noopAssetDomainHandler) List(*gin.Context)   {}
-func (noopAssetDomainHandler) Detail(*gin.Context) {}
+func (noopAssetDomainHandler) List(*gin.Context)             {}
+func (noopAssetDomainHandler) Detail(*gin.Context)           {}
+func (noopAssetDomainHandler) UpdateManualNote(*gin.Context) {}
 
 type noopAssetHostHandler struct{}
 
-func (noopAssetHostHandler) List(*gin.Context)   {}
-func (noopAssetHostHandler) Detail(*gin.Context) {}
+func (noopAssetHostHandler) List(*gin.Context)             {}
+func (noopAssetHostHandler) Detail(*gin.Context)           {}
+func (noopAssetHostHandler) UpdateManualNote(*gin.Context) {}
 
 type noopAssetConfigCenterHandler struct{}
 

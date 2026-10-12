@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -410,6 +411,75 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 	}
 	if detail.TitleHistories[0].HistoryTitle != "Example App" || !detail.TitleHistories[0].IsAlive {
 		t.Fatalf("first title history = %+v, want alive title first", detail.TitleHistories[0])
+	}
+}
+
+func TestAssetDomainRepositoryUpdateManualNote(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+
+	if err := db.AutoMigrate(&entity.AssetDomain{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	if err := db.Create(&entity.AssetDomain{
+		Domain:  "app.example.com:443",
+		IsAlive: true,
+	}).Error; err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	repo := NewAssetDomainRepository(db)
+	note := "需要重点关注"
+	if err := repo.UpdateManualNote(context.Background(), " app.example.com:443 ", &note); err != nil {
+		t.Fatalf("UpdateManualNote() error = %v", err)
+	}
+
+	var asset entity.AssetDomain
+	if err := db.Where("domain = ?", "app.example.com:443").First(&asset).Error; err != nil {
+		t.Fatalf("First() error = %v", err)
+	}
+	if asset.ManualNote == nil || *asset.ManualNote != note {
+		t.Fatalf("manual_note = %v, want %q", asset.ManualNote, note)
+	}
+
+	if err := repo.UpdateManualNote(context.Background(), "app.example.com:443", nil); err != nil {
+		t.Fatalf("UpdateManualNote(nil) error = %v", err)
+	}
+	if err := db.Where("domain = ?", "app.example.com:443").First(&asset).Error; err != nil {
+		t.Fatalf("First() after clear error = %v", err)
+	}
+	if asset.ManualNote != nil {
+		t.Fatalf("manual_note after clear = %q, want nil", *asset.ManualNote)
+	}
+}
+
+func TestAssetDomainRepositoryUpdateManualNoteReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+
+	if err := db.AutoMigrate(&entity.AssetDomain{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	repo := NewAssetDomainRepository(db)
+	note := "不存在"
+	if err := repo.UpdateManualNote(context.Background(), "missing.example.com:443", &note); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("UpdateManualNote() error = %v, want gorm.ErrRecordNotFound", err)
 	}
 }
 

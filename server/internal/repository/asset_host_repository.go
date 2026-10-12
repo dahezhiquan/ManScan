@@ -15,6 +15,7 @@ import (
 type AssetHostRepository interface {
 	List(ctx context.Context, query dto.ListAssetHostsQuery) (*dto.PageResult[AssetHostListRecord], error)
 	Detail(ctx context.Context, ipAddress string) (*AssetHostDetailRecord, error)
+	UpdateManualNote(ctx context.Context, ipAddress string, manualNote *string) error
 	SyncObservations(ctx context.Context, observations []AssetHostObservation, observedAt time.Time) error
 }
 
@@ -144,6 +145,26 @@ func (r *assetHostRepository) Detail(ctx context.Context, ipAddress string) (*As
 		LowCount:           stats.LowCount,
 		Ports:              ports,
 	}, nil
+}
+
+func (r *assetHostRepository) UpdateManualNote(ctx context.Context, ipAddress string, manualNote *string) error {
+	ipAddress = strings.TrimSpace(ipAddress)
+	if ipAddress == "" {
+		return gorm.ErrRecordNotFound
+	}
+
+	var asset entity.AssetHost
+	if err := r.db.WithContext(ctx).
+		Select("id").
+		Where("ip_address = ?", ipAddress).
+		First(&asset).Error; err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).
+		Model(&entity.AssetHost{}).
+		Where("id = ?", asset.ID).
+		Update("manual_note", manualNote).Error
 }
 
 func (r *assetHostRepository) assetHostVulnerabilityStats(ctx context.Context, ipAddress string) (assetHostVulnerabilityStats, error) {

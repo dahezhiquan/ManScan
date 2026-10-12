@@ -15,6 +15,7 @@ import (
 type AssetDomainRepository interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[AssetDomainListRecord], error)
 	Detail(ctx context.Context, domain string) (*AssetDomainDetailRecord, error)
+	UpdateManualNote(ctx context.Context, domain string, manualNote *string) error
 	ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error)
 	SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error
 	SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error
@@ -238,6 +239,26 @@ func (r *assetDomainRepository) Detail(ctx context.Context, domain string) (*Ass
 		ServiceAssets:      serviceAssets,
 		TitleHistories:     titleHistories,
 	}, nil
+}
+
+func (r *assetDomainRepository) UpdateManualNote(ctx context.Context, domain string, manualNote *string) error {
+	domain = strings.TrimSpace(domain)
+	if domain == "" {
+		return gorm.ErrRecordNotFound
+	}
+
+	var asset entity.AssetDomain
+	if err := r.db.WithContext(ctx).
+		Select("id").
+		Where("domain = ?", domain).
+		First(&asset).Error; err != nil {
+		return err
+	}
+
+	return r.db.WithContext(ctx).
+		Model(&entity.AssetDomain{}).
+		Where("id = ?", asset.ID).
+		Update("manual_note", manualNote).Error
 }
 
 func (r *assetDomainRepository) assetDomainVulnerabilityStats(ctx context.Context, domain string) (assetDomainVulnerabilityStats, error) {

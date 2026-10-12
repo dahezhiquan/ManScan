@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"net/netip"
+	"strings"
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/repository"
@@ -10,6 +12,7 @@ import (
 type AssetHostService interface {
 	List(ctx context.Context, query dto.ListAssetHostsQuery) (*dto.PageResult[dto.AssetHostListItem], error)
 	Detail(ctx context.Context, ipAddress string) (*dto.AssetHostDetail, error)
+	UpdateManualNote(ctx context.Context, request dto.UpdateAssetHostManualNoteRequest) (*dto.UpdateAssetHostManualNoteResponse, error)
 }
 
 type assetHostService struct {
@@ -46,6 +49,34 @@ func (s *assetHostService) Detail(ctx context.Context, ipAddress string) (*dto.A
 		return nil, err
 	}
 	return toAssetHostDetail(*detail), nil
+}
+
+func (s *assetHostService) UpdateManualNote(ctx context.Context, request dto.UpdateAssetHostManualNoteRequest) (*dto.UpdateAssetHostManualNoteResponse, error) {
+	ipAddress := strings.TrimSpace(request.IPAddress)
+	if ipAddress == "" {
+		ipAddress = strings.TrimSpace(request.AssetAddress)
+	}
+	if ipAddress == "" {
+		return nil, ErrInvalidAssetHostIPAddress
+	}
+	addr, err := netip.ParseAddr(ipAddress)
+	if err != nil {
+		return nil, ErrInvalidAssetHostIPAddress
+	}
+	ipAddress = addr.String()
+
+	manualNote, noteValue, err := normalizeAssetManualNote(request.ManualNote)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repository.UpdateManualNote(ctx, ipAddress, noteValue); err != nil {
+		return nil, err
+	}
+
+	return &dto.UpdateAssetHostManualNoteResponse{
+		IPAddress:  ipAddress,
+		ManualNote: manualNote,
+	}, nil
 }
 
 func toAssetHostListItem(item repository.AssetHostListRecord) dto.AssetHostListItem {

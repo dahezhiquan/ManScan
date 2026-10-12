@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -347,6 +348,76 @@ func TestAssetHostRepositoryDetailReturnsPortsAndFilteredVulnerabilityStats(t *t
 	}
 	if detail.Ports[1].PortNumber != 6379 || !detail.Ports[1].IsHighRiskPort {
 		t.Fatalf("second port = %+v, want high-risk redis 6379", detail.Ports[1])
+	}
+}
+
+func TestAssetHostRepositoryUpdateManualNote(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+
+	if err := db.AutoMigrate(&entity.AssetHost{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	if err := db.Create(&entity.AssetHost{
+		IPAddress:     "10.72.160.123",
+		ScanCreatedAt: time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC),
+		IsAlive:       true,
+	}).Error; err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	repo := NewAssetHostRepository(db)
+	note := "堡垒机入口"
+	if err := repo.UpdateManualNote(context.Background(), " 10.72.160.123 ", &note); err != nil {
+		t.Fatalf("UpdateManualNote() error = %v", err)
+	}
+
+	var asset entity.AssetHost
+	if err := db.Where("ip_address = ?", "10.72.160.123").First(&asset).Error; err != nil {
+		t.Fatalf("First() error = %v", err)
+	}
+	if asset.ManualNote == nil || *asset.ManualNote != note {
+		t.Fatalf("manual_note = %v, want %q", asset.ManualNote, note)
+	}
+
+	if err := repo.UpdateManualNote(context.Background(), "10.72.160.123", nil); err != nil {
+		t.Fatalf("UpdateManualNote(nil) error = %v", err)
+	}
+	if err := db.Where("ip_address = ?", "10.72.160.123").First(&asset).Error; err != nil {
+		t.Fatalf("First() after clear error = %v", err)
+	}
+	if asset.ManualNote != nil {
+		t.Fatalf("manual_note after clear = %q, want nil", *asset.ManualNote)
+	}
+}
+
+func TestAssetHostRepositoryUpdateManualNoteReturnsNotFound(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+
+	if err := db.AutoMigrate(&entity.AssetHost{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+
+	repo := NewAssetHostRepository(db)
+	note := "不存在"
+	if err := repo.UpdateManualNote(context.Background(), "10.72.160.250", &note); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("UpdateManualNote() error = %v, want gorm.ErrRecordNotFound", err)
 	}
 }
 

@@ -16,6 +16,17 @@ type ListAssetDomainsQuery struct {
 	IsAlive          *bool
 }
 
+type UpdateAssetDomainManualNoteRequest struct {
+	Domain       string `json:"domain"`
+	AssetAddress string `json:"asset_address"`
+	ManualNote   string `json:"manual_note"`
+}
+
+type UpdateAssetDomainManualNoteResponse struct {
+	Domain     string `json:"domain"`
+	ManualNote string `json:"manual_note"`
+}
+
 type AssetDomainListItem struct {
 	ID                 int64      `json:"id"`
 	Domain             string     `json:"domain"`

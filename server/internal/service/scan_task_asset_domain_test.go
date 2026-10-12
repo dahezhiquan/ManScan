@@ -1088,6 +1088,10 @@ func (s *assetDomainRepositoryStub) Detail(context.Context, string) (*repository
 	return &repository.AssetDomainDetailRecord{}, nil
 }
 
+func (s *assetDomainRepositoryStub) UpdateManualNote(context.Context, string, *string) error {
+	return nil
+}
+
 func (s *assetDomainRepositoryStub) ListNetworkItems(context.Context) ([]repository.AssetDomainNetworkItem, error) {
 	return s.networkItems, nil
 }
@@ -1114,6 +1118,10 @@ func (s *assetHostRepositoryStub) List(context.Context, dto.ListAssetHostsQuery)
 
 func (s *assetHostRepositoryStub) Detail(context.Context, string) (*repository.AssetHostDetailRecord, error) {
 	return &repository.AssetHostDetailRecord{}, nil
+}
+
+func (s *assetHostRepositoryStub) UpdateManualNote(context.Context, string, *string) error {
+	return nil
 }
 
 func (s *assetHostRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostObservation, _ time.Time) error {

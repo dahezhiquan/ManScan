@@ -16,6 +16,17 @@ type ListAssetHostsQuery struct {
 	IsAlive          *bool
 }
 
+type UpdateAssetHostManualNoteRequest struct {
+	IPAddress    string `json:"ip_address"`
+	AssetAddress string `json:"asset_address"`
+	ManualNote   string `json:"manual_note"`
+}
+
+type UpdateAssetHostManualNoteResponse struct {
+	IPAddress  string `json:"ip_address"`
+	ManualNote string `json:"manual_note"`
+}
+
 type AssetHostListItem struct {
 	ID                 int64      `json:"id"`
 	IPAddress          string     `json:"ip_address"`

@@ -16,6 +16,7 @@ import (
 type AssetHostHandler interface {
 	List(c *gin.Context)
 	Detail(c *gin.Context)
+	UpdateManualNote(c *gin.Context)
 }
 
 type assetHostHandler struct {
@@ -99,6 +100,34 @@ func (h *assetHostHandler) Detail(c *gin.Context) {
 			return
 		}
 		response.Fail(c, errcode.InternalServerError, "获取主机资产详情失败")
+		return
+	}
+
+	response.Success(c, data)
+}
+
+func (h *assetHostHandler) UpdateManualNote(c *gin.Context) {
+	var request dto.UpdateAssetHostManualNoteRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		response.Fail(c, errcode.InvalidParams, "请求体解析失败")
+		return
+	}
+
+	data, serviceErr := h.service.UpdateManualNote(c.Request.Context(), request)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
+			response.Fail(c, errcode.NotFound, "主机资产不存在")
+			return
+		}
+		if errors.Is(serviceErr, service.ErrInvalidAssetHostIPAddress) {
+			response.Fail(c, errcode.InvalidParams, "ip_address 参数必须是合法 IP 地址")
+			return
+		}
+		if errors.Is(serviceErr, service.ErrInvalidAssetManualNote) {
+			response.Fail(c, errcode.InvalidParams, "manual_note 不能超过 5000 个字符")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "更新主机资产人工备注失败")
 		return
 	}
 
