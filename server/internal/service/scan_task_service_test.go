@@ -1639,6 +1639,15 @@ func TestDeleteScanTasksRemovesArtifactsAndDeduplicatesIDs(t *testing.T) {
 			41: newScanTaskRuntime(pausedState),
 		},
 	}
+	for _, taskID := range []int64{41, 42} {
+		rawLogZipPath := svc.rawLogZipPath(taskID)
+		if err := os.MkdirAll(filepath.Dir(rawLogZipPath), 0o755); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+		if err := os.WriteFile(rawLogZipPath, []byte("raw-log-zip"), 0o644); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
+	}
 
 	resp, err := svc.Delete(context.Background(), dto.DeleteScanTaskRequest{
 		ID:  ptrInt64(42),
@@ -1671,6 +1680,11 @@ func TestDeleteScanTasksRemovesArtifactsAndDeduplicatesIDs(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(runtimeDir, "41")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("runtime directory still exists or unexpected error: %v", err)
+	}
+	for _, taskID := range []int64{41, 42} {
+		if _, err := os.Stat(svc.rawLogZipPath(taskID)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("raw log zip for task %d still exists or unexpected error: %v", taskID, err)
+		}
 	}
 }
 

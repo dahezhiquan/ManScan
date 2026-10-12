@@ -1344,9 +1344,13 @@ func (s *scanTaskService) cleanupDeletedTaskArtifacts(taskIDs []int64) {
 	for _, taskID := range taskIDs {
 		s.releaseDeletedRuntime(taskID)
 
-		runtimeDir := filepath.Join(s.runtimeDir, fmt.Sprintf("%d", taskID))
+		runtimeDir := s.runtimeTaskDir(taskID)
 		if err := os.RemoveAll(runtimeDir); err != nil && s.logger != nil {
 			s.logger.Error("remove deleted scan task runtime files failed", "task_id", taskID, "runtime_dir", runtimeDir, "error", err)
+		}
+		rawLogZipPath := s.rawLogZipPath(taskID)
+		if err := os.Remove(rawLogZipPath); err != nil && !errors.Is(err, os.ErrNotExist) && s.logger != nil {
+			s.logger.Error("remove deleted scan task raw log archive failed", "task_id", taskID, "zip_file", rawLogZipPath, "error", err)
 		}
 	}
 }
