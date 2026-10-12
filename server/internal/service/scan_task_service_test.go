@@ -717,6 +717,47 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 }
 
+func TestBuildVulnerabilityNameUsesExtractorNameWhenMatcherNameMissing(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"secrets-patterns-pii": {
+					ID:       "secrets-patterns-pii",
+					Name:     "敏感信息与个人身份信息模式（全局模版）",
+					Tags:     []string{"global-matchers", "exposure"},
+					Severity: "high",
+				},
+			},
+		},
+	}
+
+	vulnerability, err := svc.buildVulnerabilityFromPayload(context.Background(), 235, "任务235", map[string]interface{}{
+		"template-id":       "secrets-patterns-pii",
+		"matched-at":        "https://www.dxmpay.com",
+		"type":              "http",
+		"extractor-name":    "visa_cards",
+		"extracted-results": []interface{}{"4010338246627559"},
+		"timestamp":         time.Date(2026, 10, 12, 19, 29, 14, 0, time.FixedZone("CST", 8*3600)).Format(time.RFC3339Nano),
+		"info": map[string]interface{}{
+			"name":     "敏感信息与个人身份信息模式（全局模版）",
+			"severity": "high",
+			"tags":     []interface{}{"global-matchers", "exposure"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildVulnerabilityFromPayload() error = %v", err)
+	}
+	if vulnerability == nil {
+		t.Fatal("vulnerability = nil, want item")
+	}
+	want := "敏感信息与个人身份信息模式（全局模版） - visa_cards"
+	if vulnerability.VulnerabilityName != want {
+		t.Fatalf("VulnerabilityName = %q, want %q", vulnerability.VulnerabilityName, want)
+	}
+}
+
 func TestVulnerabilityAssetEndpointUsesHostPortWithoutScheme(t *testing.T) {
 	t.Parallel()
 

@@ -93,7 +93,7 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	}
 	probeResult := cachedResult
 	if len(pendingTargets) > 0 {
-		pendingResult, err := probeAssetDomainLiveness(ctx, request, pendingTargets, networkRegions, state)
+		pendingResult, err := probeAssetDomainLiveness(ctx, request, pendingTargets, networkRegions, state, assetDomainPreflightVulnerabilityQueue(runtime))
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
@@ -373,17 +373,18 @@ func buildAssetHostPortObservationsFromDomainObservations(ctx context.Context, o
 		if !ok {
 			continue
 		}
-		for _, ipAddress := range resolveAssetHostIPAddresses(ctx, endpoint.Host) {
-			hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
-				IPAddress:    ipAddress,
-				Region:       assetDomainRegion(ipAddress, networkRegions),
-				PortProtocol: "tcp",
-				PortNumber:   endpoint.PortNumber,
-				ServiceName:  "http",
-				AppName:      "http",
-				IsAlive:      true,
-			})
+		if endpoint.IsDomain {
+			continue
 		}
+		hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
+			IPAddress:    endpoint.Host,
+			Region:       assetDomainRegion(endpoint.Host, networkRegions),
+			PortProtocol: "tcp",
+			PortNumber:   endpoint.PortNumber,
+			ServiceName:  "http",
+			AppName:      "http",
+			IsAlive:      true,
+		})
 	}
 	return uniqueAssetHostPortObservations(hostPortObservations)
 }
@@ -400,20 +401,6 @@ func splitAssetServiceAssetObservations(ctx context.Context, observations []repo
 		}
 		if endpoint.IsDomain {
 			domainObservations = append(domainObservations, observation)
-			for _, ipAddress := range resolveAssetHostIPAddresses(ctx, endpoint.Host) {
-				_, isHTTPAsset := httpEndpointKeys[assetHostPortEndpointKey(ipAddress, endpoint.PortNumber)]
-				serviceName, appVersion := assetHostPortServiceFromServiceAssetObservation(observation, isHTTPAsset)
-				hostPortObservations = append(hostPortObservations, repository.AssetHostPortObservation{
-					IPAddress:    ipAddress,
-					Region:       assetDomainRegion(ipAddress, networkRegions),
-					PortProtocol: assetHostPortProtocolFromServiceAssetObservation(observation, serviceName, isHTTPAsset),
-					PortNumber:   endpoint.PortNumber,
-					ServiceName:  serviceName,
-					AppName:      serviceName,
-					AppVersion:   appVersion,
-					IsAlive:      true,
-				})
-			}
 			continue
 		}
 		_, isHTTPAsset := httpEndpointKeys[assetHostPortEndpointKey(endpoint.Host, endpoint.PortNumber)]
@@ -457,12 +444,10 @@ func assetHostPortHTTPObservationKeys(ctx context.Context, observations []reposi
 	keys := make(map[string]struct{})
 	for _, observation := range uniqueAssetDomainObservations(observations) {
 		endpoint, ok := assetHostPortEndpointFromAssetEndpoint(observation.Domain)
-		if !ok {
+		if !ok || endpoint.IsDomain {
 			continue
 		}
-		for _, ipAddress := range resolveAssetHostIPAddresses(ctx, endpoint.Host) {
-			keys[assetHostPortEndpointKey(ipAddress, endpoint.PortNumber)] = struct{}{}
-		}
+		keys[assetHostPortEndpointKey(endpoint.Host, endpoint.PortNumber)] = struct{}{}
 	}
 	return keys
 }
@@ -685,7 +670,14 @@ type assetDomainNetworkRegion struct {
 	region  string
 }
 
-func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) (assetDomainLivenessProbeResult, error) {
+func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State, vulnerabilityQueue *vulnerabilityQueue) (assetDomainLivenessProbeResult, error) {
+	globalMatchers, err := compileAssetDomainPreflightGlobalMatchers(assetDomainGlobalMatchersTemplateDir(), request)
+	if err != nil {
+		if state != nil {
+			state.Append("warn", "asset_domain_preflight_global_matchers_failed", "扫描前全局被动匹配器模板加载失败，已跳过预探测响应匹配")
+		}
+		globalMatchers = nil
+	}
 	httpClient := newAssetDomainWappalyzerHTTPClient(request)
 	wappalyzerClient, err := wappalyzer.New()
 	if err != nil {
@@ -731,7 +723,7 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result, err := probeAssetDomainTarget(ctx, httpClient, wappalyzerClient, target, networkRegions, state)
+			result, err := probeAssetDomainTarget(ctx, httpClient, wappalyzerClient, target, networkRegions, state, globalMatchers, vulnerabilityQueue)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					setFirstErr(err)
@@ -840,7 +832,7 @@ func (t assetDomainProbeStatusTransport) RoundTrip(req *http.Request) (*http.Res
 	return resp, err
 }
 
-func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Client, wappalyzerClient *wappalyzer.Wappalyze, target string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) (assetDomainProbeTargetResult, error) {
+func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Client, wappalyzerClient *wappalyzer.Wappalyze, target string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State, globalMatchers *assetDomainPreflightGlobalMatchers, vulnerabilityQueue *vulnerabilityQueue) (assetDomainProbeTargetResult, error) {
 	target = strings.TrimSpace(target)
 	result := assetDomainProbeTargetResult{Target: target}
 	for _, probeURL := range assetDomainProbeURLs(target) {
@@ -859,6 +851,7 @@ func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Clien
 			}
 			continue
 		}
+		runAssetDomainPreflightGlobalMatchers(state, globalMatchers, vulnerabilityQueue, target, probeURL, domain, resp)
 		result.Observations = append(result.Observations, repository.AssetDomainObservation{
 			Domain:         domain,
 			Region:         assetDomainRegion(domain, networkRegions),

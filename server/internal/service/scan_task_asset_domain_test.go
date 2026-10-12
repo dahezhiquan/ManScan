@@ -86,7 +86,7 @@ func TestProbeAssetDomainLivenessUsesHTTPXProbe(t *testing.T) {
 	result, err := probeAssetDomainLiveness(context.Background(), dto.CreateScanTaskRequest{
 		ProbeConcurrency: 2,
 		Timeout:          3,
-	}, []string{target, target, "http://192.0.2.10"}, nil, nil)
+	}, []string{target, target, "http://192.0.2.10"}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
 	}
@@ -100,6 +100,83 @@ func TestProbeAssetDomainLivenessUsesHTTPXProbe(t *testing.T) {
 	}
 }
 
+func TestAssetDomainPreflightGlobalMatchersDetectExtractorOnlyResult(t *testing.T) {
+	templateDir := t.TempDir()
+	globalMatcherDir := filepath.Join(templateDir, "http", "global-matchers")
+	if err := os.MkdirAll(globalMatcherDir, 0o755); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	templatePath := filepath.Join(globalMatcherDir, "email.yaml")
+	template := `id: preflight-email-exposure
+info:
+  name: Preflight Email Exposure
+  author: test
+  severity: high
+  tags: exposure,pii
+http:
+  - global-matchers: true
+    extractors:
+      - type: regex
+        name: email
+        part: body
+        regex:
+          - '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+`
+	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	globalMatchers, err := compileAssetDomainPreflightGlobalMatchers(templateDir, dto.CreateScanTaskRequest{
+		EnableGlobalMatchersTemplates: true,
+	})
+	if err != nil {
+		t.Fatalf("compileAssetDomainPreflightGlobalMatchers() error = %v", err)
+	}
+	if globalMatchers == nil {
+		t.Fatal("compileAssetDomainPreflightGlobalMatchers() = nil, want compiled matcher storage")
+	}
+
+	state, err := scanruntime.NewState(1, "test", "test", 1, t.TempDir())
+	if err != nil {
+		t.Fatalf("scanruntime.NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	resp := &assetDomainProbeHTTPResponse{
+		Input:      "http://example.test/",
+		StatusCode: http.StatusOK,
+		Headers: map[string][]string{
+			"Content-Type": {"text/html"},
+		},
+		Data:    []byte(`<html><body>contact wallet-kefu@duxiaoman.com</body></html>`),
+		Raw:     "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body>contact wallet-kefu@duxiaoman.com</body></html>",
+		Request: "GET / HTTP/1.1\r\nHost: example.test\r\n\r\n",
+	}
+	runAssetDomainPreflightGlobalMatchers(state, globalMatchers, nil, "example.test", "http://example.test/", "example.test:80", resp)
+
+	page := state.EventsSince(0, 20)
+	if len(page.Events) != 1 {
+		t.Fatalf("Events = %+v, want one global matcher result", page.Events)
+	}
+	event := page.Events[0]
+	if event.Level != "match" || event.TemplateID != "preflight-email-exposure" || event.Severity != "high" {
+		t.Fatalf("Event = %+v, want high severity preflight-email-exposure match", event)
+	}
+	if !strings.Contains(event.Message, "wallet-kefu@duxiaoman.com") {
+		t.Fatalf("Event message = %q, want extracted email", event.Message)
+	}
+}
+
+func TestAssetDomainPreflightGlobalMatchersDisabled(t *testing.T) {
+	globalMatchers, err := compileAssetDomainPreflightGlobalMatchers(t.TempDir(), dto.CreateScanTaskRequest{})
+	if err != nil {
+		t.Fatalf("compileAssetDomainPreflightGlobalMatchers() error = %v", err)
+	}
+	if globalMatchers != nil {
+		t.Fatalf("compileAssetDomainPreflightGlobalMatchers() = %+v, want nil when disabled", globalMatchers)
+	}
+}
+
 func TestProbeAssetDomainLivenessKeepsNonHTTPFingerprintTargetsForHTTPDown(t *testing.T) {
 	t.Parallel()
 
@@ -108,7 +185,7 @@ func TestProbeAssetDomainLivenessKeepsNonHTTPFingerprintTargetsForHTTPDown(t *te
 		ProbeConcurrency: 1,
 		Timeout:          1,
 		Retries:          0,
-	}, []string{target}, nil, nil)
+	}, []string{target}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
 	}
@@ -154,7 +231,7 @@ func TestProbeAssetDomainLivenessRecordsRedirectObservation(t *testing.T) {
 		Timeout:          3,
 		MaxRedirects:     3,
 		ResponseReadSize: 1024 * 1024,
-	}, []string{target}, nil, nil)
+	}, []string{target}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
 	}
@@ -198,7 +275,7 @@ func TestProbeAssetDomainLivenessRecordsRequestStats(t *testing.T) {
 	if _, err := probeAssetDomainLiveness(context.Background(), dto.CreateScanTaskRequest{
 		ProbeConcurrency: 1,
 		Timeout:          3,
-	}, []string{server.URL}, nil, state); err != nil {
+	}, []string{server.URL}, nil, state, nil); err != nil {
 		t.Fatalf("probeAssetDomainLiveness() error = %v", err)
 	}
 
@@ -425,6 +502,66 @@ func TestSyncAssetServiceAssetsKeepsHTTPServiceForHTTPProbedIPEndpoint(t *testin
 	got := hostPortRepo.observationValues[0][0]
 	if got.IPAddress != "10.107.71.65" || got.PortProtocol != "tcp" || got.PortNumber != 8889 || got.ServiceName != "http" || got.AppName != "http" || got.AppVersion != "" || got.Region != "生产内网" {
 		t.Fatalf("host port observation = %+v, want HTTP service/app for probed HTTP endpoint", got)
+	}
+}
+
+func TestBuildAssetHostPortObservationsFromDomainObservationsSkipsDomainEndpoints(t *testing.T) {
+	t.Parallel()
+
+	observations := buildAssetHostPortObservationsFromDomainObservations(context.Background(), []repository.AssetDomainObservation{
+		{Domain: "localhost:8080"},
+		{Domain: "https://example.com"},
+		{Domain: "10.72.160.153:8664"},
+	}, buildAssetDomainNetworkRegions([]repository.AssetDomainNetworkItem{
+		{ItemName: "10.72.160.0/24", SmallCategory: "生产内网"},
+	}))
+
+	if len(observations) != 1 {
+		t.Fatalf("observations = %+v, want only one IP endpoint observation", observations)
+	}
+	got := observations[0]
+	if got.IPAddress != "10.72.160.153" || got.PortNumber != 8664 || got.ServiceName != "http" || got.AppName != "http" || !got.IsAlive {
+		t.Fatalf("observation = %+v, want alive HTTP host port for explicit IP endpoint", got)
+	}
+	if got.Region != "生产内网" {
+		t.Fatalf("Region = %q, want 生产内网", got.Region)
+	}
+}
+
+func TestSyncAssetServiceAssetsKeepsDomainEndpointsOutOfHostAssets(t *testing.T) {
+	t.Parallel()
+
+	domainRepo := &assetDomainRepositoryStub{}
+	hostRepo := &assetHostRepositoryStub{}
+	hostPortRepo := &assetHostPortRepositoryStub{}
+	svc := &scanTaskService{
+		assetDomainRepository:   domainRepo,
+		assetHostRepository:     hostRepo,
+		assetHostPortRepository: hostPortRepo,
+	}
+
+	if err := svc.syncAssetServiceAssets(context.Background(), []repository.AssetDomainServiceAssetObservation{{
+		Domain:     "localhost:8080",
+		AppName:    "nginx",
+		AppVersion: "1.24.0",
+	}}, []string{"localhost:8080"}, nil, []repository.AssetDomainObservation{{
+		Domain: "localhost:8080",
+	}}, time.Date(2026, 10, 9, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("syncAssetServiceAssets() error = %v", err)
+	}
+
+	if len(domainRepo.syncServiceAssetObservations) != 1 || len(domainRepo.syncServiceAssetObservations[0]) != 1 {
+		t.Fatalf("domain service asset syncs = %+v, want one domain endpoint component", domainRepo.syncServiceAssetObservations)
+	}
+	gotDomain := domainRepo.syncServiceAssetObservations[0][0]
+	if gotDomain.Domain != "localhost:8080" || gotDomain.AppName != "nginx" || gotDomain.AppVersion != "1.24.0" {
+		t.Fatalf("domain service asset = %+v, want nginx component on domain endpoint", gotDomain)
+	}
+	if len(hostRepo.observationValues) != 0 {
+		t.Fatalf("host syncs = %+v, want no host assets for domain endpoint", hostRepo.observationValues)
+	}
+	if len(hostPortRepo.observationValues) != 0 {
+		t.Fatalf("host port syncs = %+v, want no host port assets for domain endpoint", hostPortRepo.observationValues)
 	}
 }
 
