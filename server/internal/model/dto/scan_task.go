@@ -185,6 +185,11 @@ type GetScanTaskResponse struct {
 	Progress scanruntime.TaskProgressSnapshot `json:"progress"`
 }
 
+type ScanTaskConfigResponse struct {
+	Task   ScanTaskSummary       `json:"task"`
+	Config CreateScanTaskRequest `json:"config"`
+}
+
 type ScanTaskLogsResponse struct {
 	Task       ScanTaskSummary                  `json:"task"`
 	Progress   scanruntime.TaskProgressSnapshot `json:"progress"`

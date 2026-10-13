@@ -29,6 +29,7 @@ type ScanTaskHandler interface {
 	NameOptions(c *gin.Context)
 	Stats(c *gin.Context)
 	Get(c *gin.Context)
+	GetConfig(c *gin.Context)
 	Logs(c *gin.Context)
 	DownloadResponsesArchive(c *gin.Context)
 	DownloadRawLogsArchive(c *gin.Context)
@@ -277,6 +278,30 @@ func (h *scanTaskHandler) Get(c *gin.Context) {
 			return
 		}
 		response.Fail(c, errcode.InternalServerError, "获取任务失败")
+		return
+	}
+
+	response.Success(c, data)
+}
+
+func (h *scanTaskHandler) GetConfig(c *gin.Context) {
+	taskID, err := parseTaskID(c.Param("id"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+
+	data, serviceErr := h.service.GetConfig(c.Request.Context(), taskID)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
+			response.Fail(c, errcode.NotFound, "任务不存在")
+			return
+		}
+		if errors.Is(serviceErr, service.ErrScanTaskInvalidConfiguration) {
+			response.Fail(c, errcode.InvalidParams, "任务配置不完整，无法用于重新创建扫描任务")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "获取任务扫描配置失败")
 		return
 	}
 

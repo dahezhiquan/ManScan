@@ -76,6 +76,7 @@ func NewRouter(
 	protected.POST("/scans/:id/pause", scanTaskHandler.Pause)
 	protected.POST("/scans/:id/resume", scanTaskHandler.Resume)
 	protected.POST("/scans/:id/cancel", scanTaskHandler.Cancel)
+	protected.GET("/scans/:id/config", scanTaskHandler.GetConfig)
 	protected.GET("/scans/:id", scanTaskHandler.Get)
 	protected.GET("/scans/:id/logs", scanTaskHandler.Logs)
 	protected.GET("/scans/:id/responses/archive", scanTaskHandler.DownloadResponsesArchive)

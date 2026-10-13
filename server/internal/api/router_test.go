@@ -41,6 +41,7 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "GET", "/api/v1/settings/theme")
 	assertRouteRegistered(t, routes, "PUT", "/api/v1/settings/theme")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/scans")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/scans/:id/config")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/scans/:id/responses/archive")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/scans/:id/raw-logs/archive")
 }
@@ -128,6 +129,7 @@ func (noopScanTaskHandler) List(*gin.Context)        {}
 func (noopScanTaskHandler) NameOptions(*gin.Context) {}
 func (noopScanTaskHandler) Stats(*gin.Context)       {}
 func (noopScanTaskHandler) Get(*gin.Context)         {}
+func (noopScanTaskHandler) GetConfig(*gin.Context)   {}
 func (noopScanTaskHandler) Logs(*gin.Context)        {}
 func (noopScanTaskHandler) Stream(*gin.Context)      {}
 func (noopScanTaskHandler) DownloadResponsesArchive(*gin.Context) {

@@ -878,7 +878,7 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `enable_code_templates` | `bool`   | 否  | 启用 Code 协议模板，对应 `-code` |
 | `enable_file_templates` | `bool`   | 否  | 启用 File 协议模板，对应 `-file` |
 | `interactsh_server`   | `string`   | 否  | 当前任务使用的 Interactsh 服务根地址，可填写主机名或 `http://`/`https://` 根地址，对应 `-interactsh-server` |
-| `interactsh_token`    | `string`   | 否  | 当前任务使用的 Interactsh 鉴权 Token，最长 255 个字符，对应 `-interactsh-token`；不会出现在任务查询响应中 |
+| `interactsh_token`    | `string`   | 否  | 当前任务使用的 Interactsh 鉴权 Token，最长 255 个字符，对应 `-interactsh-token`；会随扫描配置获取接口原样返回 |
 | `no_interactsh`       | `bool`     | 否  | 禁用当前任务的 Interactsh/OOB 请求，对应 `-no-interactsh`，不能与上述两个字段同时配置 |
 | `rate_limit`          | `int`      | 否  | 速率限制               |
 | `template_threads`    | `int`      | 否  | 模板并发数              |
@@ -981,7 +981,84 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
 ```
 
-## 11. 取消扫描任务
+## 11. 获取扫描任务配置
+
+- 请求方法和路径：`GET /api/v1/scans/:id/config`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `int64` | 是 | 原扫描任务 ID，路径参数，对应 `manscan_scan_tasks.id` |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "task": {
+      "id": 1,
+      "task_no": "d4l8h4crvimc0n1abcde",
+      "name": "demo-scan",
+      "description": "",
+      "status": "success",
+      "created_by": "anonymous",
+      "critical_count": 0,
+      "high_count": 1,
+      "medium_count": 2,
+      "low_count": 0,
+      "info_count": 3,
+      "tech_count": 4,
+      "plugin_count": 50,
+      "target_count": 1
+    },
+    "config": {
+      "name": "demo-scan",
+      "description": "",
+      "created_by": "anonymous",
+      "targets": ["https://example.com"],
+      "inline_targets_list": "https://example.com\n",
+      "exclude_targets": [],
+      "tags": ["cve"],
+      "include_ids": ["CVE-2026-0001"],
+      "severities": ["high"],
+      "protocols": ["http"],
+      "automatic_scan": false,
+      "dast": false,
+      "enable_code_templates": false,
+      "enable_file_templates": false,
+      "interactsh_server": "https://oast.example.internal",
+      "interactsh_token": "YOUR_TASK_TOKEN",
+      "no_interactsh": false,
+      "rate_limit": 150,
+      "template_threads": 25,
+      "timeout": 10,
+      "headless": false,
+      "proxy": []
+    }
+  }
+}
+```
+
+- 说明：
+  - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的目标、模板筛选、协议筛选、并发、限速、代理、headless、DAST、Code/File 模板开关等扫描配置，用于前端回填“重新创建扫描任务”表单。
+  - `config` 字段使用创建扫描任务接口的请求结构，前端可在用户确认或调整后提交给 `POST /api/v1/scans`。
+  - 该接口只读取配置，不创建新任务，不恢复任务，也不会继承原任务的运行日志、进度快照或结果统计。
+
+- 错误码说明：
+  - `40001`：任务 ID 非法，或原任务中保存的目标配置为空
+  - `40401`：原任务不存在
+  - `50001`：获取任务扫描配置失败
+
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/scans/1/config"
+```
+
+## 12. 取消扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/cancel`
 
@@ -1022,7 +1099,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 ```
 
-## 12. 暂停扫描任务
+## 13. 暂停扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/pause`
 
@@ -1062,7 +1139,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/cancel"
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/pause"
 ```
 
-## 13. 恢复扫描任务
+## 14. 恢复扫描任务
 
 - 请求方法和路径：`POST /api/v1/scans/:id/resume`
 
@@ -1103,7 +1180,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/pause"
 curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
 ```
 
-## 14. 获取扫描任务详情
+## 15. 获取扫描任务详情
 
 - 请求方法和路径：`GET /api/v1/scans/:id`
 
@@ -1184,7 +1261,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
 curl "http://127.0.0.1:8686/api/v1/scans/1"
 ```
 
-## 15. 获取扫描任务日志
+## 16. 获取扫描任务日志
 
 - 请求方法和路径：`GET /api/v1/scans/:id/logs`
 
@@ -1264,7 +1341,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?offset=0&limit=100"
 curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=100"
 ```
 
-## 16. 订阅扫描任务日志流
+## 17. 订阅扫描任务日志流
 
 - 请求方法和路径：`GET /api/v1/scans/:id/stream`
 
@@ -1332,7 +1409,7 @@ data: {"task_id":1,"seq":4,"level":"info","type":"match_failure","message":"[HTT
 curl -N "http://127.0.0.1:8686/api/v1/scans/1/stream?offset=1"
 ```
 
-## 17. 获取漏洞列表
+## 18. 获取漏洞列表
 
 - 请求方法和路径：`GET /api/v1/vulnerabilities`
 
@@ -1409,7 +1486,7 @@ curl "http://127.0.0.1:8686/api/v1/vulnerabilities?page=1&page_size=20&keyword=s
   - 翻页、修改每页数量、修改筛选条件时重新请求列表；筛选条件变化后将 `page` 重置为 `1`。
   - 严重级别建议按 `critical`、`high`、`medium`、`low`、`info`、`unknown` 做固定选项；状态建议按 `unreviewed`、`confirmed`、`ticketed`、`fixed`、`false_positive`、`ignored` 做固定选项。
 
-## 18. 更新漏洞状态
+## 19. 更新漏洞状态
 
 - 请求方法和路径：`PATCH /api/v1/vulnerabilities/:id/status`
 
@@ -1462,7 +1539,7 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/vulnerabilities/1/status" \
   -d '{"status":"fixed"}'
 ```
 
-## 19. 批量更新漏洞状态
+## 20. 批量更新漏洞状态
 
 - 请求方法和路径：`PATCH /api/v1/vulnerabilities/status`
 
@@ -1518,7 +1595,7 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/vulnerabilities/status" \
   -d '{"ids":[1,2,3],"status":"confirmed"}'
 ```
 
-## 20. 删除漏洞
+## 21. 删除漏洞
 
 - 请求方法和路径：`DELETE /api/v1/vulnerabilities`
 
@@ -1581,7 +1658,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
   -d '{"ids":[1,2,3]}'
 ```
 
-## 21. 获取漏洞详情
+## 22. 获取漏洞详情
 
 - 请求方法和路径：`GET /api/v1/vulnerabilities/:id`
 
@@ -1655,7 +1732,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
 curl "http://127.0.0.1:8686/api/v1/vulnerabilities/1"
 ```
 
-## 22. 批量删除扫描任务
+## 23. 批量删除扫描任务
 
 - 请求方法和路径：`DELETE /api/v1/scans`
 
@@ -1717,7 +1794,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/scans" \
   -d '{"ids":[1,2,3]}'
 ```
 
-## 23. 下载扫描任务请求/响应压缩包
+## 24. 下载扫描任务请求/响应压缩包
 
 - 请求方法和路径：`GET /api/v1/scans/:id/responses/archive`
 
@@ -1748,7 +1825,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/scans" \
 curl -OJ "http://127.0.0.1:8686/api/v1/scans/1/responses/archive"
 ```
 
-## 24. 下载扫描任务原始日志压缩包
+## 25. 下载扫描任务原始日志压缩包
 
 - 请求方法和路径：`GET /api/v1/scans/:id/raw-logs/archive`
 
@@ -1779,7 +1856,7 @@ curl -OJ "http://127.0.0.1:8686/api/v1/scans/1/responses/archive"
 curl -OJ "http://127.0.0.1:8686/api/v1/scans/225/raw-logs/archive"
 ```
 
-## 25. 获取资产配置中心列表
+## 26. 获取资产配置中心列表
 
 - 请求方法和路径：`GET /api/v1/asset-config-centers`
 
@@ -1829,7 +1906,7 @@ curl -OJ "http://127.0.0.1:8686/api/v1/scans/225/raw-logs/archive"
 curl "http://127.0.0.1:8686/api/v1/asset-config-centers?page=1&page_size=10&item_name=登录&status=enabled"
 ```
 
-## 26. 获取资产配置中心小分类列表
+## 27. 获取资产配置中心小分类列表
 
 - 请求方法和路径：`GET /api/v1/asset-config-centers/options/small-categories`
 
@@ -1861,7 +1938,7 @@ curl "http://127.0.0.1:8686/api/v1/asset-config-centers?page=1&page_size=10&item
 curl "http://127.0.0.1:8686/api/v1/asset-config-centers/options/small-categories?big_category=app"
 ```
 
-## 27. 新增资产配置项
+## 28. 新增资产配置项
 
 - 请求方法和路径：`POST /api/v1/asset-config-centers`
 
@@ -1906,7 +1983,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/asset-config-centers" \
   -d '{"item_name":"登录页配置","big_category":"前端","small_category":"页面","status":"enabled","description":"登录页相关配置"}'
 ```
 
-## 28. 编辑资产配置项
+## 29. 编辑资产配置项
 
 - 请求方法和路径：`PUT /api/v1/asset-config-centers/:id`
 
@@ -1953,7 +2030,7 @@ curl -X PUT "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
   -d '{"item_name":"登录页配置","big_category":"前端","small_category":"页面","status":"disabled","description":"暂不启用"}'
 ```
 
-## 29. 删除资产配置项
+## 30. 删除资产配置项
 
 - 请求方法和路径：`DELETE /api/v1/asset-config-centers/:id`
 
@@ -1989,7 +2066,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
-## 30. 获取域名资产清单
+## 31. 获取域名资产清单
 
 - 请求方法和路径：`GET /api/v1/domain-assets`
 
@@ -2074,7 +2151,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
 curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=example&title=Portal&region=internal&risk_level=high&has_vulnerability=true&has_component=true"
 ```
 
-## 31. 获取域名资产详情
+## 32. 获取域名资产详情
 
 - 请求方法和路径：`GET /api/v1/domain-assets/detail`
 
@@ -2150,7 +2227,7 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=exa
 curl "http://127.0.0.1:8686/api/v1/domain-assets/detail?domain=app.example.com:443"
 ```
 
-## 32. 修改域名资产人工备注
+## 33. 修改域名资产人工备注
 
 - 请求方法和路径：`PATCH /api/v1/domain-assets/manual-note`
 
@@ -2198,7 +2275,7 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/domain-assets/manual-note" \
   -d '{"domain":"app.example.com:443","manual_note":""}'
 ```
 
-## 33. 获取主机资产清单
+## 34. 获取主机资产清单
 
 - 请求方法和路径：`GET /api/v1/host-assets`
 
@@ -2274,7 +2351,7 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/domain-assets/manual-note" \
 curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72&os_type=linux&region=生产&risk_level=critical&has_vulnerability=true&has_port=true"
 ```
 
-## 34. 获取主机资产详情
+## 35. 获取主机资产详情
 
 - 请求方法和路径：`GET /api/v1/host-assets/detail`
 
@@ -2339,7 +2416,7 @@ curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72
 curl "http://127.0.0.1:8686/api/v1/host-assets/detail?ip_address=10.72.160.123"
 ```
 
-## 35. 修改主机资产人工备注
+## 36. 修改主机资产人工备注
 
 - 请求方法和路径：`PATCH /api/v1/host-assets/manual-note`
 

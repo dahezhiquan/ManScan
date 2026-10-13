@@ -39,6 +39,7 @@ type ScanTaskService interface {
 	ListNameOptions(ctx context.Context, query dto.ListScanTaskNameOptionsQuery) (*dto.PageResult[dto.ScanTaskNameOption], error)
 	Stats(ctx context.Context) (*dto.ScanTaskStats, error)
 	Get(ctx context.Context, taskID int64) (*dto.GetScanTaskResponse, error)
+	GetConfig(ctx context.Context, taskID int64) (*dto.ScanTaskConfigResponse, error)
 	GetLogs(ctx context.Context, taskID, offset int64, limit int, direction string) (*dto.ScanTaskLogsResponse, error)
 	GetResponseArchive(ctx context.Context, taskID int64) (*dto.ScanTaskResponseArchive, error)
 	GetRawLogArchive(ctx context.Context, taskID int64) (*dto.ScanTaskRawLogArchive, error)
@@ -578,6 +579,31 @@ func (s *scanTaskService) Get(ctx context.Context, taskID int64) (*dto.GetScanTa
 	return &dto.GetScanTaskResponse{
 		Task:     summary,
 		Progress: s.getProgress(ctx, taskID, task.Status),
+	}, nil
+}
+
+func (s *scanTaskService) GetConfig(ctx context.Context, taskID int64) (*dto.ScanTaskConfigResponse, error) {
+	task, err := s.repository.FindByID(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	summary, err := s.buildTaskSummary(ctx, task)
+	if err != nil {
+		return nil, err
+	}
+	plan, err := normalizedTaskRequestFromTask(task)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrScanTaskInvalidConfiguration, err)
+	}
+
+	config := plan.Raw
+	config.Name = plan.Name
+	config.Description = plan.Description
+	config.CreatedBy = plan.CreatedBy
+
+	return &dto.ScanTaskConfigResponse{
+		Task:   summary,
+		Config: config,
 	}, nil
 }
 

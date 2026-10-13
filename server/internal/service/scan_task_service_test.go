@@ -1896,6 +1896,98 @@ func TestRescanCreatesNewTaskFromExistingConfiguration(t *testing.T) {
 	}
 }
 
+func TestGetConfigReturnsReusableConfiguration(t *testing.T) {
+	t.Parallel()
+
+	sourceTask := &entity.ScanTask{
+		ID:                            41,
+		TaskNo:                        "task-41",
+		Name:                          "daily-web-scan",
+		Description:                   ptr("source description"),
+		Status:                        "success",
+		CreatedBy:                     "tester",
+		Targets:                       `["https://example.com","https://admin.example.com"]`,
+		InlineTargetsList:             ptr("https://example.com\nhttps://admin.example.com\n"),
+		ExcludeTargets:                `["https://example.com/logout"]`,
+		ScanAllIPs:                    true,
+		IPVersion:                     `["4","6"]`,
+		InputFileMode:                 "list",
+		NewTemplates:                  true,
+		AutomaticScan:                 true,
+		DAST:                          true,
+		EnableCodeTemplates:           true,
+		EnableFileTemplates:           true,
+		EnableGlobalMatchersTemplates: true,
+		Tags:                          `["cve","exposure"]`,
+		IncludeIDs:                    `["CVE-2026-0001"]`,
+		Severities:                    `["high","critical"]`,
+		Protocols:                     `["http","tcp"]`,
+		StoreResponse:                 true,
+		CustomHeaders:                 `["X-Test: 1"]`,
+		InteractshServer:              ptr("https://oast.example.internal"),
+		InteractshToken:               ptr("task-token"),
+		FollowRedirects:               true,
+		MaxRedirects:                  3,
+		RateLimit:                     20,
+		RateLimitDuration:             2000,
+		BulkSize:                      7,
+		TemplateThreads:               8,
+		Timeout:                       12,
+		Retries:                       2,
+		MaxHostError:                  5,
+		Project:                       true,
+		ProjectPath:                   ptr("/tmp/manscan-project"),
+		ScanStrategy:                  ptr("auto"),
+		Headless:                      true,
+		PageTimeout:                   30,
+		HeadlessOptionalArguments:     `["--no-sandbox"]`,
+		Proxy:                         `["http://127.0.0.1:8080"]`,
+		EnableProgressBar:             true,
+		StatsInterval:                 2,
+		MetricsPort:                   9099,
+	}
+	repo := &scanTaskRepositoryStub{
+		tasks: map[int64]*entity.ScanTask{41: sourceTask},
+	}
+	svc := &scanTaskService{
+		repository: repo,
+		runtimeDir: t.TempDir(),
+		states:     map[int64]*scanTaskRuntime{},
+	}
+
+	response, err := svc.GetConfig(context.Background(), 41)
+	if err != nil {
+		t.Fatalf("GetConfig() error = %v", err)
+	}
+	if response.Task.ID != 41 || response.Task.Name != "daily-web-scan" {
+		t.Fatalf("unexpected task summary: %+v", response.Task)
+	}
+	if response.Config.InteractshToken != "task-token" {
+		t.Fatalf("InteractshToken = %q", response.Config.InteractshToken)
+	}
+	if response.Config.InteractshServer != "https://oast.example.internal" {
+		t.Fatalf("InteractshServer = %q", response.Config.InteractshServer)
+	}
+	if len(response.Config.Targets) != 2 || response.Config.Targets[0] != "https://example.com" || response.Config.Targets[1] != "https://admin.example.com" {
+		t.Fatalf("Targets = %+v", response.Config.Targets)
+	}
+	if response.Config.InlineTargetsList != "https://example.com\nhttps://admin.example.com\n" {
+		t.Fatalf("InlineTargetsList = %q", response.Config.InlineTargetsList)
+	}
+	if len(response.Config.Tags) != 2 || response.Config.Tags[0] != "cve" || len(response.Config.IncludeIDs) != 1 {
+		t.Fatalf("template filters were not restored: %+v", response.Config)
+	}
+	if !response.Config.DAST || !response.Config.EnableCodeTemplates || !response.Config.EnableFileTemplates {
+		t.Fatalf("template capability flags were not restored: %+v", response.Config)
+	}
+	if response.Config.RateLimit != 20 || response.Config.TemplateThreads != 8 || response.Config.Timeout != 12 || response.Config.MetricsPort != 9099 {
+		t.Fatalf("scan runtime settings were not restored: %+v", response.Config)
+	}
+	if len(repo.createdTasks) != 0 || svc.getRuntime(41) != nil {
+		t.Fatalf("GetConfig should not create tasks or runtime state")
+	}
+}
+
 func TestRescanRejectsSourceTaskWithoutTargets(t *testing.T) {
 	t.Parallel()
 
