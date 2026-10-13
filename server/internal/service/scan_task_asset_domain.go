@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"ManScan/pkg/catalog/config"
+	"ManScan/pkg/projectfile"
 	"ManScan/pkg/utils"
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/scanruntime"
@@ -679,6 +681,10 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 		globalMatchers = nil
 	}
 	httpClient := newAssetDomainWappalyzerHTTPClient(request)
+	projectCache := newAssetDomainProjectCache(request)
+	if projectCache != nil {
+		defer projectCache.Close()
+	}
 	wappalyzerClient, err := wappalyzer.New()
 	if err != nil {
 		wappalyzerClient = nil
@@ -723,7 +729,7 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			result, err := probeAssetDomainTarget(ctx, httpClient, wappalyzerClient, target, networkRegions, state, globalMatchers, vulnerabilityQueue)
+			result, err := probeAssetDomainTarget(ctx, httpClient, projectCache, wappalyzerClient, target, networkRegions, state, globalMatchers, vulnerabilityQueue)
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
 					setFirstErr(err)
@@ -819,6 +825,53 @@ type assetDomainProbeStatusTransport struct {
 	base http.RoundTripper
 }
 
+type assetDomainProjectCache struct {
+	mu   sync.Mutex
+	file *projectfile.ProjectFile
+}
+
+func newAssetDomainProjectCache(request dto.CreateScanTaskRequest) *assetDomainProjectCache {
+	if !request.Project {
+		return nil
+	}
+	projectPath := strings.TrimSpace(request.ProjectPath)
+	if projectPath == "" {
+		projectPath = config.DefaultProjectDir()
+	}
+	file, err := projectfile.New(&projectfile.Options{Path: projectPath})
+	if err != nil {
+		return nil
+	}
+	return &assetDomainProjectCache{file: file}
+}
+
+func (c *assetDomainProjectCache) Get(key []byte) (*http.Response, error) {
+	if c == nil || c.file == nil {
+		return nil, projectfile.ErrNotFound
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.file.Get(key)
+}
+
+func (c *assetDomainProjectCache) Set(key []byte, resp *http.Response, data []byte) error {
+	if c == nil || c.file == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.file.Set(key, resp, data)
+}
+
+func (c *assetDomainProjectCache) Close() {
+	if c == nil || c.file == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.file.Close()
+}
+
 func (t assetDomainProbeStatusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if state, ok := req.Context().Value(assetDomainProbeStatsStateKey{}).(*scanruntime.State); ok && state != nil {
 		state.AddDeferredTotalRequestStats(1, 1, 1, "扫描前域名资产存活 & 指纹探测进度更新")
@@ -832,7 +885,7 @@ func (t assetDomainProbeStatusTransport) RoundTrip(req *http.Request) (*http.Res
 	return resp, err
 }
 
-func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Client, wappalyzerClient *wappalyzer.Wappalyze, target string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State, globalMatchers *assetDomainPreflightGlobalMatchers, vulnerabilityQueue *vulnerabilityQueue) (assetDomainProbeTargetResult, error) {
+func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Client, projectCache *assetDomainProjectCache, wappalyzerClient *wappalyzer.Wappalyze, target string, networkRegions []assetDomainNetworkRegion, state *scanruntime.State, globalMatchers *assetDomainPreflightGlobalMatchers, vulnerabilityQueue *vulnerabilityQueue) (assetDomainProbeTargetResult, error) {
 	target = strings.TrimSpace(target)
 	result := assetDomainProbeTargetResult{Target: target}
 	for _, probeURL := range assetDomainProbeURLs(target) {
@@ -844,7 +897,7 @@ func probeAssetDomainTarget(ctx context.Context, httpClient *retryablehttp.Clien
 			continue
 		}
 		result.CheckedDomains = append(result.CheckedDomains, domain)
-		resp, err := doAssetDomainWappalyzerRequest(ctx, httpClient, probeURL, state)
+		resp, err := doAssetDomainWappalyzerRequest(ctx, httpClient, projectCache, probeURL, state)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				return assetDomainProbeTargetResult{}, err
@@ -938,7 +991,7 @@ func newAssetDomainWappalyzerHTTPClient(request dto.CreateScanTaskRequest) *retr
 	return client
 }
 
-func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.Client, targetURL string, state *scanruntime.State) (*assetDomainProbeHTTPResponse, error) {
+func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.Client, projectCache *assetDomainProjectCache, targetURL string, state *scanruntime.State) (*assetDomainProbeHTTPResponse, error) {
 	if client == nil {
 		client = retryablehttp.NewClient(retryablehttp.DefaultOptionsSingle)
 	}
@@ -953,6 +1006,18 @@ func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.C
 	}
 	userAgent := useragent.PickRandom()
 	req.Header.Set("User-Agent", userAgent.Raw)
+
+	projectCacheKey := assetDomainProjectCacheKey(req.Request)
+	if projectCache != nil && len(projectCacheKey) > 0 {
+		cachedResp, cacheErr := projectCache.Get(projectCacheKey)
+		if cacheErr == nil && cachedResp != nil {
+			if state != nil {
+				state.AddDeferredTotalRequestStats(1, 0, 1, "扫描前域名资产存活 & 指纹探测进度更新")
+			}
+			cachedResp.Request = req.Request
+			return assetDomainProbeHTTPResponseFromHTTPResponse(cachedResp, targetURL, cachedResp.StatusCode)
+		}
+	}
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -970,6 +1035,29 @@ func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.C
 	if err != nil {
 		return nil, err
 	}
+	if projectCache != nil && len(projectCacheKey) > 0 {
+		_ = projectCache.Set(projectCacheKey, resp, data)
+	}
+	return assetDomainProbeHTTPResponseFromData(resp, targetURL, firstStatusCode, data), nil
+}
+
+func assetDomainProbeHTTPResponseFromHTTPResponse(resp *http.Response, targetURL string, firstStatusCode int) (*assetDomainProbeHTTPResponse, error) {
+	if resp == nil {
+		return nil, errors.New("asset domain project cache response is nil")
+	}
+	defer func() {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, assetDomainWappalyzerMaxBody))
+	if err != nil {
+		return nil, err
+	}
+	return assetDomainProbeHTTPResponseFromData(resp, targetURL, firstStatusCode, data), nil
+}
+
+func assetDomainProbeHTTPResponseFromData(resp *http.Response, targetURL string, firstStatusCode int, data []byte) *assetDomainProbeHTTPResponse {
 	return &assetDomainProbeHTTPResponse{
 		Input:           finalAssetDomainResponseURL(resp, targetURL),
 		StatusCode:      resp.StatusCode,
@@ -978,7 +1066,7 @@ func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.C
 		Data:            data,
 		Raw:             dumpAssetDomainResponse(resp, data),
 		Request:         dumpAssetDomainRequest(resp.Request),
-	}, nil
+	}
 }
 
 func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context, request dto.CreateScanTaskRequest, fingerprintTargets []assetDomainFingerprintTarget, taskDir string, state *scanruntime.State, runtime *scanTaskRuntime, excludeHTTPTemplates bool) ([]repository.AssetDomainServiceAssetObservation, error) {
@@ -1096,6 +1184,7 @@ func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskReques
 	appendBool(request.ForceAttemptHTTP2, "-fh2")
 	appendBool(request.TLSImpersonate, "-tlsi")
 	appendBool(request.NoHostErrors, "-nmhe")
+	appendBool(request.Project, "--project")
 	appendBool(request.Headless, "--headless")
 	appendBool(request.UseInstalledChrome, "-sc")
 	appendBool(request.ProxyInternal, "-pi")
@@ -1129,6 +1218,7 @@ func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskReques
 	}
 	appendFlag("--sni", request.SNI)
 	appendFlag("-sip", request.SourceIP)
+	appendFlag("--project-path", request.ProjectPath)
 	appendFlag("-ss", firstNonEmpty(request.ScanStrategy, "auto"))
 	for _, item := range cleanStringSlice(request.HeadlessOptionalArguments) {
 		args = append(args, "-ho", item)
@@ -1623,6 +1713,30 @@ func dumpAssetDomainRequest(req *http.Request) string {
 		return strings.TrimSpace(req.Method + " " + req.URL.String())
 	}
 	return string(data)
+}
+
+func assetDomainProjectCacheKey(req *http.Request) []byte {
+	if req == nil || req.URL == nil {
+		return nil
+	}
+	data, err := httputil.DumpRequestOut(req, false)
+	if err != nil {
+		return nil
+	}
+	scheme := strings.ToLower(strings.TrimSpace(req.URL.Scheme))
+	host := strings.ToLower(strings.TrimSpace(req.URL.Host))
+	if scheme == "" || host == "" {
+		return data
+	}
+
+	var scoped bytes.Buffer
+	scoped.Grow(len(scheme) + len(host) + len(data) + 4)
+	_, _ = scoped.WriteString(scheme)
+	_, _ = scoped.WriteString("://")
+	_, _ = scoped.WriteString(host)
+	_, _ = scoped.WriteString("\n")
+	_, _ = scoped.Write(data)
+	return scoped.Bytes()
 }
 
 func dumpAssetDomainResponse(resp *http.Response, data []byte) string {

@@ -145,6 +145,8 @@ func TestBuildAssetDomainFingerprintTemplateCLIArgsUsesOnlyFingerprintTags(t *te
 			IncludeIDs:      []string{"CVE-2026-0001"},
 			CustomHeaders:   []string{"X-Test: yes"},
 			FollowRedirects: true,
+			Project:         true,
+			ProjectPath:     "/tmp/manscan-project",
 			RateLimit:       10,
 			Timeout:         3,
 		},
@@ -163,6 +165,9 @@ func TestBuildAssetDomainFingerprintTemplateCLIArgsUsesOnlyFingerprintTags(t *te
 	}
 	if !hasArg(args, "-fr") || flagValue(args, "-H") != "X-Test: yes" {
 		t.Fatalf("args = %v, want scan request transport options", args)
+	}
+	if !hasArg(args, "--project") || flagValue(args, "--project-path") != "/tmp/manscan-project" {
+		t.Fatalf("args = %v, want project cache options inherited", args)
 	}
 
 	args = buildAssetDomainFingerprintTemplateCLIArgs(

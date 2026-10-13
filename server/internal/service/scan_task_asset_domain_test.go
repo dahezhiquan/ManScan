@@ -288,6 +288,56 @@ func TestProbeAssetDomainLivenessRecordsRequestStats(t *testing.T) {
 	}
 }
 
+func TestProbeAssetDomainLivenessReusesProjectCache(t *testing.T) {
+	t.Parallel()
+
+	var requestCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestCount.Add(1)
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<html><title>Cached Probe</title><body>ok</body></html>`))
+	}))
+	defer server.Close()
+
+	projectPath := filepath.Join(t.TempDir(), "project")
+	request := dto.CreateScanTaskRequest{
+		Project:          true,
+		ProjectPath:      projectPath,
+		ProbeConcurrency: 1,
+		Timeout:          3,
+	}
+
+	firstState := &scanruntime.State{}
+	firstResult, err := probeAssetDomainLiveness(context.Background(), request, []string{server.URL}, nil, firstState, nil)
+	if err != nil {
+		t.Fatalf("first probeAssetDomainLiveness() error = %v", err)
+	}
+	if requestCount.Load() != 1 {
+		t.Fatalf("requestCount after first probe = %d, want 1", requestCount.Load())
+	}
+	if len(firstResult.Observations) != 1 || firstResult.Observations[0].Title != "Cached Probe" {
+		t.Fatalf("first observations = %+v, want cached probe title", firstResult.Observations)
+	}
+	if firstState.SnapshotProgress().Requests != 1 {
+		t.Fatalf("first progress = %+v, want one actual request", firstState.SnapshotProgress())
+	}
+
+	secondState := &scanruntime.State{}
+	secondResult, err := probeAssetDomainLiveness(context.Background(), request, []string{server.URL}, nil, secondState, nil)
+	if err != nil {
+		t.Fatalf("second probeAssetDomainLiveness() error = %v", err)
+	}
+	if requestCount.Load() != 1 {
+		t.Fatalf("requestCount after cached probe = %d, want 1", requestCount.Load())
+	}
+	if len(secondResult.Observations) != 1 || secondResult.Observations[0].Title != "Cached Probe" {
+		t.Fatalf("second observations = %+v, want cached probe title", secondResult.Observations)
+	}
+	if secondState.SnapshotProgress().Requests != 0 {
+		t.Fatalf("second progress = %+v, want no actual request on project cache hit", secondState.SnapshotProgress())
+	}
+}
+
 func TestAssetDomainRegion(t *testing.T) {
 	t.Parallel()
 

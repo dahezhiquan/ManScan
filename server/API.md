@@ -883,6 +883,8 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `rate_limit`          | `int`      | 否  | 速率限制               |
 | `template_threads`    | `int`      | 否  | 模板并发数              |
 | `timeout`             | `int`      | 否  | 请求超时，单位秒           |
+| `project`             | `bool`     | 否  | 启用 Project 请求缓存，对应 `--project` |
+| `project_path`        | `string`   | 否  | Project 缓存目录，对应 `--project-path`，为空时使用默认 `data/project` |
 | `headless`            | `bool`     | 否  | 是否启用 headless，对应 `--headless` |
 | `proxy`               | `string[]` | 否  | 代理列表               |
 
@@ -914,7 +916,7 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
   - `40001`：目标为空、请求体非法或 Interactsh 配置不合法
   - `50001`：任务入库失败或运行时目录创建失败
 
-模板能力开关默认均为关闭。`allow_local_file_access`（对应 `-lfa`）只控制本地文件访问权限，不等同于 `enable_file_templates`；需要执行 File 模板时必须显式开启后者。Headless DAST 模板需要同时开启 `headless` 和 `dast`。
+模板能力开关默认均为关闭。`allow_local_file_access`（对应 `-lfa`）只控制本地文件访问权限，不等同于 `enable_file_templates`；需要执行 File 模板时必须显式开启后者。Headless DAST 模板需要同时开启 `headless` 和 `dast`。启用 `project` 后，扫描前存活探测、Wappalyzer 被动指纹、扫描前主动指纹模板和主漏洞扫描都会使用同一 Project 缓存目录；未设置 `project_path` 时默认共享 `data/project`，如需任务隔离可为不同任务传入不同目录。
 
 - 使用示例：
 
