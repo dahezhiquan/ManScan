@@ -206,6 +206,7 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 		InputFileMode:                 firstNonEmpty(strings.TrimSpace(request.InputFileMode), "list"),
 		NewTemplates:                  request.NewTemplates,
 		AutomaticScan:                 request.AutomaticScan,
+		PreflightFingerprint:          request.PreflightFingerprint,
 		DAST:                          request.DAST,
 		EnableCodeTemplates:           request.EnableCodeTemplates,
 		EnableFileTemplates:           request.EnableFileTemplates,
@@ -825,7 +826,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	taskDir := filepath.Dir(state.LogFilePath)
 	fingerprintCachePath := filepath.Join(taskDir, "asset-domain-fingerprints.json")
 	preflightCachePath := filepath.Join(taskDir, "asset-domain-preflight.json")
-	excludeFingerprintTemplates := s.shouldRunAssetDomainFingerprintTemplates(plan.Raw, plan.CollectedTargets)
+	excludeFingerprintTemplates := s.shouldExcludeAssetDomainFingerprintTemplates(plan.Raw, plan.CollectedTargets)
 	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, plan.CollectedTargets, state, fingerprintCachePath, preflightCachePath, runtime.assetDomainServiceAssetQueue, runtime); err != nil {
 		return err
 	}
@@ -900,7 +901,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	return waitErr
 }
 
-func (s *scanTaskService) shouldRunAssetDomainFingerprintTemplates(request dto.CreateScanTaskRequest, targets []string) bool {
+func (s *scanTaskService) shouldExcludeAssetDomainFingerprintTemplates(request dto.CreateScanTaskRequest, targets []string) bool {
 	return s.assetDomainRepository != nil && len(targets) > 0 && !request.AutomaticScan && !request.OfflineHTTP && !request.DisableHTTPProbe
 }
 
@@ -1429,6 +1430,10 @@ func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedT
 	}
 	request.InteractshServer = interactshServer
 	request.InteractshToken = interactshToken
+	if request.PreflightFingerprint == nil {
+		enabled := true
+		request.PreflightFingerprint = &enabled
+	}
 
 	return &normalizedTaskRequest{
 		Raw:              request,
@@ -1437,6 +1442,10 @@ func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedT
 		CreatedBy:        createdBy,
 		CollectedTargets: collectedTargets,
 	}, nil
+}
+
+func preflightFingerprintEnabled(request dto.CreateScanTaskRequest) bool {
+	return request.PreflightFingerprint == nil || *request.PreflightFingerprint
 }
 
 func normalizeInteractshServer(raw string) (string, error) {
@@ -1520,6 +1529,7 @@ func normalizedTaskRequestFromTask(task *entity.ScanTask) (*normalizedTaskReques
 		InputFileMode:                 task.InputFileMode,
 		NewTemplates:                  task.NewTemplates,
 		AutomaticScan:                 task.AutomaticScan,
+		PreflightFingerprint:          task.PreflightFingerprint,
 		DAST:                          task.DAST,
 		EnableCodeTemplates:           task.EnableCodeTemplates,
 		EnableFileTemplates:           task.EnableFileTemplates,

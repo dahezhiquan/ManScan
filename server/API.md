@@ -874,6 +874,8 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `include_ids`         | `string[]` | 否  | 模板 ID 过滤           |
 | `severities`          | `string[]` | 否  | 严重级别过滤             |
 | `protocols`           | `string[]` | 否  | 协议类型过滤，口径与模板协议选项一致 |
+| `automatic_scan`      | `bool`     | 否  | 自动模版映射，默认关闭，对应 `-as` |
+| `preflight_fingerprint` | `bool`   | 否  | 是否前置指纹探测，默认 `true`；设置为 `false` 仅跳过扫描前主动指纹模板阶段，保留存活探测、Wappalyzer 被动识别和自动模版映射 |
 | `dast`                | `bool`     | 否  | 启用 DAST/fuzzable 模板，对应 `-dast` |
 | `enable_code_templates` | `bool`   | 否  | 启用 Code 协议模板，对应 `-code` |
 | `enable_file_templates` | `bool`   | 否  | 启用 File 协议模板，对应 `-file` |
@@ -889,6 +891,10 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `proxy`               | `string[]` | 否  | 代理列表               |
 
 至少需要提供 `targets` 或 `inline_targets_list` 之一，当前不再限制单次任务的目标数量上限。
+
+`preflight_fingerprint` 省略或传入 `null` 时按开启处理，显式传入 `false` 时关闭。关闭后，不再启动扫描前 HTTP/非 HTTP 主动指纹子进程；前置阶段仍进行存活探测和 Wappalyzer 被动指纹识别（仍受 `offline_http`、`disable_http_probe` 原有开关约束），并保留指纹缓存供后续复用。非自动映射任务的主扫描仍沿用指纹标签排除规则，不把被跳过的前置指纹模板挪到主扫描中执行；`automatic_scan=true` 时自动映射流程及其 detection templates 保持原有行为，不受该参数影响。任务暂停恢复、重新扫描和配置获取接口均保留此参数。
+
+已有数据库部署需先执行 `docs/SQL/alter_manscan_scan_tasks_preflight_fingerprint.sql`，历史任务默认开启；新建数据库使用更新后的建表脚本。
 
 - 响应格式：
 
@@ -926,6 +932,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
   -d '{
     "name": "demo-scan",
     "targets": ["https://example.com"],
+    "preflight_fingerprint": false,
     "tags": ["cve"],
     "severities": ["high"],
     "interactsh_server": "https://oast.example.internal",
@@ -1028,6 +1035,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
       "severities": ["high"],
       "protocols": ["http"],
       "automatic_scan": false,
+      "preflight_fingerprint": true,
       "dast": false,
       "enable_code_templates": false,
       "enable_file_templates": false,
@@ -1250,6 +1258,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
   - `progress.alive_hosts` 和 `progress.unresponsive_hosts` 是同一组存活探测统计的进度快照字段；探测尚未完成时字段不返回。
   - 自动模版映射的指纹识别阶段中，`progress_status` 为 `calculating`，此时 `total_requests` 和 `percent` 不返回，`last_message` 仍为“扫描进度更新”；全部目标完成指纹识别并得到映射模版后，`progress_status` 变为 `running`，再开始返回稳定的预估总请求数和完成度。单个目标完成映射后，其漏洞模版可以先行执行。
   - 非自动模版映射任务的扫描前存活探测和主动指纹识别阶段会先累计实际请求数，但不提前公开阶段性 `total_requests`；主漏洞 scanner 发布选中漏洞模版的确定总量后，再一次性返回“存活探测 + 主动指纹识别 + 选中漏洞模版”的总请求数。
+  - `preflight_fingerprint=false` 时不产生前置主动指纹阶段的请求数；存活探测、Wappalyzer 被动识别和主扫描请求统计仍按实际执行阶段累计，自动模版映射统计逻辑不变。
   - `progress.matched` 表示服务端保留的去重后结果数量。
 
 - 错误码说明：

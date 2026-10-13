@@ -1782,9 +1782,11 @@ func TestRescanCreatesNewTaskFromExistingConfiguration(t *testing.T) {
 	t.Parallel()
 
 	rootDir := t.TempDir()
+	preflightFingerprint := false
 	sourceTask := &entity.ScanTask{
 		ID:                            31,
 		TaskNo:                        "task-31",
+		PreflightFingerprint:          &preflightFingerprint,
 		Name:                          "daily-web-scan",
 		Description:                   ptr("source description"),
 		Status:                        "success",
@@ -1872,6 +1874,9 @@ func TestRescanCreatesNewTaskFromExistingConfiguration(t *testing.T) {
 		t.Fatalf("createdTasks = %d, want 1", len(repo.createdTasks))
 	}
 	created := repo.createdTasks[0]
+	if created.PreflightFingerprint == nil || *created.PreflightFingerprint {
+		t.Fatal("rescan must preserve disabled preflight fingerprinting")
+	}
 	if created.ID != 88 || created.Name != sourceTask.Name || created.CreatedBy != sourceTask.CreatedBy {
 		t.Fatalf("unexpected created task identity: %+v", created)
 	}
@@ -1904,9 +1909,11 @@ func TestRescanCreatesNewTaskFromExistingConfiguration(t *testing.T) {
 func TestGetConfigReturnsReusableConfiguration(t *testing.T) {
 	t.Parallel()
 
+	preflightFingerprint := false
 	sourceTask := &entity.ScanTask{
 		ID:                            41,
 		TaskNo:                        "task-41",
+		PreflightFingerprint:          &preflightFingerprint,
 		Name:                          "daily-web-scan",
 		Description:                   ptr("source description"),
 		Status:                        "success",
@@ -1969,6 +1976,9 @@ func TestGetConfigReturnsReusableConfiguration(t *testing.T) {
 	}
 	if response.Config.InteractshToken != "task-token" {
 		t.Fatalf("InteractshToken = %q", response.Config.InteractshToken)
+	}
+	if response.Config.PreflightFingerprint == nil || *response.Config.PreflightFingerprint {
+		t.Fatal("configuration must preserve disabled preflight fingerprinting")
 	}
 	if response.Config.InteractshServer != "https://oast.example.internal" {
 		t.Fatalf("InteractshServer = %q", response.Config.InteractshServer)

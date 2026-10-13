@@ -14,6 +14,44 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+func TestScanTaskRepositoryPersistsPreflightFingerprint(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "preflight.db")), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&entity.ScanTask{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewScanTaskRepository(db)
+	for _, testCase := range []struct {
+		name  string
+		value *bool
+		want  bool
+	}{
+		{name: "default", want: true},
+		{name: "disabled", value: new(bool), want: false},
+		{name: "enabled", value: new(true), want: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			task := &entity.ScanTask{TaskNo: testCase.name, Name: testCase.name, PreflightFingerprint: testCase.value}
+			if err := repo.Create(context.Background(), task); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := repo.FindByID(context.Background(), task.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.PreflightFingerprint == nil || *stored.PreflightFingerprint != testCase.want {
+				t.Fatalf("stored PreflightFingerprint = %v, want %v", stored.PreflightFingerprint, testCase.want)
+			}
+		})
+	}
+}
+
 func TestScanTaskRepositoryDeleteRemovesTaskAndResult(t *testing.T) {
 	t.Parallel()
 

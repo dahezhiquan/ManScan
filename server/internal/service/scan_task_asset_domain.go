@@ -173,7 +173,7 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			s.logger.Error("write asset domain fingerprint cache failed", "path", fingerprintCachePath, "error", err)
 		}
 	}
-	if !request.AutomaticScan && len(pendingTargets) > 0 {
+	if preflightFingerprintEnabled(request) && !request.AutomaticScan && len(pendingTargets) > 0 {
 		if state != nil {
 			state.Append("info", "asset_domain_fingerprint_template_started", "开始进行 ManScan 智能主动指纹识别")
 		}
@@ -1071,7 +1071,7 @@ func assetDomainProbeHTTPResponseFromData(resp *http.Response, targetURL string,
 
 func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context, request dto.CreateScanTaskRequest, fingerprintTargets []assetDomainFingerprintTarget, taskDir string, state *scanruntime.State, runtime *scanTaskRuntime, excludeHTTPTemplates bool) ([]repository.AssetDomainServiceAssetObservation, error) {
 	fingerprintTargets = uniqueAssetDomainFingerprintTargets(fingerprintTargets)
-	if len(fingerprintTargets) == 0 || s.assetDomainRepository == nil {
+	if !preflightFingerprintEnabled(request) || len(fingerprintTargets) == 0 || s.assetDomainRepository == nil {
 		return nil, nil
 	}
 	if runtime != nil && runtime.IsPauseRequested() {

@@ -150,7 +150,7 @@ func (c *assetDomainPreflightCache) markActiveFingerprintDone(targets []assetDom
 }
 
 func (c *assetDomainPreflightCache) pendingFingerprintTargets(request dto.CreateScanTaskRequest, targets []string) ([]assetDomainFingerprintTarget, []assetDomainFingerprintTarget) {
-	if c == nil || len(targets) == 0 || request.AutomaticScan {
+	if c == nil || len(targets) == 0 || request.AutomaticScan || !preflightFingerprintEnabled(request) {
 		return nil, nil
 	}
 	entries := c.entryMap()
@@ -224,7 +224,7 @@ func (t assetDomainPreflightTarget) completeFor(request dto.CreateScanTaskReques
 	if !t.ProbeDone || !t.WappalyzerDone {
 		return false
 	}
-	if request.AutomaticScan {
+	if request.AutomaticScan || !preflightFingerprintEnabled(request) {
 		return true
 	}
 	return t.ActiveFingerprintDone
