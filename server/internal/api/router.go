@@ -20,6 +20,7 @@ func NewRouter(
 	assetHostHandler handler.AssetHostHandler,
 	assetConfigCenterHandler handler.AssetConfigCenterHandler,
 	settingHandler handler.SettingHandler,
+	dashboardHandler handler.DashboardHandler,
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -32,6 +33,10 @@ func NewRouter(
 
 	protected := v1.Group("")
 	protected.Use(middleware.JWTAuth(authService))
+	protected.GET("/dashboard/overview", dashboardHandler.GetOverview)
+	protected.GET("/dashboard/asset-risks", dashboardHandler.GetAssetRisks)
+	protected.GET("/dashboard/host-rankings", dashboardHandler.GetHostRankings)
+	protected.GET("/dashboard/service-fingerprints", dashboardHandler.GetServiceFingerprints)
 	protected.POST("/auth/logout", authHandler.Logout)
 	protected.GET("/auth/me", authHandler.Me)
 	protected.GET("/users", authHandler.ListUsers)

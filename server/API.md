@@ -34,6 +34,155 @@ Authorization: Bearer <access_token>
 
 - 扫描任务响应中的 `tech_count` 表示指纹命中数量，即命中结果中 `info.tags` 包含 `tech`、`detect` 或 `favicon` 任一标签的数量，不再根据模板名称或结果名称是否包含“指纹识别”判断。
 
+## 主页仪表盘
+
+主页数据按四个独立区块获取，前端可并行请求并独立展示加载状态，不必等待所有统计完成。所有接口均需要 `Authorization: Bearer <access_token>`，无请求参数。
+
+### 获取漏洞及高危端口概览
+
+- 请求方法和路径：`GET /api/v1/dashboard/overview`
+- 请求参数：无；不支持时间范围、扫描任务或资产过滤，统计整个系统的现有数据。
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "vulnerability_status": {
+      "total": 100,
+      "unreviewed": 40,
+      "confirmed": 20,
+      "ticketed": 10,
+      "fixed": 15,
+      "false_positive": 10,
+      "ignored": 5
+    },
+    "pending_vulnerabilities": {
+      "total": 40,
+      "critical": 5,
+      "high": 10,
+      "medium": 15,
+      "low": 8
+    },
+    "high_risk_open_ports": 12
+  }
+}
+```
+
+- 字段说明：所有数量均为整数；`vulnerability_status` 从 `manscan_vulnerabilities` 统计所有漏洞记录（包括已修复、误报和忽略），六个状态分别对应未审核、已确认、已发单、已修复、误报和忽略。
+- 待处理口径：仅统计 `status=unreviewed` 的漏洞，`total` 与 `vulnerability_status.unreviewed` 相等，等级字段依次表示严重、高危、中危、低危。`info`、`unknown` 等等级计入 `total`，不计入这四个等级字段，因此四项之和可能小于 `total`。
+- 高危开放端口口径：`manscan_asset_host_port` 中同时满足 `is_alive=1` 和 `is_high_risk_port=1` 的记录数，不按主机去重。
+- 错误码：`40101` / HTTP 401 表示未登录或令牌无效；`50301` / HTTP 503 表示查询失败或超时，`data=null`，可稍后重试。
+- 使用示例：
+
+```bash
+curl -H 'Authorization: Bearer <access_token>' \
+  'http://127.0.0.1:8686/api/v1/dashboard/overview'
+```
+
+### 获取主机与域名资产风险数量
+
+- 请求方法和路径：`GET /api/v1/dashboard/asset-risks`
+- 请求参数：无。
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "hosts": {"critical": 3, "high": 8, "medium": 12, "low": 5, "no_risk": 20, "unknown": 2},
+    "domains": {"critical": 1, "high": 6, "medium": 10, "low": 4, "no_risk": 15, "unknown": 1}
+  }
+}
+```
+
+- 字段说明：`hosts` 表示 `manscan_asset_host` 中的资产数量，`domains` 表示 `manscan_asset_domain` 中的资产数量，均包含当前不存活的资产。每个资产只归入一个等级。
+- 关联口径：主机按 `manscan_vulnerabilities.asset_host = manscan_asset_host.ip_address` 关联；域名按 `manscan_vulnerabilities.asset_endpoint = manscan_asset_domain.domain` 关联，保留资产端点中的端口，不做域名截断。未登记到对应资产表的漏洞不会增加资产数量。
+- 风险口径：排除 `fixed`、`false_positive`、`ignored` 状态，以剩余漏洞的最高等级按 `critical > high > medium > low` 分类，与资产详情的有效漏洞口径一致。
+- 无风险口径：`no_risk` 表示不存在有效漏洞的资产（包括仅关联已修复、误报、忽略漏洞的资产）。额外返回 `unknown`：有有效漏洞但其等级全部为 `info`、`unknown` 或其他未识别值的资产，避免错误归为无风险。六项之和等于对应资产表的记录总数。
+- 错误码：`40101` / HTTP 401 表示未登录或令牌无效；`50301` / HTTP 503 表示任一聚合查询失败或超时，`data=null`，不返回部分结果。
+- 使用示例：
+
+```bash
+curl -H 'Authorization: Bearer <access_token>' \
+  'http://127.0.0.1:8686/api/v1/dashboard/asset-risks'
+```
+
+### 获取主机漏洞数量与开放端口数量 Top10
+
+- 请求方法和路径：`GET /api/v1/dashboard/host-rankings`
+- 请求参数：无；排行榜固定最多返回 10 项，不支持修改条数或分页。
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "top_vulnerabilities": [
+      {"ip_address": "10.0.0.1", "vulnerability_count": 25},
+      {"ip_address": "10.0.0.2", "vulnerability_count": 18}
+    ],
+    "top_ports": [
+      {"ip_address": "10.0.0.2", "port_count": 20},
+      {"ip_address": "10.0.0.1", "port_count": 12}
+    ]
+  }
+}
+```
+
+- 字段说明：`top_vulnerabilities` 表示主机 IP 与漏洞数量，`top_ports` 表示主机 IP 与开放端口数量。只返回存在对应记录且登记在 `manscan_asset_host` 中的主机，不补零，不要求主机本身 `is_alive=1`。
+- 漏洞数量口径：按 `asset_host` 关联 IP，统计所有状态的漏洞记录，与主机资产列表的漏洞总数口径一致；不会将仅有域名端点、没有主机 IP 关联的漏洞猜测分配给主机。
+- 端口数量口径：按 `ip_address` 关联 IP，仅统计端口 `is_alive=1` 的记录，同一 IP 的 TCP/UDP 不同协议端口分别计数，与主机资产列表的开放端口数量口径一致。
+- 排序：数量降序；数量相同按 IP 字符串升序。少于 10 项时返回实际条数，无数据返回 `[]`。
+- 错误码：`40101` / HTTP 401 表示未登录或令牌无效；`50301` / HTTP 503 表示任一查询失败或超时，`data=null`。
+- 使用示例：
+
+```bash
+curl -H 'Authorization: Bearer <access_token>' \
+  'http://127.0.0.1:8686/api/v1/dashboard/host-rankings'
+```
+
+### 获取域名与主机服务指纹数量 Top10
+
+- 请求方法和路径：`GET /api/v1/dashboard/service-fingerprints`
+- 请求参数：无；两组排行榜各最多返回 10 项，不支持修改条数或分页。
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "domains": [{"app_name": "nginx", "count": 30}],
+    "hosts": [{"service_name": "ssh", "count": 50}]
+  }
+}
+```
+
+- 字段说明：`domains` 按 `manscan_asset_domain_service_assets.app_name` 分组计数；`hosts` 按 `manscan_asset_host_port.service_name` 分组计数，返回具体指纹名称和对应记录数量，不使用主机端口表的 `app_name` 替代 `service_name`。
+- 统计口径：两组均仅统计 `is_alive=1` 的记录，排除名称为 NULL、空字符串或全为空格的记录，不按主机去重，也不按版本拆分。同一主机不同存活端口命中同一 `service_name` 时分别计数。沿用数据库的字符串排序规则，不额外拆分指纹字符串。
+- 排序：数量降序；数量相同按指纹名称升序。少于 10 项时返回实际条数，无数据返回 `[]`。
+- 错误码：`40101` / HTTP 401 表示未登录或令牌无效；`50301` / HTTP 503 表示任一查询失败或超时，`data=null`。
+- 使用示例：
+
+```bash
+curl -H 'Authorization: Bearer <access_token>' \
+  'http://127.0.0.1:8686/api/v1/dashboard/service-fingerprints'
+```
+
+### 性能与调用约束
+
+- 每个区块只执行两条数据库聚合查询：概览合并状态与等级统计，资产风险分别聚合主机和域名，两组排行榜各自聚合。完整主页共八条查询，不加载漏洞明细、不按资产逐条查询，不做 N+1 查询。
+- 分拆原因：资产风险需要按关联资产聚合有效漏洞，Top10 需要分组及排序，数据增长时可能比概览更慢；拆分后支持并行加载、独立失败重试，避免最慢区块阻塞整个主页。拆分本身不会减少数据库总工作量。
+- 每个区块共享 5 秒数据库查询时限，并继承请求取消和更短的上游超时；超时或查询失败统一返回 HTTP 503。该时限不包含鉴权查询和网络传输，不能视为端到端延迟承诺。
+- 直接查询当前数据库，不引入缓存延迟；各区块及各查询不是同一事务快照，扫描入库或修改状态期间可能出现短暂统计差异。建议前端定时刷新时避免高频轮询和重复发起同一区块的并行请求。
+- 可使用 `go test ./server/internal/repository -run '^$' -bench '^BenchmarkDashboardQueries$' -benchtime=5x -count=1` 复现本地合成数据评估：1,000 个主机、1,000 个域名、100,000 条漏洞、100,000 条端口、10,000 条域名指纹。基准使用内存 SQLite 和部分现有索引，仅衡量聚合查询，不包含 MySQL 网络、鉴权和 HTTP 耗时；生产响应时间应在真实 MySQL 数据集上压测并结合 `EXPLAIN` 确认。
+- 2026-10-14 在 Apple M2 / Go 1.26.3 上运行上述基准，各区块两条查询的平均累计耗时分别为：概览约 67.9 ms、资产风险约 83.0 ms、主机排行榜约 33.5 ms、服务指纹排行榜约 25.1 ms。这些不是生产接口响应时间或 P95；拆分可避免所有查询顺序串行完成后才返回第一块数据。
+- 大数据部署可评估覆盖索引：漏洞表 `(status, severity)`、`(asset_host, status, severity)`、`(asset_endpoint, status, severity)`，端口表 `(is_alive, is_high_risk_port)`、`(is_alive, ip_address)`、`(is_alive, service_name)`，域名指纹表 `(is_alive, app_name)`。风险查询中的状态规范化函数可能限制状态索引条件下推；索引收益必须通过实际执行计划验证。本次不自动修改已有表结构或新增生产索引。
+
 ## 认证与鉴权
 
 ### 获取登录验证码挑战

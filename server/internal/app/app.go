@@ -48,6 +48,8 @@ func Run() error {
 	assetHostService := service.NewAssetHostService(assetHostRepository)
 	assetConfigCenterService := service.NewAssetConfigCenterService(assetConfigCenterRepository)
 	settingService := service.NewSettingService(userSettingRepository)
+	dashboardRepository := repository.NewDashboardRepository(db)
+	dashboardService := service.NewDashboardService(dashboardRepository, logger)
 	authService := service.NewAuthService(userRepository, userSessionRepository, authChallengeRepository, tokenManager, cfg.Auth.TokenTTL())
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
@@ -71,6 +73,7 @@ func Run() error {
 		handler.NewAssetHostHandler(assetHostService),
 		handler.NewAssetConfigCenterHandler(assetConfigCenterService),
 		handler.NewSettingHandler(settingService),
+		handler.NewDashboardHandler(dashboardService),
 	)
 
 	server := &http.Server{

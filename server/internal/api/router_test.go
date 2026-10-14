@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"ManScan/server/internal/model/dto"
+	"ManScan/server/internal/pkg/logx"
 	"ManScan/server/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -13,8 +16,12 @@ import (
 func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopSettingHandler{})
+	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopSettingHandler{}, noopDashboardHandler{})
 	routes := router.Routes()
+	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/overview")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/asset-risks")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/host-rankings")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/service-fingerprints")
 
 	assertRouteRegistered(t, routes, "GET", "/api/v1/auth/challenge")
 	assertRouteRegistered(t, routes, "POST", "/api/v1/auth/login")
@@ -57,7 +64,26 @@ func assertRouteRegistered(t *testing.T, routes gin.RoutesInfo, method, path str
 	t.Fatalf("route %s %s is not registered", method, path)
 }
 
+func TestDashboardRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopSettingHandler{}, noopDashboardHandler{})
+	for _, path := range []string{"overview", "asset-risks", "host-rankings", "service-fingerprints"} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/"+path, nil))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("path %s status = %d, want 401", path, recorder.Code)
+		}
+	}
+}
+
 type noopAuthHandler struct{}
+
+type noopDashboardHandler struct{}
+
+func (noopDashboardHandler) GetOverview(*gin.Context)            {}
+func (noopDashboardHandler) GetAssetRisks(*gin.Context)          {}
+func (noopDashboardHandler) GetHostRankings(*gin.Context)        {}
+func (noopDashboardHandler) GetServiceFingerprints(*gin.Context) {}
 
 func (noopAuthHandler) Challenge(*gin.Context) {}
 func (noopAuthHandler) Login(*gin.Context)     {}
