@@ -974,7 +974,7 @@ func (s *scanTaskService) syncFinishedAssetDomainObservations(queue *assetDomain
 }
 
 func (s *scanTaskService) syncFinishedAssetHostHTTPPorts(queue *assetDomainServiceAssetQueue, state *scanruntime.State) {
-	if s.assetHostPortRepository == nil || queue == nil {
+	if s.assetHostPortRepository == nil || queue == nil || !queue.FingerprintStaleSyncEnabled() {
 		return
 	}
 	checkedDomains := queue.CheckedDomains()
@@ -995,6 +995,9 @@ func (s *scanTaskService) syncFinishedAssetDomainServiceAssets(queue *assetDomai
 	checkedDomains := queue.CheckedDomains()
 	if len(checkedDomains) == 0 {
 		return
+	}
+	if !queue.FingerprintStaleSyncEnabled() {
+		checkedDomains = nil
 	}
 	observations := queue.Observations()
 	if err := s.syncAssetServiceAssets(context.Background(), observations, checkedDomains, queue.NetworkRegions(), queue.DomainObservations(), time.Now()); err != nil {

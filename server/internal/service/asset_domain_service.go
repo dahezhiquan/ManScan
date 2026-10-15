@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"ManScan/server/internal/model/dto"
@@ -14,22 +16,29 @@ type AssetDomainService interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[dto.AssetDomainListItem], error)
 	Detail(ctx context.Context, domain string) (*dto.AssetDomainDetail, error)
 	UpdateManualNote(ctx context.Context, request dto.UpdateAssetDomainManualNoteRequest) (*dto.UpdateAssetDomainManualNoteResponse, error)
+	LatestScreenshot(ctx context.Context, domain string) (*dto.AssetDomainScreenshot, error)
+	ListScreenshots(ctx context.Context, query dto.ListAssetDomainScreenshotsQuery) (*dto.PageResult[dto.AssetDomainScreenshot], error)
 }
 
 type assetDomainService struct {
-	repository repository.AssetDomainRepository
+	repository           repository.AssetDomainRepository
+	screenshotRepository repository.AssetDomainScreenshotRepository
 }
 
 var (
-	ErrInvalidAssetDomain        = errors.New("域名资产地址不合法")
-	ErrInvalidAssetManualNote    = errors.New("资产手工备注不合法")
-	ErrInvalidAssetHostIPAddress = errors.New("主机资产 IP 不合法")
+	ErrInvalidAssetDomain            = errors.New("域名资产地址不合法")
+	ErrInvalidAssetManualNote        = errors.New("资产手工备注不合法")
+	ErrInvalidAssetHostIPAddress     = errors.New("主机资产 IP 不合法")
+	ErrAssetDomainScreenshotNotFound = errors.New("域名资产截图不存在")
 )
 
-const maxAssetManualNoteRunes = 5000
+const (
+	maxAssetManualNoteRunes = 5000
+	maxAssetDomainRunes     = 2048
+)
 
-func NewAssetDomainService(repo repository.AssetDomainRepository) AssetDomainService {
-	return &assetDomainService{repository: repo}
+func NewAssetDomainService(repo repository.AssetDomainRepository, screenshotRepo repository.AssetDomainScreenshotRepository) AssetDomainService {
+	return &assetDomainService{repository: repo, screenshotRepository: screenshotRepo}
 }
 
 func (s *assetDomainService) List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[dto.AssetDomainListItem], error) {
@@ -81,6 +90,65 @@ func (s *assetDomainService) UpdateManualNote(ctx context.Context, request dto.U
 		Domain:     domain,
 		ManualNote: manualNote,
 	}, nil
+}
+
+// LatestScreenshot returns the newest screenshot for a domain asset.
+func (s *assetDomainService) LatestScreenshot(ctx context.Context, domain string) (*dto.AssetDomainScreenshot, error) {
+	domain, err := normalizeAssetDomainScreenshotDomain(domain)
+	if err != nil {
+		return nil, err
+	}
+	record, err := s.screenshotRepository.Latest(ctx, domain)
+	if err != nil {
+		if errors.Is(err, repository.ErrAssetDomainScreenshotNotFound) {
+			return nil, ErrAssetDomainScreenshotNotFound
+		}
+		return nil, err
+	}
+	item := toAssetDomainScreenshot(*record)
+	return &item, nil
+}
+
+// ListScreenshots returns historical screenshots for a domain asset.
+func (s *assetDomainService) ListScreenshots(ctx context.Context, query dto.ListAssetDomainScreenshotsQuery) (*dto.PageResult[dto.AssetDomainScreenshot], error) {
+	domain, err := normalizeAssetDomainScreenshotDomain(query.Domain)
+	if err != nil {
+		return nil, err
+	}
+	page, err := s.screenshotRepository.List(ctx, domain, query.Page, query.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]dto.AssetDomainScreenshot, 0, len(page.Items))
+	for _, record := range page.Items {
+		items = append(items, toAssetDomainScreenshot(record))
+	}
+	return &dto.PageResult[dto.AssetDomainScreenshot]{
+		Page: page.Page, PageSize: page.PageSize, Total: page.Total, TotalPages: page.TotalPages, Items: items,
+	}, nil
+}
+
+func normalizeAssetDomainScreenshotDomain(domain string) (string, error) {
+	domain = strings.TrimSpace(domain)
+	if domain == "" || utf8.RuneCountInString(domain) > maxAssetDomainRunes {
+		return "", ErrInvalidAssetDomain
+	}
+	for _, character := range domain {
+		if unicode.IsControl(character) {
+			return "", ErrInvalidAssetDomain
+		}
+	}
+	return domain, nil
+}
+
+func toAssetDomainScreenshot(record repository.AssetDomainScreenshotRecord) dto.AssetDomainScreenshot {
+	return dto.AssetDomainScreenshot{
+		Domain:       record.Domain,
+		CapturedDate: record.CapturedDate.Format("2006-01-02"),
+		FileName:     record.FileName,
+		ContentType:  record.ContentType,
+		ImageBase64:  base64.StdEncoding.EncodeToString(record.Image),
+	}
 }
 
 func normalizeAssetManualNote(value string) (string, *string, error) {

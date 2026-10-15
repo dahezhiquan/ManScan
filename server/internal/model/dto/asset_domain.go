@@ -16,6 +16,22 @@ type ListAssetDomainsQuery struct {
 	IsAlive          *bool
 }
 
+// ListAssetDomainScreenshotsQuery describes screenshot history pagination.
+type ListAssetDomainScreenshotsQuery struct {
+	Domain   string
+	Page     int
+	PageSize int
+}
+
+// AssetDomainScreenshot contains one screenshot and its capture metadata.
+type AssetDomainScreenshot struct {
+	Domain       string `json:"domain"`
+	CapturedDate string `json:"captured_date"`
+	FileName     string `json:"file_name"`
+	ContentType  string `json:"content_type"`
+	ImageBase64  string `json:"image_base64"`
+}
+
 type UpdateAssetDomainManualNoteRequest struct {
 	Domain       string `json:"domain"`
 	AssetAddress string `json:"asset_address"`

@@ -1,9 +1,14 @@
 package service
 
 import (
+	"context"
+	"encoding/base64"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/repository"
 )
@@ -114,4 +119,78 @@ func TestToAssetDomainDetailIncludesRelatedAssetsAndTitleHistories(t *testing.T)
 	if len(detail.TitleHistories) != 1 || detail.TitleHistories[0].HistoryTitle != "Example App" || !detail.TitleHistories[0].IsAlive {
 		t.Fatalf("title histories = %+v, want title detail", detail.TitleHistories)
 	}
+}
+
+func TestAssetDomainServiceLatestScreenshotBuildsResponse(t *testing.T) {
+	t.Parallel()
+
+	capturedDate := time.Date(2026, 10, 15, 0, 0, 0, 0, time.UTC)
+	screenshotRepository := &assetDomainScreenshotRepositoryStub{
+		latest: &repository.AssetDomainScreenshotRecord{
+			Domain: "http://app.example.com", CapturedDate: capturedDate, FileName: "http:__app.example.com_20261015.png",
+			ContentType: "image/png", Image: []byte("image"),
+		},
+	}
+	assetService := NewAssetDomainService(nil, screenshotRepository)
+
+	item, err := assetService.LatestScreenshot(context.Background(), " http://app.example.com ")
+	if err != nil {
+		t.Fatalf("LatestScreenshot() error = %v", err)
+	}
+	if screenshotRepository.latestDomain != "http://app.example.com" {
+		t.Fatalf("Latest() domain = %q, want trimmed domain", screenshotRepository.latestDomain)
+	}
+	if item.CapturedDate != "2026-10-15" || item.ContentType != "image/png" {
+		t.Fatalf("item metadata = %+v, want capture date and content type", item)
+	}
+	if item.ImageBase64 != base64.StdEncoding.EncodeToString([]byte("image")) {
+		t.Fatalf("ImageBase64 = %q, want encoded image", item.ImageBase64)
+	}
+}
+
+func TestAssetDomainServiceListScreenshotsAndValidation(t *testing.T) {
+	t.Parallel()
+
+	screenshotRepository := &assetDomainScreenshotRepositoryStub{
+		page: &dto.PageResult[repository.AssetDomainScreenshotRecord]{
+			Page: 1, PageSize: 10, Total: 1, TotalPages: 1,
+			Items: []repository.AssetDomainScreenshotRecord{{
+				Domain: "app.example.com", CapturedDate: time.Date(2026, 10, 14, 0, 0, 0, 0, time.UTC),
+				FileName: "app.example.com_20261014.png", ContentType: "image/png", Image: []byte("history"),
+			}},
+		},
+	}
+	assetService := NewAssetDomainService(nil, screenshotRepository)
+	page, err := assetService.ListScreenshots(context.Background(), dto.ListAssetDomainScreenshotsQuery{
+		Domain: "app.example.com", Page: 1, PageSize: 10,
+	})
+	if err != nil {
+		t.Fatalf("ListScreenshots() error = %v", err)
+	}
+	if len(page.Items) != 1 || page.Items[0].CapturedDate != "2026-10-14" {
+		t.Fatalf("items = %+v, want converted screenshot", page.Items)
+	}
+
+	for _, domain := range []string{"", "bad\ndomain", strings.Repeat("a", maxAssetDomainRunes+1)} {
+		if _, err := assetService.LatestScreenshot(context.Background(), domain); !errors.Is(err, ErrInvalidAssetDomain) {
+			t.Fatalf("LatestScreenshot(%q) error = %v, want ErrInvalidAssetDomain", domain, err)
+		}
+	}
+}
+
+type assetDomainScreenshotRepositoryStub struct {
+	latest       *repository.AssetDomainScreenshotRecord
+	latestErr    error
+	latestDomain string
+	page         *dto.PageResult[repository.AssetDomainScreenshotRecord]
+	listErr      error
+}
+
+func (s *assetDomainScreenshotRepositoryStub) Latest(_ context.Context, domain string) (*repository.AssetDomainScreenshotRecord, error) {
+	s.latestDomain = domain
+	return s.latest, s.latestErr
+}
+
+func (s *assetDomainScreenshotRepositoryStub) List(_ context.Context, _ string, _, _ int) (*dto.PageResult[repository.AssetDomainScreenshotRecord], error) {
+	return s.page, s.listErr
 }

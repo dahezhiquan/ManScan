@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
 
 	"ManScan/server/config"
 	"ManScan/server/internal/api"
@@ -35,6 +36,7 @@ func Run() error {
 	scanTaskRepository := repository.NewScanTaskRepository(db)
 	vulnerabilityRepository := repository.NewVulnerabilityRepository(db)
 	assetDomainRepository := repository.NewAssetDomainRepository(db)
+	assetDomainScreenshotRepository := repository.NewAssetDomainScreenshotRepository(filepath.Join(cfg.RootDir, "screenshots"))
 	assetHostRepository := repository.NewAssetHostRepository(db)
 	assetHostPortRepository := repository.NewAssetHostPortRepository(db)
 	assetConfigCenterRepository := repository.NewAssetConfigCenterRepository(db)
@@ -44,7 +46,7 @@ func Run() error {
 	authChallengeRepository := repository.NewAuthChallengeRepository(db)
 	tokenManager := authpkg.NewJWTManager(cfg.Auth.JWTSecret, "manscan-server")
 	vulnerabilityService := service.NewVulnerabilityService(vulnerabilityRepository)
-	assetDomainService := service.NewAssetDomainService(assetDomainRepository)
+	assetDomainService := service.NewAssetDomainService(assetDomainRepository, assetDomainScreenshotRepository)
 	assetHostService := service.NewAssetHostService(assetHostRepository)
 	assetConfigCenterService := service.NewAssetConfigCenterService(assetConfigCenterRepository)
 	settingService := service.NewSettingService(userSettingRepository)

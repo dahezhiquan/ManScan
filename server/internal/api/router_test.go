@@ -36,6 +36,8 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/detail")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/screenshots/latest")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/screenshots")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/domain-assets/manual-note")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/host-assets")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/host-assets/detail")
@@ -176,6 +178,8 @@ type noopAssetDomainHandler struct{}
 func (noopAssetDomainHandler) List(*gin.Context)             {}
 func (noopAssetDomainHandler) Detail(*gin.Context)           {}
 func (noopAssetDomainHandler) UpdateManualNote(*gin.Context) {}
+func (noopAssetDomainHandler) LatestScreenshot(*gin.Context) {}
+func (noopAssetDomainHandler) ListScreenshots(*gin.Context)  {}
 
 type noopAssetHostHandler struct{}
 

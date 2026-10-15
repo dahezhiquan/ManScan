@@ -2623,3 +2623,112 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/host-assets/manual-note" \
   -H "Content-Type: application/json" \
   -d '{"ip_address":"10.72.160.123","manual_note":""}'
 ```
+
+## 37. 获取域名资产最新页面截图
+
+- 请求方法和路径：`GET /api/v1/domain-assets/screenshots/latest`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `domain` | `string` | 是 | 域名资产地址，例如 `http://10.107.71.65:8889`；最多 2048 个字符且不能包含控制字符 |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "domain": "http://10.107.71.65:8889",
+    "captured_date": "2026-10-15",
+    "file_name": "http:__10.107.71.65:8889_20261015.png",
+    "content_type": "image/png",
+    "image_base64": "iVBORw0KGgoAAA..."
+  }
+}
+```
+
+- 说明：
+  - 服务端在项目根目录的 `screenshots` 目录中查找截图。
+  - 文件名格式为 `<资产键>_<YYYYMMDD>.<扩展名>`，其中资产键由 `domain` 中的 `/` 替换为 `_` 得到。例如 `http://10.107.71.65:8889` 对应前缀 `http:__10.107.71.65:8889_`。
+  - 接口按文件名中的合法日期选择最新截图，不使用文件修改时间。
+  - `image_base64` 是不带 Data URL 前缀的标准 Base64；前端展示时可按 `data:<content_type>;base64,<image_base64>` 组装。
+  - 仅支持内容确认为 PNG、JPEG 或 WebP 的普通文件；单张截图最大为 20 MiB。目录、符号链接、日期格式错误及其他扩展名文件不会参与匹配。
+
+- 错误码说明：
+  - `40001`：`domain` 为空、超过长度限制或包含控制字符
+  - `40401`：没有找到该域名资产的有效截图
+  - `50001`：截图目录或截图文件读取失败、截图过大或文件内容不是受支持的图片格式
+
+- 使用示例：
+
+```bash
+curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots/latest" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  --data-urlencode "domain=http://10.107.71.65:8889"
+```
+
+## 38. 获取域名资产历史页面截图
+
+- 请求方法和路径：`GET /api/v1/domain-assets/screenshots`
+
+- 请求参数：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `domain` | `string` | 是 | 域名资产地址，匹配规则与最新截图接口一致 |
+| `page` | `int` | 否 | 页码，最小为 `1`，默认 `1` |
+| `page_size` | `int` | 否 | 每页截图数量，范围 `1-20`，默认 `10` |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 2,
+    "totalPages": 1,
+    "items": [
+      {
+        "domain": "http://10.107.71.65:8889",
+        "captured_date": "2026-10-15",
+        "file_name": "http:__10.107.71.65:8889_20261015.png",
+        "content_type": "image/png",
+        "image_base64": "iVBORw0KGgoAAA..."
+      },
+      {
+        "domain": "http://10.107.71.65:8889",
+        "captured_date": "2026-10-14",
+        "file_name": "http:__10.107.71.65:8889_20261014.png",
+        "content_type": "image/png",
+        "image_base64": "iVBORw0KGgoBBB..."
+      }
+    ]
+  }
+}
+```
+
+- 说明：
+  - 截图按文件名中的日期倒序返回；同一日期存在多个文件时按文件名倒序返回。
+  - 没有历史截图或页码超过总页数时返回成功响应，`items` 为空数组。
+  - 每页图片原始内容总量最大为 64 MiB；超过限制时返回 `50001`，调用方可减小 `page_size` 后重试。
+  - 每个 `items` 元素的字段及截图文件匹配规则与最新截图接口一致。
+
+- 错误码说明：
+  - `40001`：`domain` 非法，`page` 不是大于等于 `1` 的整数，或 `page_size` 不在 `1-20` 之间
+  - `50001`：截图目录或截图文件读取失败、单张截图/当前分页图片总量过大，或文件内容不是受支持的图片格式
+
+- 使用示例：
+
+```bash
+curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  --data-urlencode "domain=http://10.107.71.65:8889" \
+  --data-urlencode "page=1" \
+  --data-urlencode "page_size=10"
+```

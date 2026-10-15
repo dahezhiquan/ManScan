@@ -27,18 +27,19 @@ type assetDomainServiceAssetResultEvent struct {
 }
 
 type assetDomainServiceAssetQueue struct {
-	service            *scanTaskService
-	state              *scanruntime.State
-	resolver           *assetDomainFingerprintTargetResolver
-	events             chan assetDomainServiceAssetResultEvent
-	once               sync.Once
-	wg                 sync.WaitGroup
-	domainObservations []repository.AssetDomainObservation
-	observations       []repository.AssetDomainServiceAssetObservation
-	checkedDomains     []string
-	networkRegions     []assetDomainNetworkRegion
-	mu                 sync.Mutex
-	resolverMu         sync.RWMutex
+	service                     *scanTaskService
+	state                       *scanruntime.State
+	resolver                    *assetDomainFingerprintTargetResolver
+	events                      chan assetDomainServiceAssetResultEvent
+	once                        sync.Once
+	wg                          sync.WaitGroup
+	domainObservations          []repository.AssetDomainObservation
+	observations                []repository.AssetDomainServiceAssetObservation
+	checkedDomains              []string
+	networkRegions              []assetDomainNetworkRegion
+	fingerprintStaleSyncEnabled bool
+	mu                          sync.Mutex
+	resolverMu                  sync.RWMutex
 }
 
 func newAssetDomainServiceAssetQueue(service *scanTaskService, states ...*scanruntime.State) *assetDomainServiceAssetQueue {
@@ -55,10 +56,11 @@ func newAssetDomainServiceAssetQueueWithResolver(service *scanTaskService, state
 	}
 
 	queue := &assetDomainServiceAssetQueue{
-		service:  service,
-		state:    state,
-		resolver: resolver,
-		events:   make(chan assetDomainServiceAssetResultEvent, assetDomainServiceAssetQueueBufferSize),
+		service:                     service,
+		state:                       state,
+		resolver:                    resolver,
+		events:                      make(chan assetDomainServiceAssetResultEvent, assetDomainServiceAssetQueueBufferSize),
+		fingerprintStaleSyncEnabled: true,
 	}
 	queue.wg.Add(1)
 	go queue.runWorker()
@@ -111,6 +113,26 @@ func (q *assetDomainServiceAssetQueue) NetworkRegions() []assetDomainNetworkRegi
 	regions := make([]assetDomainNetworkRegion, 0, len(q.networkRegions))
 	regions = append(regions, q.networkRegions...)
 	return regions
+}
+
+func (q *assetDomainServiceAssetQueue) SetFingerprintStaleSyncEnabled(enabled bool) {
+	if q == nil {
+		return
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.fingerprintStaleSyncEnabled = enabled
+}
+
+func (q *assetDomainServiceAssetQueue) FingerprintStaleSyncEnabled() bool {
+	if q == nil {
+		return false
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	return q.fingerprintStaleSyncEnabled
 }
 
 func (q *assetDomainServiceAssetQueue) Observations() []repository.AssetDomainServiceAssetObservation {

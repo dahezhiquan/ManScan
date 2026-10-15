@@ -1317,7 +1317,8 @@ func (s *assetHostRepositoryStub) SyncObservations(_ context.Context, observatio
 }
 
 type assetHostPortRepositoryStub struct {
-	observationValues [][]repository.AssetHostPortObservation
+	observationValues         [][]repository.AssetHostPortObservation
+	inactiveObservationValues [][]repository.AssetHostPortObservation
 }
 
 func (s *assetHostPortRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostPortObservation, _ time.Time) error {
@@ -1326,7 +1327,7 @@ func (s *assetHostPortRepositoryStub) SyncObservations(_ context.Context, observ
 }
 
 func (s *assetHostPortRepositoryStub) MarkHTTPPortsInactive(_ context.Context, observations []repository.AssetHostPortObservation) error {
-	s.observationValues = append(s.observationValues, append([]repository.AssetHostPortObservation(nil), observations...))
+	s.inactiveObservationValues = append(s.inactiveObservationValues, append([]repository.AssetHostPortObservation(nil), observations...))
 	return nil
 }
 

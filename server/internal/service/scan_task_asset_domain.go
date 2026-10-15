@@ -46,6 +46,9 @@ const (
 var assetDomainTitlePattern = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 
 func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, request dto.CreateScanTaskRequest, targets []string, state *scanruntime.State, fingerprintCachePath, preflightCachePath string, serviceAssetQueue *assetDomainServiceAssetQueue, runtime *scanTaskRuntime) error {
+	if serviceAssetQueue != nil {
+		serviceAssetQueue.SetFingerprintStaleSyncEnabled(request.AutomaticScan || preflightFingerprintEnabled(request))
+	}
 	if s.assetDomainRepository == nil || len(targets) == 0 {
 		return nil
 	}

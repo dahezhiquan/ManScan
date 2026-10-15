@@ -17,6 +17,8 @@ type AssetDomainHandler interface {
 	List(c *gin.Context)
 	Detail(c *gin.Context)
 	UpdateManualNote(c *gin.Context)
+	LatestScreenshot(c *gin.Context)
+	ListScreenshots(c *gin.Context)
 }
 
 type assetDomainHandler struct {
@@ -125,6 +127,63 @@ func (h *assetDomainHandler) UpdateManualNote(c *gin.Context) {
 			return
 		}
 		response.Fail(c, errcode.InternalServerError, "更新域名资产人工备注失败")
+		return
+	}
+
+	response.Success(c, data)
+}
+
+// LatestScreenshot returns the newest screenshot for a domain asset.
+func (h *assetDomainHandler) LatestScreenshot(c *gin.Context) {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		response.Fail(c, errcode.InvalidParams, "domain 参数不能为空")
+		return
+	}
+
+	data, serviceErr := h.service.LatestScreenshot(c.Request.Context(), domain)
+	if serviceErr != nil {
+		switch {
+		case errors.Is(serviceErr, service.ErrInvalidAssetDomain):
+			response.Fail(c, errcode.InvalidParams, "domain 参数不合法")
+		case errors.Is(serviceErr, service.ErrAssetDomainScreenshotNotFound):
+			response.Fail(c, errcode.NotFound, "域名资产截图不存在")
+		default:
+			response.Fail(c, errcode.InternalServerError, "获取域名资产最新截图失败")
+		}
+		return
+	}
+
+	response.Success(c, data)
+}
+
+// ListScreenshots returns paginated screenshot history for a domain asset.
+func (h *assetDomainHandler) ListScreenshots(c *gin.Context) {
+	domain := strings.TrimSpace(c.Query("domain"))
+	if domain == "" {
+		response.Fail(c, errcode.InvalidParams, "domain 参数不能为空")
+		return
+	}
+	page, err := parsePositiveIntQuery(c.Query("page"), 1)
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, "page 参数必须是大于等于 1 的整数")
+		return
+	}
+	pageSize, err := parsePositiveIntQuery(c.Query("page_size"), 10)
+	if err != nil || pageSize > 20 {
+		response.Fail(c, errcode.InvalidParams, "page_size 参数必须在 1-20 之间")
+		return
+	}
+
+	data, serviceErr := h.service.ListScreenshots(c.Request.Context(), dto.ListAssetDomainScreenshotsQuery{
+		Domain: domain, Page: page, PageSize: pageSize,
+	})
+	if serviceErr != nil {
+		if errors.Is(serviceErr, service.ErrInvalidAssetDomain) {
+			response.Fail(c, errcode.InvalidParams, "domain 参数不合法")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "获取域名资产历史截图失败")
 		return
 	}
 
