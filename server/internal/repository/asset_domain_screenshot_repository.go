@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,7 +57,7 @@ func NewAssetDomainScreenshotRepository(directory string) AssetDomainScreenshotR
 	return &assetDomainScreenshotRepository{directory: filepath.Clean(directory)}
 }
 
-// Latest returns the screenshot with the newest date for a domain asset.
+// Latest returns the newest screenshot for a domain asset.
 func (r *assetDomainScreenshotRepository) Latest(ctx context.Context, domain string) (*AssetDomainScreenshotRecord, error) {
 	items, err := r.listMetadata(ctx, domain)
 	if err != nil {
@@ -140,10 +141,7 @@ func (r *assetDomainScreenshotRepository) listMetadata(ctx context.Context, doma
 			continue
 		}
 		dateValue := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), prefix), rawExtension)
-		if len(dateValue) != len("20060102") {
-			continue
-		}
-		capturedDate, parseErr := time.Parse("20060102", dateValue)
+		capturedDate, parseErr := parseAssetDomainScreenshotCapturedAt(dateValue)
 		if parseErr != nil {
 			continue
 		}
@@ -157,6 +155,20 @@ func (r *assetDomainScreenshotRepository) listMetadata(ctx context.Context, doma
 		return items[i].capturedDate.After(items[j].capturedDate)
 	})
 	return items, nil
+}
+
+func parseAssetDomainScreenshotCapturedAt(value string) (time.Time, error) {
+	if len(value) == len("20060102") {
+		return time.ParseInLocation("20060102", value, time.Local)
+	}
+	parts := strings.Split(value, "_")
+	if len(parts) != 2 {
+		return time.Time{}, fmt.Errorf("截图时间格式不合法")
+	}
+	if _, err := strconv.ParseInt(parts[1], 10, 64); err != nil {
+		return time.Time{}, fmt.Errorf("截图任务标识不合法: %w", err)
+	}
+	return time.ParseInLocation("20060102-150405", parts[0], time.Local)
 }
 
 func (r *assetDomainScreenshotRepository) read(ctx context.Context, domain string, item assetDomainScreenshotMetadata) (*AssetDomainScreenshotRecord, error) {

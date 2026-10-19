@@ -20,6 +20,8 @@ type ScanTask struct {
 	NewTemplates                  bool       `gorm:"column:new_templates"`
 	AutomaticScan                 bool       `gorm:"column:automatic_scan"`
 	PreflightFingerprint          *bool      `gorm:"column:preflight_fingerprint;not null;default:true"`
+	ScreenshotCapture             bool       `gorm:"column:screenshot_capture;not null;default:false"`
+	DisableHeadlessTemplates      *bool      `gorm:"column:disable_headless_templates;not null;default:true"`
 	DAST                          bool       `gorm:"column:dast"`
 	EnableCodeTemplates           bool       `gorm:"column:enable_code_templates"`
 	EnableFileTemplates           bool       `gorm:"column:enable_file_templates"`

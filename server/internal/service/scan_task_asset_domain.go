@@ -126,6 +126,25 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	if state != nil {
 		state.Append("info", "asset_domain_wappalyzer_finished", "Wappalyzer 被动指纹识别完成，"+assetDomainComponentCountSummary(probeResult.ServiceAssets))
 	}
+	if request.ScreenshotCapture {
+		succeeded, failed, screenshotErr := s.runAssetDomainScreenshotCapture(ctx, request, probeResult.FingerprintTargets, filepath.Dir(fingerprintCachePath), state, runtime)
+		if runtime != nil && runtime.IsPauseRequested() {
+			return errScanTaskPausedBeforeProcess
+		}
+		if screenshotErr != nil {
+			if errors.Is(screenshotErr, context.Canceled) {
+				return screenshotErr
+			}
+			if s.logger != nil {
+				s.logger.Error("capture asset domain screenshots failed", "target_count", len(probeResult.FingerprintTargets), "succeeded", succeeded, "failed", failed, "error", screenshotErr)
+			}
+			if state != nil {
+				state.Append("warn", "asset_domain_screenshot_failed", fmt.Sprintf("扫描前页面截图采集完成，成功 %d 个，失败 %d 个；失败不会阻断后续扫描", succeeded, failed))
+			}
+		} else if state != nil {
+			state.Append("info", "asset_domain_screenshot_finished", fmt.Sprintf("扫描前页面截图采集完成，成功 %d 个，失败 %d 个", succeeded, failed))
+		}
+	}
 	if serviceAssetQueue != nil {
 		serviceAssetQueue.SetTargetResolver(newAssetDomainFingerprintTargetResolver(append(
 			append([]assetDomainFingerprintTarget(nil), probeResult.FingerprintTargets...),
@@ -215,6 +234,247 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		}
 	}
 	return nil
+}
+
+func (s *scanTaskService) runAssetDomainScreenshotCapture(ctx context.Context, request dto.CreateScanTaskRequest, fingerprintTargets []assetDomainFingerprintTarget, taskDir string, state *scanruntime.State, runtime *scanTaskRuntime) (succeeded int, failed int, resultErr error) {
+	targets := uniqueAssetDomainScreenshotTargets(fingerprintTargets)
+	if len(targets) == 0 {
+		if state != nil {
+			state.Append("info", "asset_domain_screenshot_skipped", "扫描前页面截图采集已跳过：没有 HTTP 存活目标")
+		}
+		return 0, 0, nil
+	}
+	if state != nil {
+		state.Append("info", "asset_domain_screenshot_started", fmt.Sprintf("开始扫描前页面截图采集，共 %d 个 HTTP 存活目标", len(targets)))
+	}
+	if runtime != nil && runtime.IsPauseRequested() {
+		return 0, len(targets), errScanTaskPausedBeforeProcess
+	}
+
+	targetsFile := filepath.Join(taskDir, "asset-domain-screenshot-targets.txt")
+	targetInputs := make([]string, 0, len(targets))
+	for _, target := range targets {
+		targetInputs = append(targetInputs, target.Input)
+	}
+	if err := os.WriteFile(targetsFile, []byte(strings.Join(targetInputs, "\n")+"\n"), 0o600); err != nil {
+		return 0, len(targets), err
+	}
+
+	screenshotDir := filepath.Join(s.rootDir, "screenshots")
+	if err := os.MkdirAll(screenshotDir, 0o700); err != nil {
+		return 0, len(targets), err
+	}
+	if err := os.Chmod(screenshotDir, 0o700); err != nil {
+		return 0, len(targets), err
+	}
+
+	s.screenshotMu.Lock()
+	defer s.screenshotMu.Unlock()
+	taskID := int64(0)
+	if state != nil {
+		taskID = state.ID
+	}
+	backups, err := backupLegacyScreenshotOutputs(screenshotDir, targets, taskID)
+	if err != nil {
+		return 0, len(targets), err
+	}
+	defer func() {
+		resultErr = errors.Join(resultErr, restoreLegacyScreenshotOutputs(backups))
+	}()
+
+	executable, baseArgs := resolveManScanCommand(s.rootDir)
+	args := append(baseArgs, buildAssetDomainScreenshotCLIArgs(request, taskDir, targetsFile)...)
+	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd.Dir = s.rootDir
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	prepareTaskCommand(cmd)
+	if err := cmd.Start(); err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return 0, len(targets), context.Canceled
+		}
+		return 0, len(targets), err
+	}
+	if runtime != nil {
+		if !runtime.AttachInterrupt(func() { _ = interruptTaskCommand(cmd) }) {
+			_ = terminateTaskCommand(cmd)
+			return 0, len(targets), context.Canceled
+		}
+		defer runtime.ClearInterrupt()
+		if !runtime.AttachTerminator(func() { _ = terminateTaskCommand(cmd) }) {
+			_ = terminateTaskCommand(cmd)
+			return 0, len(targets), context.Canceled
+		}
+		defer runtime.ClearTerminator()
+	}
+
+	waitErr := cmd.Wait()
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return 0, len(targets), context.Canceled
+	}
+	succeeded, renameErr := finalizeScreenshotOutputs(screenshotDir, targets, taskID, time.Now())
+	failed = len(targets) - succeeded
+	if renameErr != nil {
+		waitErr = errors.Join(waitErr, renameErr)
+	}
+	if waitErr != nil {
+		return succeeded, failed, waitErr
+	}
+	if failed > 0 {
+		return succeeded, failed, fmt.Errorf("%d 个目标未生成截图", failed)
+	}
+	return succeeded, failed, nil
+}
+
+func uniqueAssetDomainScreenshotTargets(values []assetDomainFingerprintTarget) []assetDomainFingerprintTarget {
+	result := make([]assetDomainFingerprintTarget, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value.Input = normalizeTarget(value.Input)
+		if value.Input == "" {
+			continue
+		}
+		if _, ok := seen[value.Input]; ok {
+			continue
+		}
+		seen[value.Input] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+type screenshotOutputBackup struct {
+	original string
+	backup   string
+}
+
+func backupLegacyScreenshotOutputs(directory string, targets []assetDomainFingerprintTarget, taskID int64) ([]screenshotOutputBackup, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	backups := make([]screenshotOutputBackup, 0)
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !isLegacyScreenshotOutputForTargets(entry.Name(), targets) {
+			continue
+		}
+		original := filepath.Join(directory, entry.Name())
+		backup := filepath.Join(directory, fmt.Sprintf(".%s.manscan-%d-%d-%d", entry.Name(), taskID, time.Now().UnixNano(), len(backups)))
+		if err := os.Rename(original, backup); err != nil {
+			return nil, errors.Join(err, restoreLegacyScreenshotOutputs(backups))
+		}
+		backups = append(backups, screenshotOutputBackup{original: original, backup: backup})
+	}
+	return backups, nil
+}
+
+func restoreLegacyScreenshotOutputs(backups []screenshotOutputBackup) error {
+	var resultErr error
+	for _, item := range backups {
+		if err := os.Rename(item.backup, item.original); err != nil {
+			resultErr = errors.Join(resultErr, err)
+		}
+	}
+	return resultErr
+}
+
+func finalizeScreenshotOutputs(directory string, targets []assetDomainFingerprintTarget, taskID int64, capturedAt time.Time) (int, error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return 0, err
+	}
+	succeeded := 0
+	var resultErr error
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !isLegacyScreenshotOutputForTargets(entry.Name(), targets) {
+			continue
+		}
+		extension := filepath.Ext(entry.Name())
+		stem := strings.TrimSuffix(entry.Name(), extension)
+		assetKey := stem[:len(stem)-len("_20060102")]
+		destination, err := uniqueScreenshotDestination(directory, assetKey, extension, taskID, capturedAt)
+		if err != nil {
+			resultErr = errors.Join(resultErr, err)
+			continue
+		}
+		if err := os.Rename(filepath.Join(directory, entry.Name()), destination); err != nil {
+			resultErr = errors.Join(resultErr, err)
+			continue
+		}
+		succeeded++
+	}
+	return succeeded, resultErr
+}
+
+func uniqueScreenshotDestination(directory, assetKey, extension string, taskID int64, capturedAt time.Time) (string, error) {
+	for offset := 0; ; offset++ {
+		candidateTime := capturedAt.Add(time.Duration(offset) * time.Second)
+		name := fmt.Sprintf("%s_%s_%d%s", assetKey, candidateTime.Format("20060102-150405"), taskID, extension)
+		path := filepath.Join(directory, name)
+		if _, err := os.Stat(path); err == nil {
+			continue
+		} else if errors.Is(err, os.ErrNotExist) {
+			return path, nil
+		} else {
+			return "", err
+		}
+	}
+}
+
+func isLegacyScreenshotOutputForTargets(fileName string, targets []assetDomainFingerprintTarget) bool {
+	extension := strings.ToLower(filepath.Ext(fileName))
+	if extension != ".png" && extension != ".jpg" && extension != ".jpeg" && extension != ".webp" {
+		return false
+	}
+	stem := strings.TrimSuffix(fileName, filepath.Ext(fileName))
+	for _, target := range targets {
+		prefix := strings.ReplaceAll(target.Input, "/", "_") + "_"
+		if !strings.HasPrefix(stem, prefix) {
+			continue
+		}
+		dateValue := strings.TrimPrefix(stem, prefix)
+		if len(dateValue) == 8 {
+			if _, err := time.Parse("20060102", dateValue); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func buildAssetDomainScreenshotCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile string) []string {
+	args := []string{"-l", targetsFile, "-id", "screenshot", "--headless", "-silent", "-nc", "-no-interactsh"}
+	appendInt := func(value int, flag string) {
+		if value > 0 {
+			args = append(args, flag, strconv.Itoa(value))
+		}
+	}
+	appendInt(defaultInt(request.Timeout, 10), "--timeout")
+	appendInt(defaultInt(request.PageTimeout, 20), "--page-timeout")
+	appendInt(defaultInt(request.HeadlessBulkSize, 10), "-hbs")
+	appendInt(defaultInt(request.HeadlessTemplateThreads, 10), "-headc")
+	for _, header := range cleanStringSlice(request.CustomHeaders) {
+		args = append(args, "-H", header)
+	}
+	if request.ShowBrowser {
+		args = append(args, "-sb")
+	}
+	if request.UseInstalledChrome {
+		args = append(args, "-sc")
+	}
+	if request.ProxyInternal {
+		args = append(args, "-pi")
+	}
+	for _, item := range cleanStringSlice(request.HeadlessOptionalArguments) {
+		args = append(args, "-ho", item)
+	}
+	if endpoint := strings.TrimSpace(request.CDPEndpoint); endpoint != "" {
+		args = append(args, "-cdpe", endpoint)
+	}
+	for _, proxy := range cleanStringSlice(request.Proxy) {
+		args = append(args, "-p", proxy)
+	}
+	return append(args, "-elog", filepath.Join(taskDir, "asset-domain-screenshot-error.log"))
 }
 
 func assetDomainProbeHostCounts(result assetDomainLivenessProbeResult) (int, int) {

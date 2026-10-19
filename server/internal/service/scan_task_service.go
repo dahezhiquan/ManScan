@@ -73,9 +73,10 @@ type scanTaskService struct {
 	rootDir                 string
 	runtimeDir              string
 
-	mu         sync.RWMutex
-	states     map[int64]*scanTaskRuntime
-	taskRunner func(taskID int64, plan *normalizedTaskRequest, runtime *scanTaskRuntime)
+	mu           sync.RWMutex
+	screenshotMu sync.Mutex
+	states       map[int64]*scanTaskRuntime
+	taskRunner   func(taskID int64, plan *normalizedTaskRequest, runtime *scanTaskRuntime)
 }
 
 type normalizedTaskRequest struct {
@@ -207,6 +208,8 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 		NewTemplates:                  request.NewTemplates,
 		AutomaticScan:                 request.AutomaticScan,
 		PreflightFingerprint:          request.PreflightFingerprint,
+		ScreenshotCapture:             request.ScreenshotCapture,
+		DisableHeadlessTemplates:      request.DisableHeadlessTemplates,
 		DAST:                          request.DAST,
 		EnableCodeTemplates:           request.EnableCodeTemplates,
 		EnableFileTemplates:           request.EnableFileTemplates,
@@ -1437,6 +1440,14 @@ func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedT
 		enabled := true
 		request.PreflightFingerprint = &enabled
 	}
+	if request.DisableHeadlessTemplates == nil {
+		disabled := true
+		request.DisableHeadlessTemplates = &disabled
+	}
+	request.IncludeIDs, request.ScreenshotCapture = migrateScreenshotTemplateSelection(request.IncludeIDs, request.ScreenshotCapture)
+	if request.ScreenshotCapture && (request.OfflineHTTP || request.DisableHTTPProbe) {
+		return nil, fmt.Errorf("screenshot_capture 不能与 offline_http 或 disable_http_probe 同时开启")
+	}
 
 	return &normalizedTaskRequest{
 		Raw:              request,
@@ -1449,6 +1460,22 @@ func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedT
 
 func preflightFingerprintEnabled(request dto.CreateScanTaskRequest) bool {
 	return request.PreflightFingerprint == nil || *request.PreflightFingerprint
+}
+
+func disableHeadlessTemplates(request dto.CreateScanTaskRequest) bool {
+	return request.DisableHeadlessTemplates == nil || *request.DisableHeadlessTemplates
+}
+
+func migrateScreenshotTemplateSelection(includeIDs []string, screenshotCapture bool) ([]string, bool) {
+	filtered := make([]string, 0, len(includeIDs))
+	for _, templateID := range cleanStringSlice(includeIDs) {
+		if strings.EqualFold(templateID, "screenshot") {
+			screenshotCapture = true
+			continue
+		}
+		filtered = append(filtered, templateID)
+	}
+	return filtered, screenshotCapture
 }
 
 func normalizeInteractshServer(raw string) (string, error) {
@@ -1533,6 +1560,8 @@ func normalizedTaskRequestFromTask(task *entity.ScanTask) (*normalizedTaskReques
 		NewTemplates:                  task.NewTemplates,
 		AutomaticScan:                 task.AutomaticScan,
 		PreflightFingerprint:          task.PreflightFingerprint,
+		ScreenshotCapture:             task.ScreenshotCapture,
+		DisableHeadlessTemplates:      task.DisableHeadlessTemplates,
 		DAST:                          task.DAST,
 		EnableCodeTemplates:           task.EnableCodeTemplates,
 		EnableFileTemplates:           task.EnableFileTemplates,
@@ -1712,6 +1741,10 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 	appendBool(request.ProxyInternal, "-pi")
 	appendBool(request.EnableProgressBar, "--stats")
 	appendBool(request.HTTPStats, "-hps")
+	args = append(args, "-eid", "screenshot")
+	if disableHeadlessTemplates(request) {
+		args = append(args, "-ept", "headless")
+	}
 
 	appendInt(defaultInt(request.StatsInterval, 5), "-si")
 	appendInt(defaultInt(request.MetricsPort, 9092), "-mp")

@@ -1025,6 +1025,8 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `protocols`           | `string[]` | 否  | 协议类型过滤，口径与模板协议选项一致 |
 | `automatic_scan`      | `bool`     | 否  | 自动模版映射，默认关闭，对应 `-as` |
 | `preflight_fingerprint` | `bool`   | 否  | 是否前置指纹探测，默认 `true`；设置为 `false` 仅跳过扫描前主动指纹模板阶段，保留存活探测、Wappalyzer 被动识别和自动模版映射 |
+| `screenshot_capture` | `bool` | 否 | 是否在扫描前 HTTP 存活探测后独立采集页面截图，默认 `false` |
+| `disable_headless_templates` | `bool` | 否 | 是否从主扫描（含自动模板映射）排除 Headless 模板，默认 `true` |
 | `dast`                | `bool`     | 否  | 启用 DAST/fuzzable 模板，对应 `-dast` |
 | `enable_code_templates` | `bool`   | 否  | 启用 Code 协议模板，对应 `-code` |
 | `enable_file_templates` | `bool`   | 否  | 启用 File 协议模板，对应 `-file` |
@@ -1043,7 +1045,13 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 
 `preflight_fingerprint` 省略或传入 `null` 时按开启处理，显式传入 `false` 时关闭。关闭后，不再启动扫描前 HTTP/非 HTTP 主动指纹子进程；前置阶段仍进行存活探测和 Wappalyzer 被动指纹识别（仍受 `offline_http`、`disable_http_probe` 原有开关约束），并保留指纹缓存供后续复用。非自动映射任务的主扫描仍沿用指纹标签排除规则，不把被跳过的前置指纹模板挪到主扫描中执行；`automatic_scan=true` 时自动映射流程及其 detection templates 保持原有行为，不受该参数影响。任务暂停恢复、重新扫描和配置获取接口均保留此参数。
 
+`screenshot_capture=true` 时，服务端在合并缓存与实时存活探测结果后，仅对 HTTP 存活目标启动独立的 `screenshot` Headless 子阶段；该阶段不继承主扫描的自动映射、模板 ID、标签、严重级别和协议筛选。截图失败会记录 warning 并继续主扫描，取消或暂停任务会终止截图子进程。该字段不能与 `offline_http=true` 或 `disable_http_probe=true` 同时使用。为兼容历史调用方，`include_ids` 中的 `screenshot` 会迁移为 `screenshot_capture=true` 并从持久化模板 ID 中移除。
+
+`disable_headless_templates` 省略或传入 `null` 时按 `true` 处理；开启后主扫描最终模板集合排除 Headless 协议，即使同时设置 `headless=true` 也不能绕过。显式传入 `false` 且 `headless=true` 时，主扫描恢复现有 Headless 模板执行能力。该开关不影响独立截图子阶段。
+
 已有数据库部署需先执行 `docs/SQL/alter_manscan_scan_tasks_preflight_fingerprint.sql`，历史任务默认开启；新建数据库使用更新后的建表脚本。
+
+独立截图功能部署还需执行 `docs/SQL/alter_manscan_scan_tasks_add_preflight_screenshot.sql`；历史任务默认不截图并默认禁用主扫描 Headless 模板。
 
 - 响应格式：
 
@@ -1068,7 +1076,7 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 ```
 
 - 错误码说明：
-  - `40001`：目标为空、请求体非法或 Interactsh 配置不合法
+  - `40001`：目标为空、请求体非法、Interactsh 配置不合法，或截图采集与离线 HTTP/禁用 HTTP 探测冲突
   - `50001`：任务入库失败或运行时目录创建失败
 
 模板能力开关默认均为关闭。`allow_local_file_access`（对应 `-lfa`）只控制本地文件访问权限，不等同于 `enable_file_templates`；需要执行 File 模板时必须显式开启后者。Headless DAST 模板需要同时开启 `headless` 和 `dast`。启用 `project` 后，扫描前存活探测、Wappalyzer 被动指纹、扫描前主动指纹模板和主漏洞扫描都会使用同一 Project 缓存目录；未设置 `project_path` 时默认共享 `data/project`，如需任务隔离可为不同任务传入不同目录。
@@ -1185,6 +1193,8 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
       "protocols": ["http"],
       "automatic_scan": false,
       "preflight_fingerprint": true,
+      "screenshot_capture": true,
+      "disable_headless_templates": true,
       "dast": false,
       "enable_code_templates": false,
       "enable_file_templates": false,
@@ -1202,7 +1212,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
 ```
 
 - 说明：
-  - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的目标、模板筛选、协议筛选、并发、限速、代理、headless、DAST、Code/File 模板开关等扫描配置，用于前端回填“重新创建扫描任务”表单。
+  - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的目标、模板筛选、协议筛选、并发、限速、代理、截图采集、Headless 模板禁用、headless、DAST、Code/File 模板开关等扫描配置，用于前端回填“重新创建扫描任务”表单。
   - `config` 字段使用创建扫描任务接口的请求结构，前端可在用户确认或调整后提交给 `POST /api/v1/scans`。
   - 该接口只读取配置，不创建新任务，不恢复任务，也不会继承原任务的运行日志、进度快照或结果统计。
 
@@ -2643,7 +2653,7 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/host-assets/manual-note" \
   "data": {
     "domain": "http://10.107.71.65:8889",
     "captured_date": "2026-10-15",
-    "file_name": "http:__10.107.71.65:8889_20261015.png",
+    "file_name": "http:__10.107.71.65:8889_20261015-101500_42.png",
     "content_type": "image/png",
     "image_base64": "iVBORw0KGgoAAA..."
   }
@@ -2652,8 +2662,8 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/host-assets/manual-note" \
 
 - 说明：
   - 服务端在项目根目录的 `screenshots` 目录中查找截图。
-  - 文件名格式为 `<资产键>_<YYYYMMDD>.<扩展名>`，其中资产键由 `domain` 中的 `/` 替换为 `_` 得到。例如 `http://10.107.71.65:8889` 对应前缀 `http:__10.107.71.65:8889_`。
-  - 接口按文件名中的合法日期选择最新截图，不使用文件修改时间。
+  - 新文件名格式为 `<资产键>_<YYYYMMDD-HHmmss>_<任务ID>.<扩展名>`，并兼容历史 `<资产键>_<YYYYMMDD>.<扩展名>`。资产键由 `domain` 中的 `/` 替换为 `_` 得到，例如 `http://10.107.71.65:8889` 对应前缀 `http:__10.107.71.65:8889_`。
+  - 接口按文件名中的合法采集时间选择最新截图，不使用文件修改时间；历史日期文件的采集时间按当天零点处理。
   - `image_base64` 是不带 Data URL 前缀的标准 Base64；前端展示时可按 `data:<content_type>;base64,<image_base64>` 组装。
   - 仅支持内容确认为 PNG、JPEG 或 WebP 的普通文件；单张截图最大为 20 MiB。目录、符号链接、日期格式错误及其他扩展名文件不会参与匹配。
 
@@ -2697,14 +2707,14 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots/latest" \
       {
         "domain": "http://10.107.71.65:8889",
         "captured_date": "2026-10-15",
-        "file_name": "http:__10.107.71.65:8889_20261015.png",
+        "file_name": "http:__10.107.71.65:8889_20261015-101500_42.png",
         "content_type": "image/png",
         "image_base64": "iVBORw0KGgoAAA..."
       },
       {
         "domain": "http://10.107.71.65:8889",
-        "captured_date": "2026-10-14",
-        "file_name": "http:__10.107.71.65:8889_20261014.png",
+        "captured_date": "2026-10-15",
+        "file_name": "http:__10.107.71.65:8889_20261015-091500_41.png",
         "content_type": "image/png",
         "image_base64": "iVBORw0KGgoBBB..."
       }
@@ -2714,7 +2724,7 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots/latest" \
 ```
 
 - 说明：
-  - 截图按文件名中的日期倒序返回；同一日期存在多个文件时按文件名倒序返回。
+  - 截图按文件名中的采集时间倒序返回；采集时间相同时按文件名倒序返回。
   - 没有历史截图或页码超过总页数时返回成功响应，`items` 为空数组。
   - 每页图片原始内容总量最大为 64 MiB；超过限制时返回 `50001`，调用方可减小 `page_size` 后重试。
   - 每个 `items` 元素的字段及截图文件匹配规则与最新截图接口一致。

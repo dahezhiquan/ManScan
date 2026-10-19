@@ -40,6 +40,31 @@ func TestAssetDomainScreenshotRepositoryLatestUsesNewestDate(t *testing.T) {
 	}
 }
 
+func TestAssetDomainScreenshotRepositorySupportsTimestampedTaskFiles(t *testing.T) {
+	t.Parallel()
+
+	directory := t.TempDir()
+	writeScreenshotTestFile(t, directory, "http:__app.example.com_20261015.png", testPNGImage)
+	writeScreenshotTestFile(t, directory, "http:__app.example.com_20261015-091500_41.png", testPNGImage)
+	writeScreenshotTestFile(t, directory, "http:__app.example.com_20261015-101500_42.png", testPNGImage)
+	writeScreenshotTestFile(t, directory, "http:__app.example.com_20261015-111500_invalid.png", testPNGImage)
+
+	repository := NewAssetDomainScreenshotRepository(directory)
+	page, err := repository.List(context.Background(), "http://app.example.com", 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 3 {
+		t.Fatalf("Total = %d, want 3 valid old/new screenshots", page.Total)
+	}
+	if page.Items[0].FileName != "http:__app.example.com_20261015-101500_42.png" {
+		t.Fatalf("newest FileName = %q", page.Items[0].FileName)
+	}
+	if got := page.Items[0].CapturedDate.Format("2006-01-02 15:04:05"); got != "2026-10-15 10:15:00" {
+		t.Fatalf("CapturedDate = %s", got)
+	}
+}
+
 func TestAssetDomainScreenshotRepositoryListPaginatesDescending(t *testing.T) {
 	t.Parallel()
 
