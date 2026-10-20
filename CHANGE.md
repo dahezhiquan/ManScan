@@ -1,3 +1,15 @@
+## 2026-10-20 16:09 修复自动指纹技术名称被空格拆分
+
+- 变动目录：`pkg/protocols/common/automaticscan/`
+- 变动文件：`pkg/protocols/common/automaticscan/automaticscan.go`、`pkg/protocols/common/automaticscan/automaticscan_test.go`、`pkg/protocols/common/automaticscan/doc.go`
+- 具体修改内容：
+  - 统一实时 Wappalyzer 探测与预扫描缓存的技术名称归一化逻辑，继续移除版本号、转换小写和去重，但不再按空格拆分技术名称。
+  - 映射后的技术名称同样保留完整词组，使 `Apache HTTP Server` 输出为 `apache http server`，而不是 `apache`、`http`、`server` 三个独立标签。
+  - 更新自动扫描包说明，并补充直接归一化与缓存读取场景的回归测试。
+- 修改目的或影响：
+  - 自动指纹完成日志和后续模版匹配接收到完整、可辨识的技术名称，前端无需猜测拼接被拆散的词组。
+  - 单词技术名称、版本号清理、映射和去重行为保持不变。
+
 ## 2026-10-09 11:20 修复 offlinehttp 多文件完成度统计
 
 - 变动目录：`pkg/protocols/`

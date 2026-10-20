@@ -21,6 +21,30 @@ func TestNormalizeAppName(t *testing.T) {
 
 	appName = normalizeAppName("JBoss:2.3.5")
 	require.Equal(t, "jboss", appName, "could not get normalized name")
+
+	appName = normalizeAppName(" Apache HTTP Server:2.4.62 ")
+	require.Equal(t, "apache http server", appName, "could not preserve the complete technology name")
+}
+
+func TestNormalizeWappalyzerTagsPreservesCompleteTechnologyNames(t *testing.T) {
+	service := &Service{technologyMappings: map[string]string{
+		"mapped server": "Mapped HTTP Server",
+	}}
+
+	tags := service.normalizeWappalyzerTags([]string{
+		"Apache HTTP Server:2.4.62",
+		"Vue.js",
+		"ApacheGeneric",
+		"Mapped Server:1.0",
+		"apache http server",
+	})
+
+	require.Equal(t, []string{
+		"apache http server",
+		"vue.js",
+		"apachegeneric",
+		"mapped http server",
+	}, tags)
 }
 
 func TestFilterAutomaticScanExecutionTags(t *testing.T) {
@@ -30,6 +54,10 @@ func TestFilterAutomaticScanExecutionTags(t *testing.T) {
 
 func TestAutomaticFingerprintTagsMessage(t *testing.T) {
 	require.Equal(t, "nginx, php", automaticFingerprintTagsMessage([]string{"nginx", "php"}))
+	require.Equal(t,
+		"apache http server, vue.js, apachegeneric",
+		automaticFingerprintTagsMessage([]string{"apache http server", "vue.js", "apachegeneric"}),
+	)
 	require.Equal(t, "未发现", automaticFingerprintTagsMessage(nil))
 	require.Equal(t, "未发现", automaticFingerprintTagsMessage([]string{}))
 }
@@ -88,6 +116,24 @@ func TestCachedHTTPProbeFailed(t *testing.T) {
 	require.False(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "https://alive.example.com"}))
 	require.True(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "down.example.com:3306"}))
 	require.False(t, service.cachedHTTPProbeFailed(&contextargs.MetaInput{Input: "legacy.example.com"}))
+}
+
+func TestGetTagsUsingCachedWappalyzerPreservesCompleteTechnologyNames(t *testing.T) {
+	service := &Service{fingerprintCache: assetdomainfingerprint.FromEntries([]assetdomainfingerprint.Entry{
+		{
+			Target: "https://app.example.com",
+			Components: []assetdomainfingerprint.Component{
+				{AppName: "Apache HTTP Server:2.4.62"},
+				{AppName: "Vue.js"},
+				{AppName: "ApacheGeneric"},
+			},
+		},
+	})}
+
+	tags, ok := service.getTagsUsingCachedWappalyzer(&contextargs.MetaInput{Input: "https://app.example.com"})
+
+	require.True(t, ok)
+	require.Equal(t, []string{"apache http server", "vue.js", "apachegeneric"}, tags)
 }
 
 func TestFilterHTTPBasedTemplates(t *testing.T) {

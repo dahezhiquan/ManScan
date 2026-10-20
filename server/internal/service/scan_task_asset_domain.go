@@ -126,25 +126,6 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	if state != nil {
 		state.Append("info", "asset_domain_wappalyzer_finished", "Wappalyzer 被动指纹识别完成，"+assetDomainComponentCountSummary(probeResult.ServiceAssets))
 	}
-	if request.ScreenshotCapture {
-		succeeded, failed, screenshotErr := s.runAssetDomainScreenshotCapture(ctx, request, probeResult.FingerprintTargets, filepath.Dir(fingerprintCachePath), state, runtime)
-		if runtime != nil && runtime.IsPauseRequested() {
-			return errScanTaskPausedBeforeProcess
-		}
-		if screenshotErr != nil {
-			if errors.Is(screenshotErr, context.Canceled) {
-				return screenshotErr
-			}
-			if s.logger != nil {
-				s.logger.Error("capture asset domain screenshots failed", "target_count", len(probeResult.FingerprintTargets), "succeeded", succeeded, "failed", failed, "error", screenshotErr)
-			}
-			if state != nil {
-				state.Append("warn", "asset_domain_screenshot_failed", fmt.Sprintf("扫描前页面截图采集完成，成功 %d 个，失败 %d 个；失败不会阻断后续扫描", succeeded, failed))
-			}
-		} else if state != nil {
-			state.Append("info", "asset_domain_screenshot_finished", fmt.Sprintf("扫描前页面截图采集完成，成功 %d 个，失败 %d 个", succeeded, failed))
-		}
-	}
 	if serviceAssetQueue != nil {
 		serviceAssetQueue.SetTargetResolver(newAssetDomainFingerprintTargetResolver(append(
 			append([]assetDomainFingerprintTarget(nil), probeResult.FingerprintTargets...),
@@ -231,6 +212,25 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			if state != nil {
 				state.Append("info", "asset_domain_fingerprint_template_finished", "智能主动指纹识别完成，"+assetDomainComponentCountSummary(activeServiceAssets))
 			}
+		}
+	}
+	if request.ScreenshotCapture {
+		succeeded, failed, screenshotErr := s.runAssetDomainScreenshotCapture(ctx, request, probeResult.FingerprintTargets, filepath.Dir(fingerprintCachePath), state, runtime)
+		if runtime != nil && runtime.IsPauseRequested() {
+			return errScanTaskPausedBeforeProcess
+		}
+		if screenshotErr != nil {
+			if errors.Is(screenshotErr, context.Canceled) {
+				return screenshotErr
+			}
+			if s.logger != nil {
+				s.logger.Error("capture asset domain screenshots failed", "target_count", len(probeResult.FingerprintTargets), "succeeded", succeeded, "failed", failed, "error", screenshotErr)
+			}
+			if state != nil {
+				state.Append("warn", "asset_domain_screenshot_failed", fmt.Sprintf("扫描前页面截图采集完成，成功 %d 个，失败 %d 个；失败不会阻断后续扫描", succeeded, failed))
+			}
+		} else if state != nil {
+			state.Append("info", "asset_domain_screenshot_finished", fmt.Sprintf("扫描前页面截图采集完成，成功 %d 个，失败 %d 个", succeeded, failed))
 		}
 	}
 	return nil

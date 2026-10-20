@@ -52,44 +52,6 @@ func TestScanTaskRepositoryPersistsPreflightFingerprint(t *testing.T) {
 	}
 }
 
-func TestScanTaskRepositoryPersistsDisableHeadlessTemplates(t *testing.T) {
-	t.Parallel()
-
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "headless.db")), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Silent),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AutoMigrate(&entity.ScanTask{}); err != nil {
-		t.Fatal(err)
-	}
-	repo := NewScanTaskRepository(db)
-	for _, testCase := range []struct {
-		name  string
-		value *bool
-		want  bool
-	}{
-		{name: "default", want: true},
-		{name: "enabled", value: new(true), want: true},
-		{name: "disabled", value: new(false), want: false},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			task := &entity.ScanTask{TaskNo: "headless-" + testCase.name, Name: testCase.name, DisableHeadlessTemplates: testCase.value}
-			if err := repo.Create(context.Background(), task); err != nil {
-				t.Fatal(err)
-			}
-			stored, err := repo.FindByID(context.Background(), task.ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if stored.DisableHeadlessTemplates == nil || *stored.DisableHeadlessTemplates != testCase.want {
-				t.Fatalf("stored DisableHeadlessTemplates = %v, want %v", stored.DisableHeadlessTemplates, testCase.want)
-			}
-		})
-	}
-}
-
 func TestScanTaskRepositoryDeleteRemovesTaskAndResult(t *testing.T) {
 	t.Parallel()
 

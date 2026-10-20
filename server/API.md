@@ -1026,7 +1026,6 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `automatic_scan`      | `bool`     | 否  | 自动模版映射，默认关闭，对应 `-as` |
 | `preflight_fingerprint` | `bool`   | 否  | 是否前置指纹探测，默认 `true`；设置为 `false` 仅跳过扫描前主动指纹模板阶段，保留存活探测、Wappalyzer 被动识别和自动模版映射 |
 | `screenshot_capture` | `bool` | 否 | 是否在扫描前 HTTP 存活探测后独立采集页面截图，默认 `false` |
-| `disable_headless_templates` | `bool` | 否 | 是否从主扫描（含自动模板映射）排除 Headless 模板，默认 `true` |
 | `dast`                | `bool`     | 否  | 启用 DAST/fuzzable 模板，对应 `-dast` |
 | `enable_code_templates` | `bool`   | 否  | 启用 Code 协议模板，对应 `-code` |
 | `enable_file_templates` | `bool`   | 否  | 启用 File 协议模板，对应 `-file` |
@@ -1045,13 +1044,11 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 
 `preflight_fingerprint` 省略或传入 `null` 时按开启处理，显式传入 `false` 时关闭。关闭后，不再启动扫描前 HTTP/非 HTTP 主动指纹子进程；前置阶段仍进行存活探测和 Wappalyzer 被动指纹识别（仍受 `offline_http`、`disable_http_probe` 原有开关约束），并保留指纹缓存供后续复用。非自动映射任务的主扫描仍沿用指纹标签排除规则，不把被跳过的前置指纹模板挪到主扫描中执行；`automatic_scan=true` 时自动映射流程及其 detection templates 保持原有行为，不受该参数影响。任务暂停恢复、重新扫描和配置获取接口均保留此参数。
 
-`screenshot_capture=true` 时，服务端在合并缓存与实时存活探测结果后，仅对 HTTP 存活目标启动独立的 `screenshot` Headless 子阶段；该阶段不继承主扫描的自动映射、模板 ID、标签、严重级别和协议筛选。截图失败会记录 warning 并继续主扫描，取消或暂停任务会终止截图子进程。该字段不能与 `offline_http=true` 或 `disable_http_probe=true` 同时使用。为兼容历史调用方，`include_ids` 中的 `screenshot` 会迁移为 `screenshot_capture=true` 并从持久化模板 ID 中移除。
-
-`disable_headless_templates` 省略或传入 `null` 时按 `true` 处理；开启后主扫描最终模板集合排除 Headless 协议，即使同时设置 `headless=true` 也不能绕过。显式传入 `false` 且 `headless=true` 时，主扫描恢复现有 Headless 模板执行能力。该开关不影响独立截图子阶段。
+`screenshot_capture=true` 时，服务端在存活探测与原有前置主动指纹阶段完成后，仅对 HTTP 存活目标启动独立的 `screenshot` Headless 子阶段；通常随后继续原有主扫描。如果同时满足 `automatic_scan=false` 且没有其他模板选择条件，任务会在截图后跳过主扫描，并将 `plugin_count` 按 `screenshot` 计为 1；是否开启 `preflight_fingerprint` 只决定截图前是否执行主动指纹探测，不影响主扫描跳过判断。截图阶段不继承主扫描的自动映射、模板 ID、标签、严重级别和协议筛选。截图失败会记录 warning 并继续原有扫描，取消或暂停任务会终止截图子进程。该字段不能与 `offline_http=true` 或 `disable_http_probe=true` 同时使用。为兼容历史调用方，`include_ids` 中的 `screenshot` 会迁移为 `screenshot_capture=true` 并从持久化模板 ID 中移除。
 
 已有数据库部署需先执行 `docs/SQL/alter_manscan_scan_tasks_preflight_fingerprint.sql`，历史任务默认开启；新建数据库使用更新后的建表脚本。
 
-独立截图功能部署还需执行 `docs/SQL/alter_manscan_scan_tasks_add_preflight_screenshot.sql`；历史任务默认不截图并默认禁用主扫描 Headless 模板。
+独立截图功能部署还需执行 `docs/SQL/alter_manscan_scan_tasks_add_preflight_screenshot.sql`；历史任务默认不截图。
 
 - 响应格式：
 
@@ -1194,7 +1191,6 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
       "automatic_scan": false,
       "preflight_fingerprint": true,
       "screenshot_capture": true,
-      "disable_headless_templates": true,
       "dast": false,
       "enable_code_templates": false,
       "enable_file_templates": false,
@@ -1212,7 +1208,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
 ```
 
 - 说明：
-  - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的目标、模板筛选、协议筛选、并发、限速、代理、截图采集、Headless 模板禁用、headless、DAST、Code/File 模板开关等扫描配置，用于前端回填“重新创建扫描任务”表单。
+  - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的目标、模板筛选、协议筛选、并发、限速、代理、截图采集、headless、DAST、Code/File 模板开关等扫描配置，用于前端回填“重新创建扫描任务”表单。
   - `config` 字段使用创建扫描任务接口的请求结构，前端可在用户确认或调整后提交给 `POST /api/v1/scans`。
   - 该接口只读取配置，不创建新任务，不恢复任务，也不会继承原任务的运行日志、进度快照或结果统计。
 

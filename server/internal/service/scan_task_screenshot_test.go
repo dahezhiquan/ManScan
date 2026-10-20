@@ -1,14 +1,18 @@
 package service
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
+	"ManScan/server/internal/pkg/scanruntime"
 )
 
 func TestNormalizeCreateTaskRequestScreenshotSettings(t *testing.T) {
@@ -27,32 +31,16 @@ func TestNormalizeCreateTaskRequestScreenshotSettings(t *testing.T) {
 	if !reflect.DeepEqual(plan.Raw.IncludeIDs, []string{"CVE-2026-0001"}) {
 		t.Fatalf("IncludeIDs = %v", plan.Raw.IncludeIDs)
 	}
-	if plan.Raw.DisableHeadlessTemplates == nil || !*plan.Raw.DisableHeadlessTemplates {
-		t.Fatal("disable_headless_templates must default to true")
-	}
-
-	enabled := false
-	plan, err = normalizeCreateTaskRequest(dto.CreateScanTaskRequest{
-		Targets:                  []string{"https://example.com"},
-		DisableHeadlessTemplates: &enabled,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Raw.DisableHeadlessTemplates == nil || *plan.Raw.DisableHeadlessTemplates {
-		t.Fatal("explicit false must be retained")
-	}
 	restored, err := normalizedTaskRequestFromTask(&entity.ScanTask{
-		Targets:                  `["https://example.com"]`,
-		IncludeIDs:               `["screenshot","CVE-2026-0001"]`,
-		ScreenshotCapture:        false,
-		DisableHeadlessTemplates: &enabled,
+		Targets:           `["https://example.com"]`,
+		IncludeIDs:        `["screenshot","CVE-2026-0001"]`,
+		ScreenshotCapture: false,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !restored.Raw.ScreenshotCapture || restored.Raw.DisableHeadlessTemplates == nil || *restored.Raw.DisableHeadlessTemplates {
-		t.Fatalf("restored screenshot settings = capture:%v disable_headless:%v", restored.Raw.ScreenshotCapture, restored.Raw.DisableHeadlessTemplates)
+	if !restored.Raw.ScreenshotCapture {
+		t.Fatalf("restored screenshot settings = capture:%v", restored.Raw.ScreenshotCapture)
 	}
 	if !reflect.DeepEqual(restored.Raw.IncludeIDs, []string{"CVE-2026-0001"}) {
 		t.Fatalf("restored IncludeIDs = %v", restored.Raw.IncludeIDs)
@@ -85,31 +73,137 @@ func TestUniqueAssetDomainScreenshotTargetsUsesNormalizedInput(t *testing.T) {
 	}
 }
 
+func TestScreenshotCapturePreservesScanStageOrder(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		request        dto.CreateScanTaskRequest
+		wantStages     []string
+		mainScanIsAuto bool
+		wantPlugins    int64
+	}{
+		{
+			name:       "vulnerability template with active preflight",
+			request:    dto.CreateScanTaskRequest{ScreenshotCapture: true, IncludeIDs: []string{"CVE-2026-0001"}},
+			wantStages: []string{"active-fingerprint", "screenshot", "main-scan"},
+		},
+		{
+			name: "screenshot only without active fingerprinting skips main scan",
+			request: dto.CreateScanTaskRequest{
+				ScreenshotCapture:    true,
+				PreflightFingerprint: new(false),
+			},
+			wantStages:  []string{"screenshot"},
+			wantPlugins: 1,
+		},
+		{
+			name:        "screenshot only with active fingerprinting skips main scan",
+			request:     dto.CreateScanTaskRequest{ScreenshotCapture: true},
+			wantStages:  []string{"active-fingerprint", "screenshot"},
+			wantPlugins: 1,
+		},
+		{
+			name:           "automatic mapping remains enabled",
+			request:        dto.CreateScanTaskRequest{ScreenshotCapture: true, AutomaticScan: true},
+			wantStages:     []string{"screenshot", "main-auto-scan"},
+			mainScanIsAuto: true,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			rootDir := t.TempDir()
+			stagesPath := filepath.Join(rootDir, "stages")
+			script := "#!/bin/sh\n" +
+				"previous=\n" +
+				"for arg in \"$@\"; do\n" +
+				"  if [ \"$arg\" = -silent ]; then echo screenshot >> " + stagesPath + "; exit 0; fi\n" +
+				"  if [ \"$arg\" = --tags ]; then echo active-fingerprint >> " + stagesPath + "; exit 0; fi\n" +
+				"  if [ \"$arg\" = -as ]; then previous=auto; fi\n" +
+				"done\n" +
+				"if [ \"$previous\" = auto ]; then echo main-auto-scan >> " + stagesPath + "; else echo main-scan >> " + stagesPath + "; fi\n"
+			if err := os.WriteFile(filepath.Join(rootDir, "manscan"), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "text/html")
+				_, _ = writer.Write([]byte("<html><title>test</title></html>"))
+			}))
+			defer server.Close()
+
+			state, err := scanruntime.NewState(251, "task-251", "screenshot-order", 1, filepath.Join(rootDir, "runtime"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer state.Close()
+			service := &scanTaskService{rootDir: rootDir, assetDomainRepository: &assetDomainRepositoryStub{}}
+			runtime := newScanTaskRuntime(state)
+			plan := &normalizedTaskRequest{Raw: testCase.request, CollectedTargets: []string{server.URL}}
+			if err := service.executeTaskPlan(plan, runtime); err != nil {
+				t.Fatal(err)
+			}
+			contents, err := os.ReadFile(stagesPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gotStages := strings.Fields(string(contents))
+			if !reflect.DeepEqual(gotStages, testCase.wantStages) {
+				t.Fatalf("stages = %v, want %v", gotStages, testCase.wantStages)
+			}
+			if got := state.SnapshotProgress().Templates; got != testCase.wantPlugins {
+				t.Fatalf("plugin count = %d, want %d", got, testCase.wantPlugins)
+			}
+			if testCase.mainScanIsAuto && !hasArg(buildScanCLIArgs(testCase.request, "task", "targets.txt", "", "responses"), "-as") {
+				t.Fatal("automatic mapping request lost the -as main scan option")
+			}
+		})
+	}
+}
+
+func TestIsScreenshotOnlyTaskRequiresNoOtherTemplateSelection(t *testing.T) {
+	t.Parallel()
+
+	request := dto.CreateScanTaskRequest{
+		ScreenshotCapture:    true,
+		PreflightFingerprint: new(false),
+	}
+	if !isScreenshotOnlyTask(request) {
+		t.Fatal("screenshot-only request should skip the main scan")
+	}
+
+	withSelection := []dto.CreateScanTaskRequest{
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), AutomaticScan: true},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), IncludeIDs: []string{"CVE-2026-0001"}},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), Tags: []string{"cve"}},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), Severities: []string{"high"}},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), Protocols: []string{"http"}},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), DAST: true},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), EnableCodeTemplates: true},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), EnableFileTemplates: true},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), EnableGlobalMatchersTemplates: true},
+		{ScreenshotCapture: true, PreflightFingerprint: new(false), NewTemplates: true},
+	}
+	for _, candidate := range withSelection {
+		if isScreenshotOnlyTask(candidate) {
+			t.Fatalf("request should preserve main scan: %+v", candidate)
+		}
+	}
+}
+
 func TestScreenshotAndMainScanCLIArgsAreIsolated(t *testing.T) {
 	t.Parallel()
 
-	disabled := true
 	request := dto.CreateScanTaskRequest{
-		AutomaticScan:            true,
-		Tags:                     []string{"cve"},
-		IncludeIDs:               []string{"CVE-2026-0001"},
-		Severities:               []string{"high"},
-		Protocols:                []string{"http"},
-		Headless:                 true,
-		DisableHeadlessTemplates: &disabled,
+		AutomaticScan: true,
+		Tags:          []string{"cve"},
+		IncludeIDs:    []string{"CVE-2026-0001"},
+		Severities:    []string{"high"},
+		Protocols:     []string{"http"},
+		Headless:      true,
 	}
 	mainArgs := buildScanCLIArgs(request, "task", "targets.txt", "", "responses")
 	if got := flagValue(mainArgs, "-eid"); got != "screenshot" {
 		t.Fatalf("main -eid = %q, args=%v", got, mainArgs)
 	}
-	if got := flagValue(mainArgs, "-ept"); got != "headless" {
-		t.Fatalf("main -ept = %q, args=%v", got, mainArgs)
-	}
-	allowHeadless := false
-	request.DisableHeadlessTemplates = &allowHeadless
-	mainArgs = buildScanCLIArgs(request, "task", "targets.txt", "", "responses")
-	if hasArg(mainArgs, "-ept") || flagValue(mainArgs, "-eid") != "screenshot" {
-		t.Fatalf("explicitly enabled headless must only exclude screenshot: %v", mainArgs)
+	if hasArg(mainArgs, "-ept") {
+		t.Fatalf("removed headless exclusion option must not be passed: %v", mainArgs)
 	}
 
 	screenshotArgs := buildAssetDomainScreenshotCLIArgs(request, "task", "screenshots.txt")

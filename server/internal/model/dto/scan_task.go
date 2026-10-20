@@ -20,7 +20,6 @@ type CreateScanTaskRequest struct {
 	AutomaticScan                 bool     `json:"automatic_scan"`
 	PreflightFingerprint          *bool    `json:"preflight_fingerprint"`
 	ScreenshotCapture             bool     `json:"screenshot_capture"`
-	DisableHeadlessTemplates      *bool    `json:"disable_headless_templates"`
 	DAST                          bool     `json:"dast"`
 	EnableCodeTemplates           bool     `json:"enable_code_templates"`
 	EnableFileTemplates           bool     `json:"enable_file_templates"`

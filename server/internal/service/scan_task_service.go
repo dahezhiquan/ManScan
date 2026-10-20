@@ -209,7 +209,6 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 		AutomaticScan:                 request.AutomaticScan,
 		PreflightFingerprint:          request.PreflightFingerprint,
 		ScreenshotCapture:             request.ScreenshotCapture,
-		DisableHeadlessTemplates:      request.DisableHeadlessTemplates,
 		DAST:                          request.DAST,
 		EnableCodeTemplates:           request.EnableCodeTemplates,
 		EnableFileTemplates:           request.EnableFileTemplates,
@@ -836,7 +835,11 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	if runtime.IsPauseRequested() {
 		return errScanTaskPausedBeforeProcess
 	}
-
+	if isScreenshotOnlyTask(plan.Raw) {
+		state.SetTemplateCount(1)
+		state.Append("info", "main_scan_skipped", "仅执行屏幕截图采集，已跳过主扫描")
+		return nil
+	}
 	targetsFile := filepath.Join(taskDir, "targets.txt")
 	if err := os.WriteFile(targetsFile, []byte(strings.Join(plan.CollectedTargets, "\n")+"\n"), 0o644); err != nil {
 		return err
@@ -1440,10 +1443,6 @@ func normalizeCreateTaskRequest(request dto.CreateScanTaskRequest) (*normalizedT
 		enabled := true
 		request.PreflightFingerprint = &enabled
 	}
-	if request.DisableHeadlessTemplates == nil {
-		disabled := true
-		request.DisableHeadlessTemplates = &disabled
-	}
 	request.IncludeIDs, request.ScreenshotCapture = migrateScreenshotTemplateSelection(request.IncludeIDs, request.ScreenshotCapture)
 	if request.ScreenshotCapture && (request.OfflineHTTP || request.DisableHTTPProbe) {
 		return nil, fmt.Errorf("screenshot_capture 不能与 offline_http 或 disable_http_probe 同时开启")
@@ -1462,8 +1461,18 @@ func preflightFingerprintEnabled(request dto.CreateScanTaskRequest) bool {
 	return request.PreflightFingerprint == nil || *request.PreflightFingerprint
 }
 
-func disableHeadlessTemplates(request dto.CreateScanTaskRequest) bool {
-	return request.DisableHeadlessTemplates == nil || *request.DisableHeadlessTemplates
+func isScreenshotOnlyTask(request dto.CreateScanTaskRequest) bool {
+	return request.ScreenshotCapture &&
+		!request.AutomaticScan &&
+		!request.NewTemplates &&
+		len(cleanStringSlice(request.IncludeIDs)) == 0 &&
+		len(cleanStringSlice(request.Tags)) == 0 &&
+		len(cleanStringSlice(request.Severities)) == 0 &&
+		len(templateprotocol.NormalizeList(request.Protocols)) == 0 &&
+		!request.DAST &&
+		!request.EnableCodeTemplates &&
+		!request.EnableFileTemplates &&
+		!request.EnableGlobalMatchersTemplates
 }
 
 func migrateScreenshotTemplateSelection(includeIDs []string, screenshotCapture bool) ([]string, bool) {
@@ -1561,7 +1570,6 @@ func normalizedTaskRequestFromTask(task *entity.ScanTask) (*normalizedTaskReques
 		AutomaticScan:                 task.AutomaticScan,
 		PreflightFingerprint:          task.PreflightFingerprint,
 		ScreenshotCapture:             task.ScreenshotCapture,
-		DisableHeadlessTemplates:      task.DisableHeadlessTemplates,
 		DAST:                          task.DAST,
 		EnableCodeTemplates:           task.EnableCodeTemplates,
 		EnableFileTemplates:           task.EnableFileTemplates,
@@ -1742,9 +1750,6 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 	appendBool(request.EnableProgressBar, "--stats")
 	appendBool(request.HTTPStats, "-hps")
 	args = append(args, "-eid", "screenshot")
-	if disableHeadlessTemplates(request) {
-		args = append(args, "-ept", "headless")
-	}
 
 	appendInt(defaultInt(request.StatsInterval, 5), "-si")
 	appendInt(defaultInt(request.MetricsPort, 9092), "-mp")

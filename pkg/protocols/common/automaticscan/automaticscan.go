@@ -504,31 +504,13 @@ func (s *Service) getTagsUsingWappalyzer(input *contextargs.MetaInput) []string 
 
 	// fingerprint headers and body
 	fingerprints := s.wappalyzer.Fingerprint(resp.Header, data)
-	normalized := make(map[string]struct{})
+	appNames := make([]string, 0, len(fingerprints))
 	for k := range fingerprints {
-		normalized[normalizeAppName(k)] = struct{}{}
+		appNames = append(appNames, k)
 	}
-	gologger.Verbose().Msgf("Found %d fingerprints for %s\n", len(normalized), input.Input)
-
-	// normalize fingerprints using mapping data
-	for k := range normalized {
-		// Replace values with mapping data
-		if value, ok := s.technologyMappings[k]; ok {
-			delete(normalized, k)
-			normalized[value] = struct{}{}
-		}
-	}
-	// more post processing
-	items := make([]string, 0, len(normalized))
-	for k := range normalized {
-		if strings.Contains(k, " ") {
-			parts := strings.Split(strings.ToLower(k), " ")
-			items = append(items, parts...)
-		} else {
-			items = append(items, strings.ToLower(k))
-		}
-	}
-	return sliceutil.Dedupe(items)
+	items := s.normalizeWappalyzerTags(appNames)
+	gologger.Verbose().Msgf("Found %d fingerprints for %s\n", len(items), input.Input)
+	return items
 }
 
 func (s *Service) getTagsUsingCachedWappalyzer(input *contextargs.MetaInput) ([]string, bool) {
@@ -541,30 +523,28 @@ func (s *Service) getTagsUsingCachedWappalyzer(input *contextargs.MetaInput) ([]
 		return nil, false
 	}
 
-	normalized := make(map[string]struct{})
+	appNames := make([]string, 0, len(state.Components))
 	for _, component := range state.Components {
-		appName := normalizeAppName(component.AppName)
+		appNames = append(appNames, component.AppName)
+	}
+	return s.normalizeWappalyzerTags(appNames), true
+}
+
+func (s *Service) normalizeWappalyzerTags(appNames []string) []string {
+	items := make([]string, 0, len(appNames))
+	for _, appName := range appNames {
+		appName = normalizeAppName(appName)
 		if appName == "" {
 			continue
 		}
-		normalized[appName] = struct{}{}
-	}
-	for appName := range normalized {
 		if value, ok := s.technologyMappings[appName]; ok {
-			delete(normalized, appName)
-			normalized[value] = struct{}{}
+			appName = normalizeAppName(value)
+		}
+		if appName != "" {
+			items = append(items, appName)
 		}
 	}
-
-	items := make([]string, 0, len(normalized))
-	for appName := range normalized {
-		if strings.Contains(appName, " ") {
-			items = append(items, strings.Split(strings.ToLower(appName), " ")...)
-		} else {
-			items = append(items, strings.ToLower(appName))
-		}
-	}
-	return sliceutil.Dedupe(items), true
+	return sliceutil.Dedupe(items)
 }
 
 func (s *Service) cachedHTTPProbeFailed(input *contextargs.MetaInput) bool {
@@ -660,10 +640,11 @@ func isHTTPFingerprintTemplate(template *templates.Template) bool {
 
 // normalizeAppName normalizes app name
 func normalizeAppName(appName string) string {
+	appName = strings.TrimSpace(appName)
 	if strings.Contains(appName, ":") {
 		if parts := strings.Split(appName, ":"); len(parts) == 2 {
 			appName = parts[0]
 		}
 	}
-	return strings.ToLower(appName)
+	return strings.ToLower(strings.TrimSpace(appName))
 }
