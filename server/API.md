@@ -1042,7 +1042,7 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 
 至少需要提供 `targets` 或 `inline_targets_list` 之一，当前不再限制单次任务的目标数量上限。
 
-`preflight_fingerprint` 省略或传入 `null` 时按开启处理，显式传入 `false` 时关闭。关闭后，不再启动扫描前 HTTP/非 HTTP 主动指纹子进程；前置阶段仍进行存活探测和 Wappalyzer 被动指纹识别（仍受 `offline_http`、`disable_http_probe` 原有开关约束），并保留指纹缓存供后续复用。非自动映射任务的主扫描仍沿用指纹标签排除规则，不把被跳过的前置指纹模板挪到主扫描中执行；`automatic_scan=true` 时自动映射流程及其 detection templates 保持原有行为，不受该参数影响。任务暂停恢复、重新扫描和配置获取接口均保留此参数。
+`preflight_fingerprint` 省略或传入 `null` 时按开启处理，显式传入 `false` 时关闭。关闭后，不再启动扫描前 HTTP/非 HTTP 主动指纹子进程；前置阶段仍进行存活探测和 Wappalyzer 被动指纹识别（仍受 `offline_http`、`disable_http_probe` 原有开关约束），并保留指纹缓存供后续复用。非自动映射任务不再为主扫描追加 `tech,detect,favicon` 指纹标签排除，用户通过模板 ID、标签、严重级别或协议条件选中的指纹模板会在主扫描中正常执行；开启前置指纹时仍排除这些模板，避免重复执行。`automatic_scan=true` 时自动映射流程及其 detection templates 保持原有行为，不受该参数影响。任务暂停恢复、重新扫描和配置获取接口均保留此参数。
 
 `screenshot_capture=true` 时，服务端在存活探测与原有前置主动指纹阶段完成后，仅对 HTTP 存活目标启动独立的 `screenshot` Headless 子阶段；通常随后继续原有主扫描。如果同时满足 `automatic_scan=false` 且没有其他模板选择条件，任务会在截图后跳过主扫描，并将 `plugin_count` 按 `screenshot` 计为 1；是否开启 `preflight_fingerprint` 只决定截图前是否执行主动指纹探测，不影响主扫描跳过判断。截图阶段不继承主扫描的自动映射、模板 ID、标签、严重级别和协议筛选。截图失败会记录 warning 并继续原有扫描，取消或暂停任务会终止截图子进程。该字段不能与 `offline_http=true` 或 `disable_http_probe=true` 同时使用。为兼容历史调用方，`include_ids` 中的 `screenshot` 会迁移为 `screenshot_capture=true` 并从持久化模板 ID 中移除。
 
@@ -1864,6 +1864,10 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
     "product": "example-product",
     "remediation": "修复建议",
     "reference_links": ["https://example.com/ref"],
+    "payload": {
+      "username": "admin",
+      "password": "admin123"
+    },
     "detail": {
       "request": {
         "1": "GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n",
@@ -1883,7 +1887,8 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
 - 说明：
   - 详情接口按漏洞 ID 查询 `manscan_vulnerabilities` 中的单条记录，并返回漏洞表当前保存的完整业务字段。
   - `first_found_at` 表示首次发现时间，`last_found_at` 表示最近发现时间，列表页中的发现时间对应 `last_found_at`。
-  - `tags`、`reference_links` 返回数组；`detail` 会在内容为合法 JSON 时返回解析后的对象或数组，否则返回原始字符串。
+  - `tags`、`reference_links` 返回数组；`payload` 和 `detail` 会在内容为合法 JSON 时返回解析后的对象或数组，否则返回原始字符串。
+  - `payload` 保存 Nuclei 命中结果顶层 `meta` 的原始值；没有 `meta` 时返回 `null`。该字段可能包含命中的账号、密码、Token、注入语句或其他字典值，调用方必须限制访问权限并避免写入日志。
   - 当漏洞来自多步 HTTP POC 时，`detail.request` 和 `detail.response` 会保存为 JSON 对象，对象内部按 `1`、`2` 这样的编号键保存每一步请求/响应，便于前端按步骤展示完整请求链。
   - `protocol` 返回值会按模板顶层执行块白名单归一化，例如 `requests` 会返回为 `http`。
 
@@ -1897,6 +1902,8 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
 ```bash
 curl "http://127.0.0.1:8686/api/v1/vulnerabilities/1"
 ```
+
+已有数据库部署需先执行 `docs/SQL/alter_manscan_vulnerabilities_add_payload.sql`；新建数据库使用更新后的 `docs/SQL/create_manscan_vulnerabilities.sql`。
 
 ## 23. 批量删除扫描任务
 

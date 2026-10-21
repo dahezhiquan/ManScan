@@ -34,6 +34,7 @@ CREATE TABLE `manscan_vulnerabilities` (
                                            `remediation` TEXT DEFAULT NULL COMMENT '漏洞修复建议',
                                            `reference_links` JSON DEFAULT NULL COMMENT '漏洞参考链接，JSON数组',
 
+                                           `payload` JSON DEFAULT NULL COMMENT 'Nuclei命中结果的meta payload，可能包含本次命中的字典值',
                                            `detail` JSON DEFAULT NULL COMMENT '漏洞细节，说明命中原因、探测请求、响应证据、匹配器结果等',
 
                                            `vuln_fingerprint` CHAR(64) NOT NULL COMMENT '漏洞去重指纹，建议由 template_id + asset_host + asset_port + protocol + 关键路径 计算SHA256',

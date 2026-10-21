@@ -908,7 +908,12 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 }
 
 func (s *scanTaskService) shouldExcludeAssetDomainFingerprintTemplates(request dto.CreateScanTaskRequest, targets []string) bool {
-	return s.assetDomainRepository != nil && len(targets) > 0 && !request.AutomaticScan && !request.OfflineHTTP && !request.DisableHTTPProbe
+	return s.assetDomainRepository != nil &&
+		len(targets) > 0 &&
+		preflightFingerprintEnabled(request) &&
+		!request.AutomaticScan &&
+		!request.OfflineHTTP &&
+		!request.DisableHTTPProbe
 }
 
 func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntime, startedAt time.Time) {

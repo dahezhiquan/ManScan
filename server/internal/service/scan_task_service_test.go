@@ -613,16 +613,20 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	queue := newVulnerabilityQueue(svc)
 	handler := svc.resultHandler(42, "即时扫描任务", queue, nil)
 	handler(map[string]interface{}{
-		"template-id":   "CVE-2026-0001",
-		"matched-at":    "https://app.example.com:8443/login",
-		"host":          "app.example.com",
-		"ip":            "192.0.2.10",
-		"port":          "8443",
-		"type":          "http",
-		"matcher-name":  "cross-origin-embedder-policy",
-		"request":       `{"1":"GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n","2":"POST /login HTTP/1.1\r\nHost: app.example.com\r\nContent-Length: 7\r\n\r\npayload"}`,
-		"response":      `{"1":"HTTP/1.1 200 OK\r\n\r\nfirst","2":"HTTP/1.1 500 Internal Server Error\r\n\r\nsecond"}`,
-		"curl-command":  "curl -k https://app.example.com:8443/login",
+		"template-id":  "CVE-2026-0001",
+		"matched-at":   "https://app.example.com:8443/login",
+		"host":         "app.example.com",
+		"ip":           "192.0.2.10",
+		"port":         "8443",
+		"type":         "http",
+		"matcher-name": "cross-origin-embedder-policy",
+		"request":      `{"1":"GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n","2":"POST /login HTTP/1.1\r\nHost: app.example.com\r\nContent-Length: 7\r\n\r\npayload"}`,
+		"response":     `{"1":"HTTP/1.1 200 OK\r\n\r\nfirst","2":"HTTP/1.1 500 Internal Server Error\r\n\r\nsecond"}`,
+		"curl-command": "curl -k https://app.example.com:8443/login",
+		"meta": map[string]interface{}{
+			"username": "admin",
+			"password": "admin123",
+		},
 		"template-path": "/tmp/template.yaml",
 		"timestamp":     foundAt.Format(time.RFC3339Nano),
 		"info": map[string]interface{}{
@@ -671,6 +675,16 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 	if got.Detail == nil {
 		t.Fatal("Detail = nil, want JSON object")
+	}
+	if got.Payload == nil {
+		t.Fatal("Payload = nil, want JSON object")
+	}
+	var storedPayload map[string]interface{}
+	if err := json.Unmarshal([]byte(*got.Payload), &storedPayload); err != nil {
+		t.Fatalf("unmarshal Payload failed: %v", err)
+	}
+	if storedPayload["username"] != "admin" || storedPayload["password"] != "admin123" {
+		t.Fatalf("Payload = %#v, want matching meta values", storedPayload)
 	}
 	var detail map[string]interface{}
 	if err := json.Unmarshal([]byte(*got.Detail), &detail); err != nil {

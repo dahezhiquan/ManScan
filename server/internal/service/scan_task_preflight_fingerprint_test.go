@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -65,28 +64,36 @@ func TestNormalizePreflightFingerprint(t *testing.T) {
 	}
 }
 
-func TestPreflightFingerprintDoesNotChangeMainScanArgs(t *testing.T) {
+func TestPreflightFingerprintControlsMainScanFingerprintExclusion(t *testing.T) {
 	t.Parallel()
 
 	service := &scanTaskService{assetDomainRepository: &assetDomainRepositoryStub{}}
 	for _, automaticScan := range []bool{false, true} {
-		request := dto.CreateScanTaskRequest{AutomaticScan: automaticScan, Tags: []string{"cve"}}
+		request := dto.CreateScanTaskRequest{AutomaticScan: automaticScan, IncludeIDs: []string{"selected-fingerprint-template"}}
 		buildArgs := func() []string {
 			return buildScanCLIArgs(request, "task", "targets.txt", "resume.cfg", "responses", service.shouldExcludeAssetDomainFingerprintTemplates(request, []string{"https://example.com"}))
 		}
 		defaultArgs := buildArgs()
+		if automaticScan {
+			if !hasArg(defaultArgs, "-as") || hasArg(defaultArgs, "-etags") {
+				t.Fatalf("automatic mapping must keep detection templates: %v", defaultArgs)
+			}
+		} else if flagValue(defaultArgs, "-etags") != "tech,detect,favicon" {
+			t.Fatalf("enabled preflight fingerprinting must exclude duplicate fingerprint templates: %v", defaultArgs)
+		}
+
 		disabled := false
 		request.PreflightFingerprint = &disabled
-		args := buildArgs()
-		if !reflect.DeepEqual(args, defaultArgs) {
-			t.Fatalf("automatic_scan=%v: disabled args=%v, default args=%v", automaticScan, args, defaultArgs)
+		disabledArgs := buildArgs()
+		if flagValue(disabledArgs, "-id") != "selected-fingerprint-template" {
+			t.Fatalf("selected fingerprint template must remain in the main scan: %v", disabledArgs)
 		}
 		if automaticScan {
-			if !hasArg(args, "-as") || hasArg(args, "-etags") {
-				t.Fatalf("automatic mapping must keep detection templates: %v", args)
+			if !hasArg(disabledArgs, "-as") || hasArg(disabledArgs, "-etags") {
+				t.Fatalf("automatic mapping must keep detection templates when preflight fingerprinting is disabled: %v", disabledArgs)
 			}
-		} else if flagValue(args, "-etags") != "tech,detect,favicon" {
-			t.Fatalf("manual scan must not move skipped preflight templates into the main scan: %v", args)
+		} else if hasArg(disabledArgs, "-etags") {
+			t.Fatalf("disabled preflight fingerprinting must keep selected fingerprint templates in the main scan: %v", disabledArgs)
 		}
 	}
 }
