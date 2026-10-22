@@ -1393,6 +1393,10 @@ func (s *scanTaskService) cleanupDeletedTaskArtifacts(taskIDs []int64) {
 		if err := os.Remove(rawLogZipPath); err != nil && !errors.Is(err, os.ErrNotExist) && s.logger != nil {
 			s.logger.Error("remove deleted scan task raw log archive failed", "task_id", taskID, "zip_file", rawLogZipPath, "error", err)
 		}
+		responseZipPath := s.storeResponseZipPath(taskID)
+		if err := os.Remove(responseZipPath); err != nil && !errors.Is(err, os.ErrNotExist) && s.logger != nil {
+			s.logger.Error("remove deleted scan task response archive failed", "task_id", taskID, "zip_file", responseZipPath, "error", err)
+		}
 	}
 }
 

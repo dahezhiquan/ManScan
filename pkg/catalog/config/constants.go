@@ -22,7 +22,7 @@ var (
 
 const (
 	// TODO(dwisiswant0): do not use this in the future.
-	legacyTemplatesConfigFileName = ".templates-config.json"
+	legacyTemplatesConfigFileName = "templates-config.json"
 	// TemplateConfigFileName is the legacy templates-state filename.
 	//
 	// Deprecated: use TemplatesStateFileName for current templates state.
