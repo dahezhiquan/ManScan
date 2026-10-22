@@ -217,6 +217,105 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 	}
 }
 
+func TestAssetDomainRepositoryNormalizesInvalidObservationUTF8(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		title        string
+		response     string
+		wantTitle    string
+		wantResponse string
+	}{
+		{
+			name:         "invalid bytes",
+			title:        "标题\xff\xfe",
+			response:     "HTTP/1.1 200 OK\r\n\r\nbad\xc3(",
+			wantTitle:    "标题�",
+			wantResponse: "HTTP/1.1 200 OK\r\n\r\nbad�(",
+		},
+		{
+			name:         "truncated sequence",
+			title:        "\xff标题\xe4\xb8",
+			response:     "HTTP/1.1 200 OK\r\n\r\n\xe4\xb8",
+			wantTitle:    "�标题�",
+			wantResponse: "HTTP/1.1 200 OK\r\n\r\n�",
+		},
+		{
+			name:         "valid UTF8",
+			title:        "中文标题😀",
+			response:     "HTTP/1.1 200 OK\r\n\r\n正文😀�",
+			wantTitle:    "中文标题😀",
+			wantResponse: "HTTP/1.1 200 OK\r\n\r\n正文😀�",
+		},
+		{name: "empty text"},
+	}
+	for _, tc := range tests {
+		for _, existing := range []bool{false, true} {
+			mode := "insert"
+			if existing {
+				mode = "update"
+			}
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				t.Parallel()
+				dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+				db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+				if err != nil {
+					t.Fatalf("gorm.Open() error = %v", err)
+				}
+				if err := db.AutoMigrate(&entity.AssetDomain{}, &entity.AssetDomainTitleHistory{}); err != nil {
+					t.Fatalf("AutoMigrate() error = %v", err)
+				}
+				if err := db.Exec("CREATE UNIQUE INDEX uk_asset_domain_domain ON manscan_asset_domain(domain)").Error; err != nil {
+					t.Fatalf("Create domain unique index error = %v", err)
+				}
+				if err := db.Exec("CREATE UNIQUE INDEX uk_domain_history_title ON manscan_asset_domain_title_history(domain, history_title)").Error; err != nil {
+					t.Fatalf("Create title history unique index error = %v", err)
+				}
+				input := []AssetDomainObservation{{Domain: "legacy.example.com:80", Title: tc.title, Response: tc.response}}
+				if existing {
+					if err := db.Create(&entity.AssetDomain{Domain: input[0].Domain}).Error; err != nil {
+						t.Fatalf("Create existing domain error = %v", err)
+					}
+				}
+				if err := NewAssetDomainRepository(db).SyncObservations(context.Background(), input, nil, time.Now()); err != nil {
+					t.Fatalf("SyncObservations() error = %v", err)
+				}
+				var item entity.AssetDomain
+				if err := db.Where("domain = ?", input[0].Domain).First(&item).Error; err != nil {
+					t.Fatalf("Find asset domain error = %v", err)
+				}
+				for field, pair := range map[string]struct {
+					got  *string
+					want string
+				}{"title": {item.Title, tc.wantTitle}, "response": {item.Response, tc.wantResponse}} {
+					if pair.want == "" {
+						if pair.got != nil {
+							t.Fatalf("%s = %q, want NULL", field, *pair.got)
+						}
+					} else if pair.got == nil || *pair.got != pair.want {
+						t.Fatalf("%s = %v, want %q", field, pair.got, pair.want)
+					}
+				}
+				var histories []entity.AssetDomainTitleHistory
+				if err := db.Where("domain = ?", input[0].Domain).Find(&histories).Error; err != nil {
+					t.Fatalf("Find title histories error = %v", err)
+				}
+				if tc.wantTitle == "" {
+					if len(histories) != 0 {
+						t.Fatalf("title history count = %d, want 0", len(histories))
+					}
+				} else if len(histories) != 1 || histories[0].HistoryTitle != tc.wantTitle {
+					t.Fatalf("title histories = %+v, want %q", histories, tc.wantTitle)
+				}
+				if input[0].Title != tc.title || input[0].Response != tc.response {
+					t.Fatal("SyncObservations mutated the input observations")
+				}
+			})
+		}
+	}
+}
+
 func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *testing.T) {
 	t.Parallel()
 

@@ -95,6 +95,7 @@ func (r *assetDomainRepository) ListNetworkItems(ctx context.Context) ([]AssetDo
 }
 
 func (r *assetDomainRepository) SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error {
+	observations = normalizeAssetDomainObservationText(observations)
 	observations = uniqueAssetDomainObservations(observations)
 	checkedDomains = uniqueNonEmptyAssetDomains(checkedDomains)
 	if len(observations) == 0 && len(checkedDomains) == 0 {
@@ -124,6 +125,21 @@ func (r *assetDomainRepository) SyncObservations(ctx context.Context, observatio
 		}
 		return markStaleAssetDomainTitleHistories(ctx, tx, notAliveDomains)
 	})
+}
+
+// normalizeAssetDomainObservationText makes HTTP-derived text safe for utf8mb4 columns.
+// Probe responses can contain bytes from legacy or incorrectly declared encodings.
+func normalizeAssetDomainObservationText(values []AssetDomainObservation) []AssetDomainObservation {
+	if len(values) == 0 {
+		return values
+	}
+	result := make([]AssetDomainObservation, len(values))
+	copy(result, values)
+	for i := range result {
+		result[i].Title = strings.ToValidUTF8(result[i].Title, "�")
+		result[i].Response = strings.ToValidUTF8(result[i].Response, "�")
+	}
+	return result
 }
 
 func (r *assetDomainRepository) SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error {
