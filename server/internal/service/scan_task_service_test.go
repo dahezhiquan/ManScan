@@ -613,16 +613,17 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	queue := newVulnerabilityQueue(svc)
 	handler := svc.resultHandler(42, "即时扫描任务", queue, nil)
 	handler(map[string]interface{}{
-		"template-id":  "CVE-2026-0001",
-		"matched-at":   "https://app.example.com:8443/login",
-		"host":         "app.example.com",
-		"ip":           "192.0.2.10",
-		"port":         "8443",
-		"type":         "http",
-		"matcher-name": "cross-origin-embedder-policy",
-		"request":      `{"1":"GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n","2":"POST /login HTTP/1.1\r\nHost: app.example.com\r\nContent-Length: 7\r\n\r\npayload"}`,
-		"response":     `{"1":"HTTP/1.1 200 OK\r\n\r\nfirst","2":"HTTP/1.1 500 Internal Server Error\r\n\r\nsecond"}`,
-		"curl-command": "curl -k https://app.example.com:8443/login",
+		"template-id":       "CVE-2026-0001",
+		"matched-at":        "https://app.example.com:8443/login",
+		"host":              "app.example.com",
+		"ip":                "192.0.2.10",
+		"port":              "8443",
+		"type":              "http",
+		"matcher-name":      "cross-origin-embedder-policy",
+		"request":           `{"1":"GET /login HTTP/1.1\r\nHost: app.example.com\r\n\r\n","2":"POST /login HTTP/1.1\r\nHost: app.example.com\r\nContent-Length: 7\r\n\r\npayload"}`,
+		"response":          `{"1":"HTTP/1.1 200 OK\r\n\r\nfirst","2":"HTTP/1.1 500 Internal Server Error\r\n\r\nsecond"}`,
+		"curl-command":      "curl -k https://app.example.com:8443/login",
+		"extracted-results": []interface{}{"192.168.1.10", "10.0.0.12"},
 		"meta": map[string]interface{}{
 			"username": "admin",
 			"password": "admin123",
@@ -664,7 +665,11 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	if got.FirstFoundAt != foundAt || got.LastFoundAt != foundAt {
 		t.Fatalf("found time = %s/%s, want %s", got.FirstFoundAt, got.LastFoundAt, foundAt)
 	}
-	wantFingerprint := buildVulnerabilityFingerprint("CVE-2026-0001", "192.0.2.10", 8443, "http", "/login|cross-origin-embedder-policy")
+	wantFingerprint := buildVulnerabilityFingerprint("CVE-2026-0001", "192.0.2.10", 8443, "http", vulnerabilityKeyPath(map[string]interface{}{
+		"path":              "/login",
+		"matcher-name":      "cross-origin-embedder-policy",
+		"extracted-results": []interface{}{"192.168.1.10", "10.0.0.12"},
+	}, "https://app.example.com:8443/login"))
 	if got.VulnFingerprint != wantFingerprint {
 		t.Fatalf("VulnFingerprint = %q, want %q", got.VulnFingerprint, wantFingerprint)
 	}
@@ -678,6 +683,10 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 	if got.Payload == nil {
 		t.Fatal("Payload = nil, want JSON object")
+	}
+	var extractedResults []string
+	if got.ExtractedResults == nil || json.Unmarshal([]byte(*got.ExtractedResults), &extractedResults) != nil || len(extractedResults) != 2 || extractedResults[0] != "192.168.1.10" || extractedResults[1] != "10.0.0.12" {
+		t.Fatalf("ExtractedResults = %v, want extracted IP array", got.ExtractedResults)
 	}
 	var storedPayload map[string]interface{}
 	if err := json.Unmarshal([]byte(*got.Payload), &storedPayload); err != nil {
