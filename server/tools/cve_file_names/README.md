@@ -43,19 +43,33 @@ go vet ./server/tools/cve_file_names
 
 ## 实际获取验证
 
-先配置好可用的网络和可选的 `GITHUB_TOKEN`，再执行：
+已提供 `TestFetchAllCVEFileNames` 集成测试方法，真实访问 GitHub API，获取当前 `main` 下的全量 CVE 名称，校验非空、格式、排序与去重，然后保存到仓库根目录 `cve.txt`。测试日志会输出数量、获取耗时、总耗时和文件绝对路径。
+
+在仓库根目录执行（需要外网，可选 `GITHUB_TOKEN`）：
 
 ```bash
-go run ./server/tools/cve_file_names > /tmp/cve-file-names.txt
+CVE_INTEGRATION_TEST=1 go test ./server/tools/cve_file_names -run '^TestFetchAllCVEFileNames$' -count=1 -v -timeout=6m
 ```
+
+未设置 `CVE_INTEGRATION_TEST=1` 时，该方法自动跳过，普通单元测试不请求 GitHub。`-count=1` 禁用测试结果缓存，保证每次真实获取。请求整体超时为 5 分钟，单次 HTTP 请求超时为 60 秒。获取失败时测试失败，已有 `cve.txt` 保持原样；获取成功后先写临时文件，再替换 `cve.txt`。
+
+耗时取决于网络质量、GitHub API 响应和是否触发递归树回退，请以测试日志为准。测试日志中的获取耗时不含 Go 编译及写文件时间。
+
+也可以直接运行工具导出同名文件：
+
+```bash
+go run ./server/tools/cve_file_names > cve.txt
+```
+
+这条重定向命令会在启动时清空已有 `cve.txt`；需要保留旧文件直到新列表获取成功时，请使用上面的集成测试。
 
 确认上一条命令退出码为 0 后检查结果：
 
 ```bash
-wc -l /tmp/cve-file-names.txt
-head /tmp/cve-file-names.txt
-LC_ALL=C sort -cu /tmp/cve-file-names.txt
-awk '!/^CVE-[0-9][0-9][0-9][0-9]-[0-9]+$/ { bad = 1; print "异常行:", $0 } END { exit bad }' /tmp/cve-file-names.txt
+wc -l cve.txt
+head cve.txt
+LC_ALL=C sort -cu cve.txt
+awk '!/^CVE-[0-9][0-9][0-9][0-9]-[0-9]+$/ { bad = 1; print "异常行:", $0 } END { exit bad }' cve.txt
 ```
 
 预期文件非空、每行符合 `CVE-年份-编号`、无 `.json`、无重复且按字典序排列；后两条命令正常时不输出内容。行数随仓库更新变化，不应断言固定数量。这些检查验证输出格式，完整性依赖成功遍历所有 Git Tree，不能仅凭格式检查判断。
