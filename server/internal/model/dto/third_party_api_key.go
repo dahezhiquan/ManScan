@@ -17,6 +17,11 @@ type ThirdPartyAPIKeyListItem struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+// ThirdPartyAPIKeyPlaintextResponse 返回受控读取的第三方 API Key 明文。
+type ThirdPartyAPIKeyPlaintextResponse struct {
+	Key string `json:"key"`
+}
+
 type CreateThirdPartyAPIKeyRequest struct {
 	Key                string `json:"key" binding:"required,max=512"`
 	PlatformURL        string `json:"platform_url" binding:"required,max=2048"`

@@ -19,6 +19,7 @@ type ThirdPartyAPIKeyService interface {
 	Create(ctx context.Context, request dto.CreateThirdPartyAPIKeyRequest) (*dto.ThirdPartyAPIKeyListItem, error)
 	List(ctx context.Context, query dto.ListThirdPartyAPIKeysQuery) (*dto.PageResult[dto.ThirdPartyAPIKeyListItem], error)
 	Get(ctx context.Context, itemID int64) (*dto.ThirdPartyAPIKeyListItem, error)
+	GetPlaintext(ctx context.Context, itemID int64) (*dto.ThirdPartyAPIKeyPlaintextResponse, error)
 	Update(ctx context.Context, itemID int64, request dto.UpdateThirdPartyAPIKeyRequest) (*dto.ThirdPartyAPIKeyListItem, error)
 	Delete(ctx context.Context, itemID int64) (*dto.DeleteThirdPartyAPIKeyResponse, error)
 }
@@ -35,6 +36,7 @@ func NewThirdPartyAPIKeyService(repo repository.ThirdPartyAPIKeyRepository, box 
 
 var ErrInvalidThirdPartyAPIKey = errors.New("第三方 API Key 参数不合法")
 var ErrAPIKeyEncryptionUnavailable = errors.New("第三方 API Key 加密器未配置")
+var ErrThirdPartyAPIKeyNotConfigured = errors.New("第三方 API Key 未配置")
 
 // Create 加密密钥并创建第三方平台配置。
 func (s *thirdPartyAPIKeyService) Create(ctx context.Context, request dto.CreateThirdPartyAPIKeyRequest) (*dto.ThirdPartyAPIKeyListItem, error) {
@@ -144,6 +146,28 @@ func (s *thirdPartyAPIKeyService) Get(ctx context.Context, itemID int64) (*dto.T
 	}
 	result := toThirdPartyAPIKeyListItem(*item)
 	return &result, nil
+}
+
+// GetPlaintext 解密并返回指定第三方 API Key；调用方必须已完成管理员鉴权。
+func (s *thirdPartyAPIKeyService) GetPlaintext(ctx context.Context, itemID int64) (*dto.ThirdPartyAPIKeyPlaintextResponse, error) {
+	if itemID <= 0 {
+		return nil, ErrInvalidThirdPartyAPIKey
+	}
+	if s.box == nil {
+		return nil, ErrAPIKeyEncryptionUnavailable
+	}
+	item, err := s.repository.FindByID(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	if item.EncryptedKey == "" {
+		return nil, ErrThirdPartyAPIKeyNotConfigured
+	}
+	plaintext, err := s.box.Decrypt(item.EncryptedKey)
+	if err != nil {
+		return nil, err
+	}
+	return &dto.ThirdPartyAPIKeyPlaintextResponse{Key: plaintext}, nil
 }
 
 func toThirdPartyAPIKeyListItem(item entity.ThirdPartyAPIKey) dto.ThirdPartyAPIKeyListItem {

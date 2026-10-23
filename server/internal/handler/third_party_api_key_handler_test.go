@@ -41,6 +41,7 @@ func TestThirdPartyAPIKeyHandlerCRUDAndEncryptedStorage(t *testing.T) {
 	router.Use(setAPIKeyTestRole("admin"))
 	router.GET("/keys", h.List)
 	router.GET("/keys/:id", h.Get)
+	router.GET("/keys/:id/plaintext", h.GetPlaintext)
 	router.POST("/keys", h.Create)
 	router.PUT("/keys/:id", h.Update)
 	router.DELETE("/keys/:id", h.Delete)
@@ -62,6 +63,26 @@ func TestThirdPartyAPIKeyHandlerCRUDAndEncryptedStorage(t *testing.T) {
 	list := performAPIKeyRequest(t, router, http.MethodGet, "/keys?page=1&page_size=10", "")
 	assertAPIKeyResponseHidesSecrets(t, get.Body.String(), "secret-provider-key", item.EncryptedKey)
 	assertAPIKeyResponseHidesSecrets(t, list.Body.String(), "secret-provider-key", item.EncryptedKey)
+
+	plaintext := performAPIKeyRequest(t, router, http.MethodGet, fmt.Sprintf("/keys/%d/plaintext", item.ID), "")
+	if plaintext.Code != http.StatusOK {
+		t.Fatalf("plaintext status = %d body=%s", plaintext.Code, plaintext.Body.String())
+	}
+	if plaintext.Header().Get("Cache-Control") != "no-store" || plaintext.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("plaintext response cache headers = Cache-Control:%q Pragma:%q", plaintext.Header().Get("Cache-Control"), plaintext.Header().Get("Pragma"))
+	}
+	var plaintextEnvelope struct {
+		Code int `json:"code"`
+		Data struct {
+			Key string `json:"key"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(plaintext.Body.Bytes(), &plaintextEnvelope); err != nil {
+		t.Fatalf("plaintext response is not JSON: %v", err)
+	}
+	if plaintextEnvelope.Code != 0 || plaintextEnvelope.Data.Key != "secret-provider-key" {
+		t.Fatalf("plaintext response = %s", plaintext.Body.String())
+	}
 
 	updated := performAPIKeyRequest(t, router, http.MethodPut, fmt.Sprintf("/keys/%d", item.ID), `{"key":"replacement-provider-key","platform_url":"https://api.example.com/v2","rate_limit_per_minute":30,"description":"updated"}`)
 	if updated.Code != http.StatusOK {
@@ -115,12 +136,14 @@ func TestThirdPartyAPIKeyHandlerRequiresAdmin(t *testing.T) {
 	router.Use(setAPIKeyTestRole("user"))
 	router.GET("/keys", h.List)
 	router.GET("/keys/:id", h.Get)
+	router.GET("/keys/:id/plaintext", h.GetPlaintext)
 	router.POST("/keys", h.Create)
 	router.PUT("/keys/:id", h.Update)
 	router.DELETE("/keys/:id", h.Delete)
 	for _, request := range []struct{ method, path string }{
 		{http.MethodGet, "/keys"},
 		{http.MethodGet, "/keys/1"},
+		{http.MethodGet, "/keys/1/plaintext"},
 		{http.MethodPost, "/keys"},
 		{http.MethodPut, "/keys/1"},
 		{http.MethodDelete, "/keys/1"},

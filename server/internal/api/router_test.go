@@ -49,6 +49,7 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/asset-config-centers/:id")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/third-party-api-keys")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/third-party-api-keys/:id")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/third-party-api-keys/:id/plaintext")
 	assertRouteRegistered(t, routes, "POST", "/api/v1/third-party-api-keys")
 	assertRouteRegistered(t, routes, "PUT", "/api/v1/third-party-api-keys/:id")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/third-party-api-keys/:id")
@@ -89,6 +90,7 @@ func TestThirdPartyAPIKeyRoutesRequireAuthentication(t *testing.T) {
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/third-party-api-keys"},
 		{http.MethodGet, "/api/v1/third-party-api-keys/1"},
+		{http.MethodGet, "/api/v1/third-party-api-keys/1/plaintext"},
 		{http.MethodPost, "/api/v1/third-party-api-keys"},
 		{http.MethodPut, "/api/v1/third-party-api-keys/1"},
 		{http.MethodDelete, "/api/v1/third-party-api-keys/1"},
@@ -223,6 +225,7 @@ func (noopThirdPartyAPIKeyHandler) List(*gin.Context)                  {}
 func (noopThirdPartyAPIKeyHandler) Update(*gin.Context)                {}
 func (noopThirdPartyAPIKeyHandler) Delete(*gin.Context)                {}
 func (noopThirdPartyAPIKeyHandler) Get(*gin.Context)                   {}
+func (noopThirdPartyAPIKeyHandler) GetPlaintext(*gin.Context)          {}
 
 type noopSettingHandler struct{}
 

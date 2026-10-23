@@ -73,6 +73,7 @@ func NewRouter(
 	protected.DELETE("/asset-config-centers/:id", assetConfigCenterHandler.Delete)
 	protected.GET("/third-party-api-keys", thirdPartyAPIKeyHandler.List)
 	protected.GET("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Get)
+	protected.GET("/third-party-api-keys/:id/plaintext", thirdPartyAPIKeyHandler.GetPlaintext)
 	protected.POST("/third-party-api-keys", thirdPartyAPIKeyHandler.Create)
 	protected.PUT("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Update)
 	protected.DELETE("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Delete)

@@ -90,6 +90,10 @@ func TestThirdPartyAPIKeyServiceEncryptsKeyAndHidesItFromResponses(t *testing.T)
 	if err != nil || !got.KeyConfigured {
 		t.Fatalf("Get() = %+v, %v; want key metadata", got, err)
 	}
+	plaintext, err := svc.GetPlaintext(context.Background(), created.ID)
+	if err != nil || plaintext.Key != "plain-api-key" {
+		t.Fatalf("GetPlaintext() = %+v, %v; want original key", plaintext, err)
+	}
 	// 最长允许的明文必须可往返解密，且密文可放入数据库列。
 	longKey := strings.Repeat("k", 512)
 	if _, err := svc.Update(context.Background(), created.ID, dto.UpdateThirdPartyAPIKeyRequest{

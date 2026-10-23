@@ -2749,7 +2749,7 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
 
 ## 39. 第三方 API Key 配置
 
-以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，任何 API 响应均不返回密钥明文或密文，只返回 `key_configured`。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
+以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
 
 ### 列表
 
@@ -2774,6 +2774,21 @@ curl "http://127.0.0.1:8686/api/v1/third-party-api-keys?page=1&page_size=10" \
 
 ```bash
 curl "http://127.0.0.1:8686/api/v1/third-party-api-keys/1" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 查询明文密钥
+
+此接口仅允许管理员在确有必要时调用，会记录访问审计日志。响应包含敏感信息，服务端设置 `Cache-Control: no-store` 和 `Pragma: no-cache`，调用方不得记录、转发或持久化返回值。
+
+- 请求方法和路径：`GET /api/v1/third-party-api-keys/{id}/plaintext`
+- 请求参数：`id` 为必填正整数路径参数。
+- 响应格式：标准响应 envelope 中的 `data` 为 `{ "key": "YOUR_PROVIDER_KEY" }`；返回已解密的 API Key 明文。
+- 错误码：`40001` ID 非法，`40101` 未登录，`40301` 非管理员，`40401` 记录不存在或未配置密钥，`50001` 解密或查询失败。
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/third-party-api-keys/1/plaintext" \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 

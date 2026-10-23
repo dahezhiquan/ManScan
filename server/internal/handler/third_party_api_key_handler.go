@@ -21,6 +21,7 @@ type ThirdPartyAPIKeyHandler interface {
 	Create(*gin.Context)
 	List(*gin.Context)
 	Get(*gin.Context)
+	GetPlaintext(*gin.Context)
 	Update(*gin.Context)
 	Delete(*gin.Context)
 }
@@ -159,6 +160,34 @@ func (h *thirdPartyAPIKeyHandler) Get(c *gin.Context) {
 	response.Success(c, data)
 }
 
+// GetPlaintext 返回指定 API Key 的明文；仅允许管理员访问且禁止缓存响应。
+func (h *thirdPartyAPIKeyHandler) GetPlaintext(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可查看第三方 API Key 明文")
+		return
+	}
+	id, err := parseThirdPartyAPIKeyID(c.Param("id"))
+	if err != nil {
+		response.Fail(c, errcode.InvalidParams, err.Error())
+		return
+	}
+	data, serviceErr := h.service.GetPlaintext(c.Request.Context(), id)
+	if serviceErr != nil {
+		handleThirdPartyAPIKeyError(c, serviceErr, "获取第三方 API Key 明文失败")
+		return
+	}
+	c.Header("Cache-Control", "no-store")
+	c.Header("Pragma", "no-cache")
+	h.logSensitiveAccess(c, "read_plaintext", id)
+	response.Success(c, data)
+}
+
+func (h *thirdPartyAPIKeyHandler) logSensitiveAccess(c *gin.Context, action string, id int64) {
+	if h.logger != nil {
+		h.logger.Info("third-party API key sensitive data accessed", "action", action, "id", id, "user_id", c.GetInt64(middleware.ContextUserIDKey))
+	}
+}
+
 func handleThirdPartyAPIKeyError(c *gin.Context, err error, fallback string) {
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		response.Fail(c, errcode.NotFound, "第三方 API Key 不存在")
@@ -166,6 +195,10 @@ func handleThirdPartyAPIKeyError(c *gin.Context, err error, fallback string) {
 	}
 	if errors.Is(err, service.ErrInvalidThirdPartyAPIKey) {
 		response.Fail(c, errcode.InvalidParams, "key、platform_url、description 或限流参数不合法")
+		return
+	}
+	if errors.Is(err, service.ErrThirdPartyAPIKeyNotConfigured) {
+		response.Fail(c, errcode.NotFound, "第三方 API Key 未配置")
 		return
 	}
 	response.Fail(c, errcode.InternalServerError, fallback)
