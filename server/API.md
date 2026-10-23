@@ -2749,6 +2749,61 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
 
 ## 39. 第三方 API Key 配置
 
+## 40. 定时任务
+
+定时任务接口用于管理通用后台任务（例如同步数据或执行脚本）。当前版本只提供调度框架，不内置具体 `job_type` 处理器。创建未知类型仍可保存配置，但触发后会以“定时任务类型未注册”失败；后续注册同名 `JobHandler` 后即可执行。所有接口都需要登录，新增、编辑、删除和立即触发仅管理员可操作。
+
+### 查询定时任务列表
+
+- 请求方法和路径：`GET /api/v1/scheduled-jobs`
+- 请求参数：`page`、`page_size`（可选，默认 1、10，`page_size` 最大 100）、`keyword`（可选，按名称、描述和类型模糊查询）。
+- 响应格式：`data` 为分页对象，任务字段包括 `id`、`name`、`description`、`job_type`、`cron_expr`、`timezone`、`enabled`、`api_key_id`、`config_json`、`concurrency_policy`、`timeout_seconds`、`next_run_at`、`last_run_at`、`last_status` 和 `last_error`。
+- 错误码：`40101` 未登录；`40001` 分页参数不合法；`50001` 查询失败。
+- 使用示例：`curl -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs?page=1&page_size=20'`
+
+### 新增定时任务
+
+- 请求方法和路径：`POST /api/v1/scheduled-jobs`
+- 请求参数：JSON body。必填 `name`、`job_type`、`cron_expr`、`config_json`；可选 `description`、`timezone`（默认 `Asia/Shanghai`）、`enabled`（默认 true）、`api_key_id`、`concurrency_policy`（`forbid`/`allow`，默认 `forbid`）、`timeout_seconds`（0-86400，默认 0）。`config_json` 必须是合法 JSON，最大 1 MiB。Cron 使用 5 段格式（分钟、小时、日、月、星期）。
+- 响应格式：HTTP 200，`data` 为新任务对象。
+- 错误码：`40001` 参数、Cron、时区、并发策略或任务配置不合法；`40101` 未登录；`40301` 非管理员；`50001` 保存或注册失败。
+- 使用示例：
+
+```bash
+curl -X POST -H 'Authorization: Bearer <access_token>' -H 'Content-Type: application/json' \
+  -d '{"name":"数据同步","job_type":"example.sync","cron_expr":"*/5 * * * *","config_json":"{}","enabled":true}' \
+  'http://127.0.0.1:8686/api/v1/scheduled-jobs'
+```
+
+### 获取、编辑和删除定时任务
+
+- 请求方法和路径：`GET /api/v1/scheduled-jobs/:id`、`PUT /api/v1/scheduled-jobs/:id`、`DELETE /api/v1/scheduled-jobs/:id`。
+- 路径参数：`id` 为正整数。
+- 编辑请求：字段与新增相同，`enabled` 必填；修改 Cron、时区或开关会立即重新注册或移除进程内调度。Cron 使用 5 段格式（分钟、小时、日、月、星期）。
+- 响应格式：查询和编辑 HTTP 200，`data` 为任务对象；删除 HTTP 200，`data` 为 `{ "id": <id> }`。
+- 错误码：`40001` 参数不合法；`40101` 未登录；`40301` 编辑/删除非管理员；`40401` 任务不存在；`50001` 数据库或调度注册失败。
+- 使用示例：`curl -X PUT -H 'Authorization: Bearer <access_token>' -H 'Content-Type: application/json' -d '{"name":"数据同步","job_type":"example.sync","cron_expr":"*/10 * * * *","config_json":"{}","enabled":false}' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1'`
+
+### 立即触发定时任务
+
+- 请求方法和路径：`POST /api/v1/scheduled-jobs/:id/trigger`
+- 请求参数：无；仅管理员可调用。接口只创建执行记录并异步执行，不等待任务完成。
+- 响应格式：HTTP 202，`data.run` 为执行记录，初始状态通常为 `queued`；若 `forbid` 且已有执行，则记录为 `skipped`。
+- 错误码：`40001` ID 不合法；`40101` 未登录；`40301` 非管理员；`40401` 任务不存在；`50001` 创建执行记录失败。
+- 使用示例：`curl -X POST -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1/trigger'`
+
+### 查询任务执行记录和进度
+
+- 请求方法和路径：`GET /api/v1/scheduled-jobs/:id/runs`、`GET /api/v1/scheduled-job-runs/:run_id`。
+- 请求参数：列表接口支持 `page`、`page_size`；详情接口使用正整数 `run_id`。
+- 响应格式：执行记录包含 `status`（`queued`、`running`、`success`、`failed`、`timeout`、`skipped`、`cancelled`）、`progress_current`、`progress_total`、`progress_percent`、`progress_phase`、`progress_message`、时间字段、错误信息及预留的结果引用字段。`progress_total=0` 时百分比为空，表示任务尚未提供可计算总量。
+- 错误码：`40001` 参数不合法；`40101` 未登录；`40401` 任务或执行记录不存在；`50001` 查询失败。
+- 使用示例：`curl -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1/runs?page=1&page_size=10'`
+
+### 任务处理器扩展约定
+
+服务启动时从数据库加载 `enabled=1` 的任务。业务代码通过 `JobHandlerRegistry.Register` 注册具体处理器；处理器实现 `Type`、`Validate` 和 `Execute`，在 `Execute` 中通过 `ProgressReporter.Report` 写入阶段、当前值、总量和说明。API Key 仅保存关联 ID，具体处理器按需通过现有 API Key 服务读取并解密，不在定时任务表中保存明文密钥。
+
 以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
 
 ### 列表

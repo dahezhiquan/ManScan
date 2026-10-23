@@ -22,6 +22,7 @@ func NewRouter(
 	thirdPartyAPIKeyHandler handler.ThirdPartyAPIKeyHandler,
 	settingHandler handler.SettingHandler,
 	dashboardHandler handler.DashboardHandler,
+	scheduledJobHandlers ...handler.ScheduledJobHandler,
 ) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
@@ -77,6 +78,17 @@ func NewRouter(
 	protected.POST("/third-party-api-keys", thirdPartyAPIKeyHandler.Create)
 	protected.PUT("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Update)
 	protected.DELETE("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Delete)
+	if len(scheduledJobHandlers) > 0 && scheduledJobHandlers[0] != nil {
+		scheduledJobHandler := scheduledJobHandlers[0]
+		protected.GET("/scheduled-jobs", scheduledJobHandler.List)
+		protected.GET("/scheduled-jobs/:id", scheduledJobHandler.Get)
+		protected.POST("/scheduled-jobs", scheduledJobHandler.Create)
+		protected.PUT("/scheduled-jobs/:id", scheduledJobHandler.Update)
+		protected.DELETE("/scheduled-jobs/:id", scheduledJobHandler.Delete)
+		protected.POST("/scheduled-jobs/:id/trigger", scheduledJobHandler.Trigger)
+		protected.GET("/scheduled-jobs/:id/runs", scheduledJobHandler.ListRuns)
+		protected.GET("/scheduled-job-runs/:run_id", scheduledJobHandler.GetRun)
+	}
 
 	protected.GET("/settings/theme", settingHandler.GetTheme)
 	protected.PUT("/settings/theme", settingHandler.UpdateTheme)

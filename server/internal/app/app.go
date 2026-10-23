@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -56,6 +57,11 @@ func Run() error {
 		return fmt.Errorf("初始化第三方 API Key 加密器失败: %w", err)
 	}
 	thirdPartyAPIKeyService := service.NewThirdPartyAPIKeyService(thirdPartyAPIKeyRepository, apiKeyBox)
+	scheduledJobRepository := repository.NewScheduledJobRepository(db)
+	scheduledJobRunRepository := repository.NewScheduledJobRunRepository(db)
+	jobHandlerRegistry := service.NewJobHandlerRegistry()
+	schedulerManager := service.NewSchedulerManager(scheduledJobRepository, scheduledJobRunRepository, jobHandlerRegistry, logger)
+	scheduledJobService := service.NewScheduledJobService(scheduledJobRepository, scheduledJobRunRepository, schedulerManager, jobHandlerRegistry)
 	settingService := service.NewSettingService(userSettingRepository)
 	dashboardRepository := repository.NewDashboardRepository(db)
 	dashboardService := service.NewDashboardService(dashboardRepository, logger)
@@ -84,7 +90,16 @@ func Run() error {
 		handler.NewThirdPartyAPIKeyHandler(thirdPartyAPIKeyService, logger),
 		handler.NewSettingHandler(settingService),
 		handler.NewDashboardHandler(dashboardService),
+		handler.NewScheduledJobHandler(scheduledJobService),
 	)
+	if err := schedulerManager.Start(context.Background()); err != nil {
+		return fmt.Errorf("启动定时任务调度器失败: %w", err)
+	}
+	defer func() {
+		if err := schedulerManager.Stop(context.Background()); err != nil {
+			logger.Error("停止定时任务调度器失败", "error", err)
+		}
+	}()
 
 	server := &http.Server{
 		Addr:    cfg.Address,

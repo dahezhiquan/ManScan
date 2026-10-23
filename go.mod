@@ -25,6 +25,7 @@ require (
 	github.com/projectdiscovery/retryablehttp-go v1.3.27
 	github.com/projectdiscovery/yamldoc-go v1.0.7
 	github.com/remeh/sizedwaitgroup v1.0.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/rs/xid v1.6.0
 	github.com/segmentio/ksuid v1.0.4
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
@@ -77,8 +78,8 @@ require (
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/go-pg/pg/v10 v10.15.0
 	github.com/go-sql-driver/mysql v1.10.0
-	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/goccy/go-json v0.10.5
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/go-github/v30 v30.1.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/google/uuid v1.6.0
