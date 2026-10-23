@@ -1890,7 +1890,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/vulnerabilities" \
   - `first_found_at` 表示首次发现时间，`last_found_at` 表示最近发现时间，列表页中的发现时间对应 `last_found_at`。
   - `tags`、`reference_links`、`extracted-results` 返回数组；`extracted-results` 保存 Nuclei 从响应中提取的结果，未提取到内容时为空数组。`payload` 和 `detail` 会在内容为合法 JSON 时返回解析后的对象或数组，否则返回原始字符串。
   - `payload` 保存 Nuclei 命中结果顶层 `meta` 的原始值；没有 `meta` 时返回 `null`。该字段可能包含命中的账号、密码、Token、注入语句或其他字典值，调用方必须限制访问权限并避免写入日志。
-  - 当漏洞来自多步 HTTP POC 时，`detail.request` 和 `detail.response` 会保存为 JSON 对象，对象内部按 `1`、`2` 这样的编号键保存每一步请求/响应，便于前端按步骤展示完整请求链。
+  - 当漏洞来自多步 HTTP POC 时，`detail.request` 和 `detail.response` 返回 JSON 对象，对象内部按 `1`、`2` 这样的编号键保存每一步请求/响应，便于前端按步骤展示完整请求链；历史记录中这两个字段若仍是嵌套 JSON 字符串，详情接口会在读取时兼容还原为对象。
   - `protocol` 返回值会按模板顶层执行块白名单归一化，例如 `requests` 会返回为 `http`。
 
 - 错误码说明：
