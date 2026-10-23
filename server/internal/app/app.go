@@ -10,6 +10,7 @@ import (
 	"ManScan/server/internal/handler"
 	authpkg "ManScan/server/internal/pkg/auth"
 	"ManScan/server/internal/pkg/logx"
+	"ManScan/server/internal/pkg/secretbox"
 	"ManScan/server/internal/repository"
 	"ManScan/server/internal/service"
 
@@ -40,6 +41,7 @@ func Run() error {
 	assetHostRepository := repository.NewAssetHostRepository(db)
 	assetHostPortRepository := repository.NewAssetHostPortRepository(db)
 	assetConfigCenterRepository := repository.NewAssetConfigCenterRepository(db)
+	thirdPartyAPIKeyRepository := repository.NewThirdPartyAPIKeyRepository(db)
 	userSettingRepository := repository.NewUserSettingRepository(db)
 	userRepository := repository.NewUserRepository(db)
 	userSessionRepository := repository.NewUserSessionRepository(db)
@@ -49,6 +51,11 @@ func Run() error {
 	assetDomainService := service.NewAssetDomainService(assetDomainRepository, assetDomainScreenshotRepository)
 	assetHostService := service.NewAssetHostService(assetHostRepository)
 	assetConfigCenterService := service.NewAssetConfigCenterService(assetConfigCenterRepository)
+	apiKeyBox, err := secretbox.New(cfg.Auth.APIKeyEncryptionKey)
+	if err != nil {
+		return fmt.Errorf("初始化第三方 API Key 加密器失败: %w", err)
+	}
+	thirdPartyAPIKeyService := service.NewThirdPartyAPIKeyService(thirdPartyAPIKeyRepository, apiKeyBox)
 	settingService := service.NewSettingService(userSettingRepository)
 	dashboardRepository := repository.NewDashboardRepository(db)
 	dashboardService := service.NewDashboardService(dashboardRepository, logger)
@@ -74,6 +81,7 @@ func Run() error {
 		handler.NewAssetDomainHandler(assetDomainService),
 		handler.NewAssetHostHandler(assetHostService),
 		handler.NewAssetConfigCenterHandler(assetConfigCenterService),
+		handler.NewThirdPartyAPIKeyHandler(thirdPartyAPIKeyService, logger),
 		handler.NewSettingHandler(settingService),
 		handler.NewDashboardHandler(dashboardService),
 	)

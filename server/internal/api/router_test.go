@@ -16,7 +16,7 @@ import (
 func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopSettingHandler{}, noopDashboardHandler{})
+	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{})
 	routes := router.Routes()
 	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/overview")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/asset-risks")
@@ -47,6 +47,11 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "POST", "/api/v1/asset-config-centers")
 	assertRouteRegistered(t, routes, "PUT", "/api/v1/asset-config-centers/:id")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/asset-config-centers/:id")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/third-party-api-keys")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/third-party-api-keys/:id")
+	assertRouteRegistered(t, routes, "POST", "/api/v1/third-party-api-keys")
+	assertRouteRegistered(t, routes, "PUT", "/api/v1/third-party-api-keys/:id")
+	assertRouteRegistered(t, routes, "DELETE", "/api/v1/third-party-api-keys/:id")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/settings/theme")
 	assertRouteRegistered(t, routes, "PUT", "/api/v1/settings/theme")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/scans")
@@ -68,12 +73,30 @@ func assertRouteRegistered(t *testing.T, routes gin.RoutesInfo, method, path str
 
 func TestDashboardRoutesRequireAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopSettingHandler{}, noopDashboardHandler{})
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{})
 	for _, path := range []string{"overview", "asset-risks", "host-rankings", "service-fingerprints"} {
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/"+path, nil))
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("path %s status = %d, want 401", path, recorder.Code)
+		}
+	}
+}
+
+func TestThirdPartyAPIKeyRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{})
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/third-party-api-keys"},
+		{http.MethodGet, "/api/v1/third-party-api-keys/1"},
+		{http.MethodPost, "/api/v1/third-party-api-keys"},
+		{http.MethodPut, "/api/v1/third-party-api-keys/1"},
+		{http.MethodDelete, "/api/v1/third-party-api-keys/1"},
+	} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s status = %d, want 401", route.method, route.path, recorder.Code)
 		}
 	}
 }
@@ -188,12 +211,18 @@ func (noopAssetHostHandler) Detail(*gin.Context)           {}
 func (noopAssetHostHandler) UpdateManualNote(*gin.Context) {}
 
 type noopAssetConfigCenterHandler struct{}
+type noopThirdPartyAPIKeyHandler struct{}
 
 func (noopAssetConfigCenterHandler) Create(*gin.Context)               {}
 func (noopAssetConfigCenterHandler) List(*gin.Context)                 {}
 func (noopAssetConfigCenterHandler) SmallCategoryOptions(*gin.Context) {}
 func (noopAssetConfigCenterHandler) Update(*gin.Context)               {}
 func (noopAssetConfigCenterHandler) Delete(*gin.Context)               {}
+func (noopThirdPartyAPIKeyHandler) Create(*gin.Context)                {}
+func (noopThirdPartyAPIKeyHandler) List(*gin.Context)                  {}
+func (noopThirdPartyAPIKeyHandler) Update(*gin.Context)                {}
+func (noopThirdPartyAPIKeyHandler) Delete(*gin.Context)                {}
+func (noopThirdPartyAPIKeyHandler) Get(*gin.Context)                   {}
 
 type noopSettingHandler struct{}
 

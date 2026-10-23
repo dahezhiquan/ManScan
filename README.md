@@ -126,8 +126,11 @@ mysql:
 
 auth:
   jwt_secret: "please-change-this-secret-at-least-32-chars"
+  api_key_encryption_key: "use-a-separate-random-secret-at-least-32-chars"
   token_ttl_minutes: 480
 ```
+
+`api_key_encryption_key` 必须与 JWT 密钥分开设置，用于加密数据库中的第三方 API Key；请使用高熵随机值并妥善备份。也可以通过 `MANSCAN_API_KEY_ENCRYPTION_KEY` 注入该值，环境变量优先于配置文件。服务启动时会校验其长度至少为 32 个字符。
 
 `config.yaml` 仅用于本地服务端配置，密码等敏感信息不要提交到版本库。仓库根目录的 `*.yaml` 默认会被 Git 忽略；生产环境请使用独立配置文件，并通过 `MANSCAN_CONFIG_FILE` 指定。
 
@@ -138,6 +141,7 @@ auth:
 - `MANSCAN_TEMPLATES_DIR`：覆盖服务端模板目录
 - `NUCLEI_TEMPLATES_DIR`：作为模板目录回退来源之一
 - `MANSCAN_JWT_SECRET`：覆盖登录鉴权 JWT 密钥，长度至少 32 个字符
+- `MANSCAN_API_KEY_ENCRYPTION_KEY`：覆盖第三方 API Key 独立加密密钥，长度至少 32 个字符
 - `MANSCAN_TOKEN_TTL_MINUTES`：覆盖登录令牌有效期，单位分钟
 
 ### 3. 启动服务

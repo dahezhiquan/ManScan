@@ -19,6 +19,7 @@ func NewRouter(
 	assetDomainHandler handler.AssetDomainHandler,
 	assetHostHandler handler.AssetHostHandler,
 	assetConfigCenterHandler handler.AssetConfigCenterHandler,
+	thirdPartyAPIKeyHandler handler.ThirdPartyAPIKeyHandler,
 	settingHandler handler.SettingHandler,
 	dashboardHandler handler.DashboardHandler,
 ) *gin.Engine {
@@ -70,6 +71,11 @@ func NewRouter(
 	protected.POST("/asset-config-centers", assetConfigCenterHandler.Create)
 	protected.PUT("/asset-config-centers/:id", assetConfigCenterHandler.Update)
 	protected.DELETE("/asset-config-centers/:id", assetConfigCenterHandler.Delete)
+	protected.GET("/third-party-api-keys", thirdPartyAPIKeyHandler.List)
+	protected.GET("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Get)
+	protected.POST("/third-party-api-keys", thirdPartyAPIKeyHandler.Create)
+	protected.PUT("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Update)
+	protected.DELETE("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Delete)
 
 	protected.GET("/settings/theme", settingHandler.GetTheme)
 	protected.PUT("/settings/theme", settingHandler.UpdateTheme)

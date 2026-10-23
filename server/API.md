@@ -28,7 +28,7 @@
 Authorization: Bearer <access_token>
 ```
 
-服务端启动前必须配置 `auth.jwt_secret` 或环境变量 `MANSCAN_JWT_SECRET`，密钥长度至少 32 个字符；可通过 `auth.token_ttl_minutes` 或 `MANSCAN_TOKEN_TTL_MINUTES` 调整访问令牌有效期，默认 480 分钟。
+服务端启动前必须配置 `auth.jwt_secret` 或环境变量 `MANSCAN_JWT_SECRET`，密钥长度至少 32 个字符；可通过 `auth.token_ttl_minutes` 或 `MANSCAN_TOKEN_TTL_MINUTES` 调整访问令牌有效期，默认 480 分钟。第三方 API Key 配置还必须设置独立的 `auth.api_key_encryption_key` 或环境变量 `MANSCAN_API_KEY_ENCRYPTION_KEY`，密钥长度至少 32 个字符，建议使用高熵随机值并妥善备份；密钥变更后历史密文将无法解密。此配置是服务启动必需项，不复用 JWT 密钥。
 
 统计口径说明：
 
@@ -2745,4 +2745,77 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
   --data-urlencode "domain=http://10.107.71.65:8889" \
   --data-urlencode "page=1" \
   --data-urlencode "page_size=10"
+```
+
+## 39. 第三方 API Key 配置
+
+以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，任何 API 响应均不返回密钥明文或密文，只返回 `key_configured`。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
+
+### 列表
+
+- 请求方法和路径：`GET /api/v1/third-party-api-keys`
+- 请求参数：`page` 可选整数，范围 `1-2147483647`，默认 `1`；`page_size` 可选整数，范围 `1-100`，默认 `10`。
+- 响应格式：标准分页结构，`data` 为 `{ "page": 1, "page_size": 10, "total": 1, "total_pages": 1, "items": [...] }`；每项含 `id`（整数）、`platform_url`（字符串）、`rate_limit_per_minute`（无符号整数）、`description`（字符串）、`key_configured`（布尔值）、`created_at` 和 `updated_at`（RFC3339 时间），不含 Key。
+- 错误码：`40101` 未登录，`40301` 非管理员，`40001` 页码参数非法，`50001` 查询失败。
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/third-party-api-keys?page=1&page_size=10" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 单条查询
+
+- 请求方法和路径：`GET /api/v1/third-party-api-keys/{id}`
+- 请求参数：`id` 为必填正整数路径参数。
+- 响应格式：与列表单项相同，不返回 Key。
+- 错误码：`40001` ID 非法，`40101` 未登录，`40301` 非管理员，`40401` 记录不存在，`50001` 查询失败。
+- 使用示例：
+
+```bash
+curl "http://127.0.0.1:8686/api/v1/third-party-api-keys/1" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+```
+
+### 新增
+
+- 请求方法和路径：`POST /api/v1/third-party-api-keys`
+- 请求参数：JSON 对象；`key` 必填且不可为空白或包含控制字符，最长 512 字节；`platform_url` 必填，仅允许带主机名且不含用户名、密码或片段的 HTTP/HTTPS URL，最长 2048 字节；`rate_limit_per_minute` 可选，范围 `0-4294967295`，`0` 表示不限制；`description` 可选，最长 512 字节。字段长度按 UTF-8 字节计算。
+- 响应格式：标准响应 envelope 中的 `data` 返回配置对象，例如 `{"id":1,"platform_url":"https://api.example.com","rate_limit_per_minute":60,"description":"漏洞情报查询","key_configured":true,"created_at":"2026-10-23T10:00:00+08:00","updated_at":"2026-10-23T10:00:00+08:00"}`；不返回 Key。
+- 错误码：`40001` 请求体或字段非法，`40101` 未登录，`40301` 非管理员，`50001` 加密或数据库操作失败。
+- 使用示例：
+
+```bash
+curl -X POST "http://127.0.0.1:8686/api/v1/third-party-api-keys" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"key":"YOUR_PROVIDER_KEY","platform_url":"https://api.example.com","rate_limit_per_minute":60,"description":"漏洞情报查询"}'
+```
+
+### 更新
+
+- 请求方法和路径：`PUT /api/v1/third-party-api-keys/{id}`
+- 请求参数：`id` 为必填正整数路径参数；JSON 中 `platform_url` 必填，限流和描述字段同新增；`key` 可省略或为 `null` 以保留原 Key，传入字符串时必须非空白、不含控制字符且最长 512 字节。更新按完整元信息替换处理；未提供的限流值重置为 `0`，未提供的描述重置为空字符串。
+- 响应格式：标准响应 envelope 中的 `data` 返回更新后的配置对象，字段与新增响应相同；不返回 Key。
+- 错误码：`40001` ID、请求体或字段非法，`40101` 未登录，`40301` 非管理员，`40401` 记录不存在，`50001` 加密或数据库操作失败。
+- 使用示例：
+
+```bash
+curl -X PUT "http://127.0.0.1:8686/api/v1/third-party-api-keys/1" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"platform_url":"https://api.example.com/v2","rate_limit_per_minute":30,"description":"漏洞情报查询"}'
+```
+
+### 删除
+
+- 请求方法和路径：`DELETE /api/v1/third-party-api-keys/{id}`
+- 请求参数：`id` 为必填正整数路径参数。
+- 响应格式：`{ "id": 1, "deleted_count": 1 }`。
+- 错误码：`40001` ID 非法，`40101` 未登录，`40301` 非管理员，`40401` 记录不存在，`50001` 删除失败。
+- 使用示例：
+
+```bash
+curl -X DELETE "http://127.0.0.1:8686/api/v1/third-party-api-keys/1" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```

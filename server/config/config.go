@@ -39,8 +39,9 @@ type MySQLConfig struct {
 }
 
 type AuthConfig struct {
-	JWTSecret       string `yaml:"jwt_secret"`
-	TokenTTLMinutes int    `yaml:"token_ttl_minutes"`
+	JWTSecret           string `yaml:"jwt_secret"`
+	TokenTTLMinutes     int    `yaml:"token_ttl_minutes"`
+	APIKeyEncryptionKey string `yaml:"api_key_encryption_key"`
 }
 
 func Load() (*Config, error) {
@@ -75,6 +76,9 @@ func Load() (*Config, error) {
 		fileConfig.Auth.TokenTTLMinutes = 480
 	}
 	if err := fileConfig.Auth.Validate(); err != nil {
+		return nil, err
+	}
+	if err := fileConfig.Auth.ValidateAPIKeyEncryptionKey(); err != nil {
 		return nil, err
 	}
 
@@ -133,6 +137,9 @@ func (c *AuthConfig) ApplyEnv() {
 			c.TokenTTLMinutes = ttl
 		}
 	}
+	if encryptionKey := strings.TrimSpace(os.Getenv("MANSCAN_API_KEY_ENCRYPTION_KEY")); encryptionKey != "" {
+		c.APIKeyEncryptionKey = encryptionKey
+	}
 }
 
 func (c AuthConfig) Validate() error {
@@ -141,6 +148,14 @@ func (c AuthConfig) Validate() error {
 	}
 	if c.TokenTTLMinutes <= 0 {
 		return fmt.Errorf("auth.token_ttl_minutes 必须大于 0")
+	}
+	return nil
+}
+
+// ValidateAPIKeyEncryptionKey 校验独立配置的 API Key 加密密钥。
+func (c AuthConfig) ValidateAPIKeyEncryptionKey() error {
+	if len(strings.TrimSpace(c.APIKeyEncryptionKey)) < 32 {
+		return fmt.Errorf("auth.api_key_encryption_key 或 MANSCAN_API_KEY_ENCRYPTION_KEY 必须至少 32 个字符")
 	}
 	return nil
 }
