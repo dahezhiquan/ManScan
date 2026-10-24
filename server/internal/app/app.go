@@ -14,6 +14,7 @@ import (
 	"ManScan/server/internal/pkg/secretbox"
 	"ManScan/server/internal/repository"
 	"ManScan/server/internal/service"
+	jobhandlers "ManScan/server/internal/service/job_handlers"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -60,6 +61,9 @@ func Run() error {
 	scheduledJobRepository := repository.NewScheduledJobRepository(db)
 	scheduledJobRunRepository := repository.NewScheduledJobRunRepository(db)
 	jobHandlerRegistry := service.NewJobHandlerRegistry()
+	if err := jobHandlerRegistry.Register(jobhandlers.NewCVEFileNamesHandler(cfg.RootDir, thirdPartyAPIKeyService)); err != nil {
+		return fmt.Errorf("注册 CVE 文件名定时任务处理器失败: %w", err)
+	}
 	schedulerManager := service.NewSchedulerManager(scheduledJobRepository, scheduledJobRunRepository, jobHandlerRegistry, logger)
 	scheduledJobService := service.NewScheduledJobService(scheduledJobRepository, scheduledJobRunRepository, schedulerManager, jobHandlerRegistry)
 	settingService := service.NewSettingService(userSettingRepository)

@@ -1,19 +1,13 @@
-// Command cve_file_names lists CVE file names from the cvelistV5 repository
-// without cloning the repository or downloading file contents.
-package main
+package job_handlers
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"os/signal"
 	"regexp"
 	"sort"
 	"strings"
@@ -21,9 +15,9 @@ import (
 )
 
 const (
-	defaultAPIBaseURL = "https://api.github.com"
-	defaultOwner      = "CVEProject"
-	defaultRepository = "cvelistV5"
+	defaultGitHubAPIBaseURL = "https://api.github.com"
+	defaultCVEOwner         = "CVEProject"
+	defaultCVERepository    = "cvelistV5"
 )
 
 var cveFileNamePattern = regexp.MustCompile(`^CVE-\d{4}-\d+\.json$`)
@@ -57,9 +51,9 @@ func NewGitHubTreeClient(token string) *GitHubTreeClient {
 				return http.ErrUseLastResponse
 			},
 		},
-		BaseURL:    defaultAPIBaseURL,
-		Owner:      defaultOwner,
-		Repository: defaultRepository,
+		BaseURL:    defaultGitHubAPIBaseURL,
+		Owner:      defaultCVEOwner,
+		Repository: defaultCVERepository,
 		Token:      token,
 	}
 }
@@ -185,33 +179,4 @@ func (c *GitHubTreeClient) getTree(ctx context.Context, ref string, recursive bo
 		return treeResponse{}, errors.New("GitHub tree response is missing the tree array")
 	}
 	return tree, nil
-}
-
-func main() {
-	ref := flag.String("ref", "main", "GitHub branch, tag, or commit SHA")
-	flag.Parse()
-	if flag.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "unexpected arguments; use -ref to select a branch, tag, or commit SHA")
-		os.Exit(1)
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
-
-	names, err := NewGitHubTreeClient(os.Getenv("GITHUB_TOKEN")).ListCVEFileNames(ctx, *ref)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "list CVE file names: %v\n", err)
-		os.Exit(1)
-	}
-
-	writer := bufio.NewWriter(os.Stdout)
-	for _, name := range names {
-		if _, err := fmt.Fprintln(writer, name); err != nil {
-			fmt.Fprintf(os.Stderr, "write CVE file name: %v\n", err)
-			os.Exit(1)
-		}
-	}
-	if err := writer.Flush(); err != nil {
-		fmt.Fprintf(os.Stderr, "flush CVE file names: %v\n", err)
-		os.Exit(1)
-	}
 }

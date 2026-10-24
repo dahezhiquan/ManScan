@@ -2751,7 +2751,7 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
 
 ## 40. 定时任务
 
-定时任务接口用于管理通用后台任务（例如同步数据或执行脚本）。当前版本只提供调度框架，不内置具体 `job_type` 处理器。创建未知类型仍可保存配置，但触发后会以“定时任务类型未注册”失败；后续注册同名 `JobHandler` 后即可执行。所有接口都需要登录，新增、编辑、删除和立即触发仅管理员可操作。
+定时任务接口用于管理通用后台任务（例如同步数据或执行脚本）。当前已内置 `cve_file_names.sync` 处理器，用于从 GitHub `CVEProject/cvelistV5` 获取 CVE 文件名并原子替换 `data/tmp/cve_data/cves.txt`；未配置 `api_key_id` 时使用 `GITHUB_TOKEN`。创建未知类型仍可保存配置，但触发后会以“定时任务类型未注册”失败；后续注册同名 `JobHandler` 后即可执行。所有接口都需要登录，新增、编辑、删除和立即触发仅管理员可操作。
 
 ### 查询定时任务列表
 
@@ -2803,6 +2803,14 @@ curl -X POST -H 'Authorization: Bearer <access_token>' -H 'Content-Type: applica
 ### 任务处理器扩展约定
 
 服务启动时从数据库加载 `enabled=1` 的任务。业务代码通过 `JobHandlerRegistry.Register` 注册具体处理器；处理器实现 `Type`、`Validate` 和 `Execute`，在 `Execute` 中通过 `ProgressReporter.Report` 写入阶段、当前值、总量和说明。API Key 仅保存关联 ID，具体处理器按需通过现有 API Key 服务读取并解密，不在定时任务表中保存明文密钥。
+
+### 内置任务：CVE 文件名同步
+
+- `job_type`：`cve_file_names.sync`
+- 默认计划：`0 0 * * *`，时区 `Asia/Shanghai`，每天零点执行。
+- `config_json`：可选 `{"ref":"main"}`，用于指定 GitHub 分支、标签或提交 SHA；为空时使用 `main`。
+- 输出：成功获取完整列表后，使用临时文件原子替换 `data/tmp/cve_data/cves.txt`，失败时保留上一次成功文件。
+- 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_cve_file_names.sql`，可重复执行，不会重复插入同一 `job_type`。
 
 以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
 
