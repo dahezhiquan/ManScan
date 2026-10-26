@@ -44,13 +44,6 @@ func (r *nextRunJobRepository) UpdateRuntime(context.Context, int64, *time.Time,
 	return nil
 }
 
-func (r *nextRunJobRepository) UpdateEnabled(_ context.Context, _ int64, enabled bool) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.job.Enabled = enabled
-	return nil
-}
-
 type nextRunRepository struct {
 	repository.ScheduledJobRunRepository
 }
@@ -260,7 +253,7 @@ func TestSchedulerStopJobCancelsActiveRun(t *testing.T) {
 	}
 }
 
-func TestScheduledJobControls(t *testing.T) {
+func TestScheduledJobStopPreservesSchedule(t *testing.T) {
 	manager, jobs := newNextRunTestManager(t, "0 0 * * *")
 	svc := NewScheduledJobService(jobs, nil, manager, nil)
 	ctx := context.Background()
@@ -271,20 +264,11 @@ func TestScheduledJobControls(t *testing.T) {
 	manager.registerRun(1, 10, cancel)
 	manager.registerRun(2, 20, otherCancel)
 
-	paused, err := svc.Pause(ctx, 1)
-	if err != nil || paused.Enabled || paused.NextRunAt != nil {
-		t.Fatalf("pause = %+v, error = %v", paused, err)
+	if err := manager.AddOrUpdate(ctx, 1); err != nil {
+		t.Fatal(err)
 	}
-	if runningCtx.Err() != nil {
-		t.Fatal("pause cancelled an active execution")
-	}
-	resumed, err := svc.Resume(ctx, 1)
-	if err != nil || !resumed.Enabled || resumed.NextRunAt == nil || !resumed.NextRunAt.After(time.Now()) {
-		t.Fatalf("resume = %+v, error = %v", resumed, err)
-	}
-	if resumed.CronExpr != "0 0 * * *" || resumed.ConfigJSON != "{}" {
-		t.Fatalf("resume changed task configuration: %+v", resumed)
-	}
+	nextRun := <-jobs.updates
+	entryID := manager.entries[1]
 	count, err := svc.Stop(ctx, 1)
 	if err != nil || count != 1 || runningCtx.Err() != context.Canceled {
 		t.Fatalf("stop count = %d, error = %v, run context = %v", count, err, runningCtx.Err())
@@ -293,23 +277,22 @@ func TestScheduledJobControls(t *testing.T) {
 		t.Fatal("stop cancelled another job")
 	}
 	stopped, err := svc.Get(ctx, 1)
-	if err != nil || stopped.Enabled || stopped.NextRunAt != nil {
+	if err != nil || !stopped.Enabled || stopped.NextRunAt == nil || !stopped.NextRunAt.Equal(*nextRun) {
 		t.Fatalf("stopped job = %+v, error = %v", stopped, err)
 	}
-	if _, err := manager.Trigger(ctx, 1, "schedule"); err == nil {
-		t.Fatal("stopped job accepted automatic trigger")
+	if manager.entries[1] != entryID || manager.cron.Entry(entryID).ID != entryID {
+		t.Fatal("stop removed or replaced the cron schedule")
+	}
+	select {
+	case next := <-jobs.updates:
+		t.Fatalf("stop changed next run time: %v", next)
+	default:
 	}
 	manager.unregisterRun(1, 10)
 	if count, err := svc.Stop(ctx, 1); err != nil || count != 0 {
 		t.Fatalf("stop without active runs: count = %d, error = %v", count, err)
 	}
 	for _, id := range []int64{0, -1} {
-		if _, err := svc.Pause(ctx, id); !errors.Is(err, ErrInvalidScheduledJob) {
-			t.Fatalf("pause accepted id %d: %v", id, err)
-		}
-		if _, err := svc.Resume(ctx, id); !errors.Is(err, ErrInvalidScheduledJob) {
-			t.Fatalf("resume accepted id %d: %v", id, err)
-		}
 		if _, err := svc.Stop(ctx, id); !errors.Is(err, ErrInvalidScheduledJob) {
 			t.Fatalf("stop accepted id %d: %v", id, err)
 		}
