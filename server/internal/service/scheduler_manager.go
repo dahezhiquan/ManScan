@@ -105,7 +105,7 @@ func (s *schedulerManager) AddOrUpdate(ctx context.Context, jobID int64) error {
 	}
 	s.Remove(jobID)
 	if !job.Enabled {
-		return nil
+		return s.jobs.UpdateNextRunAt(ctx, jobID, nil)
 	}
 	return s.addJob(*job)
 }
@@ -132,7 +132,12 @@ func (s *schedulerManager) addJob(job entity.ScheduledJob) error {
 	if strings.TrimSpace(job.Timezone) != "" {
 		schedule = "CRON_TZ=" + strings.TrimSpace(job.Timezone) + " " + schedule
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	entryID, err := s.cron.AddFunc(schedule, func() {
+		if err := s.refreshNextRunAt(job.ID); err != nil && s.logger != nil {
+			s.logger.Error("update scheduled job next run failed", "job_id", job.ID, "error", err)
+		}
 		_, triggerErr := s.Trigger(context.Background(), job.ID, "schedule")
 		if triggerErr != nil && s.logger != nil {
 			s.logger.Error("scheduled job trigger failed", "job_id", job.ID, "error", triggerErr)
@@ -141,14 +146,34 @@ func (s *schedulerManager) addJob(job entity.ScheduledJob) error {
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
 	s.entries[job.ID] = entryID
-	s.mu.Unlock()
-	entry := s.cron.Entry(entryID)
-	if !entry.Next.IsZero() {
-		_ = s.jobs.UpdateRuntime(context.Background(), job.ID, &entry.Next, nil, "", "")
+	return s.updateNextRunAt(context.Background(), job.ID, entryID)
+}
+
+func (s *schedulerManager) refreshNextRunAt(jobID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entryID, registered := s.entries[jobID]
+	if !registered {
+		return nil
 	}
-	return nil
+	// 与注册、移除串行写入，避免旧回调覆盖新计划或禁用后的时间。
+	return s.updateNextRunAt(context.Background(), jobID, entryID)
+}
+
+// updateNextRunAt 在持有 s.mu 时调用，使计划与数据库时间保持一致。
+func (s *schedulerManager) updateNextRunAt(ctx context.Context, jobID int64, entryID cron.EntryID) error {
+	entry := s.cron.Entry(entryID)
+	now := time.Now()
+	if entry.Schedule != nil && (entry.Next.IsZero() || !entry.Next.After(now)) {
+		// Cron 启动前或回调并发执行时 Entry.Next 可能为空/已到期，按同一份计划计算下一次时间。
+		entry.Next = entry.Schedule.Next(time.Now())
+	}
+	var nextRunAt *time.Time
+	if !entry.Next.IsZero() {
+		nextRunAt = &entry.Next
+	}
+	return s.jobs.UpdateNextRunAt(ctx, jobID, nextRunAt)
 }
 
 func (s *schedulerManager) Trigger(ctx context.Context, jobID int64, triggerType string) (*entity.ScheduledJobRun, error) {
@@ -245,8 +270,8 @@ func validateScheduledJob(cronExpr, timezone, concurrency string, timeout int) e
 	if concurrency != "" && concurrency != "forbid" && concurrency != "allow" {
 		return errors.New("并发策略只能是 forbid 或 allow")
 	}
-	if timeout < 0 || timeout > 86400 {
-		return errors.New("超时时间必须在 0-86400 秒之间")
+	if timeout < 0 || timeout > 30*24*60*60 {
+		return errors.New("超时时间必须在 0-2592000 秒之间（最多 30 天）")
 	}
 	return nil
 }

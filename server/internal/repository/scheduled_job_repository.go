@@ -18,6 +18,7 @@ type ScheduledJobRepository interface {
 	ListEnabled(ctx context.Context) ([]entity.ScheduledJob, error)
 	Update(ctx context.Context, item *entity.ScheduledJob) error
 	UpdateRuntime(ctx context.Context, id int64, nextRunAt, lastRunAt *time.Time, lastStatus, lastError string) error
+	UpdateNextRunAt(ctx context.Context, id int64, nextRunAt *time.Time) error
 	Delete(ctx context.Context, id int64) (int64, error)
 }
 
@@ -107,6 +108,11 @@ func (r *scheduledJobRepository) UpdateRuntime(ctx context.Context, id int64, ne
 		return nil
 	}
 	return r.db.WithContext(ctx).Model(&entity.ScheduledJob{}).Where("id = ?", id).Updates(updates).Error
+}
+
+// UpdateNextRunAt 更新下一次执行时间；nil 表示清除计划时间。
+func (r *scheduledJobRepository) UpdateNextRunAt(ctx context.Context, id int64, nextRunAt *time.Time) error {
+	return r.db.WithContext(ctx).Model(&entity.ScheduledJob{}).Where("id = ?", id).Update("next_run_at", nextRunAt).Error
 }
 
 func (r *scheduledJobRepository) Delete(ctx context.Context, id int64) (int64, error) {
