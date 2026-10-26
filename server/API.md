@@ -2830,6 +2830,8 @@ curl -L -OJ \
 
 服务启动时从数据库加载 `enabled=1` 的任务。业务代码通过 `JobHandlerRegistry.Register` 注册具体处理器；处理器实现 `Type`、`Validate` 和 `Execute`，在 `Execute` 中通过 `ProgressReporter.Report` 写入阶段、当前值、总量和说明。API Key 仅保存关联 ID，具体处理器按需通过现有 API Key 服务读取并解密，不在定时任务表中保存明文密钥。
 
+需要发出外部请求的处理器必须复用服务启动时创建并注入的 `service.APIKeyRateLimiter`：配置 `api_key_id` 时，在每一次实际请求前调用 `Wait(ctx, apiKeyID)`，包括额外遍历、回退和重试请求。不得为单个任务或执行实例独立创建限流器，否则无法共享额度。限流配置读取失败时返回错误，不绕过限流发送请求。
+
 ### 内置任务：CVE 文件名同步
 
 - `job_type`：`cve_file_names.sync`
@@ -2837,6 +2839,9 @@ curl -L -OJ \
 - `config_json`：可选 `{"ref":"main"}`，用于指定 GitHub 分支、标签或提交 SHA；为空时使用 `main`。
 - 输出：成功获取完整列表后，使用临时文件原子替换 `data/tmp/cve_data/cves.txt`，失败时保留上一次成功文件。
 - 产出：成功执行后，在本次执行记录的 `output_path` 字段写入固定路径 `data/tmp/cve_data/cves.txt`，前端可使用“产出下载”按钮调用执行记录产出下载接口。
+- 限流：当任务配置 `api_key_id` 且该 API Key 的 `rate_limit_per_minute=N` 大于 `0` 时，请求按至少 `60/N` 秒的间隔放行，不允许突发透支。同一服务进程内，相同 API Key ID 的所有任务及并发执行实例（包括自动和手动触发）共享额度，不同 API Key ID 相互独立；根目录、递归 Tree、截断回退和后续子树请求均参与限流。未配置 API Key 或限流值为 `0` 时不启用服务端限流，但仍受 GitHub 自身限流策略约束。
+- 配置变更与取消：每次请求以及等待唤醒后重新读取当前 API Key 限流值；已有等待在下一次检查时采用新值。等待计入任务的 `timeout_seconds`，支持取消和超时，等待期间取消不预占后续额度，获取列表失败时保留上一次成功文件。
+- 共享范围：限流状态保存在当前服务进程内，重启后清空；多个服务进程或实例之间不共享额度。
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_cve_file_names.sql`，可重复执行，不会重复插入同一 `job_type`。
 
 以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。

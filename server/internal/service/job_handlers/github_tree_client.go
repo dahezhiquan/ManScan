@@ -40,6 +40,8 @@ type GitHubTreeClient struct {
 	Owner      string
 	Repository string
 	Token      string
+
+	beforeRequest func(context.Context) error
 }
 
 // NewGitHubTreeClient creates a client for the CVEProject/cvelistV5 repository.
@@ -157,6 +159,11 @@ func (c *GitHubTreeClient) getTree(ctx context.Context, ref string, recursive bo
 	httpClient := c.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
+	}
+	if c.beforeRequest != nil {
+		if err := c.beforeRequest(ctx); err != nil {
+			return treeResponse{}, err
+		}
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {

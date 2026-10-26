@@ -22,14 +22,15 @@ type cveFileNamesConfig struct {
 
 // CVEFileNamesHandler 从 GitHub 获取 CVE 文件名并原子替换本地索引文件。
 type CVEFileNamesHandler struct {
-	rootDir  string
-	apiKeys  service.ThirdPartyAPIKeyService
-	clientFn func(token string) *GitHubTreeClient
+	rootDir     string
+	apiKeys     service.ThirdPartyAPIKeyService
+	clientFn    func(token string) *GitHubTreeClient
+	rateLimiter service.APIKeyRateLimiter
 }
 
 // NewCVEFileNamesHandler 创建 CVE 文件名同步任务处理器。
-func NewCVEFileNamesHandler(rootDir string, apiKeys service.ThirdPartyAPIKeyService) *CVEFileNamesHandler {
-	return &CVEFileNamesHandler{rootDir: rootDir, apiKeys: apiKeys, clientFn: NewGitHubTreeClient}
+func NewCVEFileNamesHandler(rootDir string, apiKeys service.ThirdPartyAPIKeyService, rateLimiter service.APIKeyRateLimiter) *CVEFileNamesHandler {
+	return &CVEFileNamesHandler{rootDir: rootDir, apiKeys: apiKeys, clientFn: NewGitHubTreeClient, rateLimiter: rateLimiter}
 }
 
 func (h *CVEFileNamesHandler) Type() string { return CVEFileNamesJobType }
@@ -66,6 +67,15 @@ func (h *CVEFileNamesHandler) Execute(ctx context.Context, job entity.ScheduledJ
 		return err
 	}
 	client := h.clientFn(token)
+	if job.APIKeyID != nil {
+		if h.rateLimiter == nil {
+			return errors.New("CVE 任务已配置 API Key，但限流服务不可用")
+		}
+		apiKeyID := *job.APIKeyID
+		client.beforeRequest = func(ctx context.Context) error {
+			return h.rateLimiter.Wait(ctx, apiKeyID)
+		}
+	}
 	names, err := client.ListCVEFileNames(ctx, ref)
 	if err != nil {
 		return fmt.Errorf("获取 GitHub CVE 列表失败: %w", err)

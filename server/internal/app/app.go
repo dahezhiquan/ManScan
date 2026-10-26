@@ -75,7 +75,8 @@ func Run() error {
 	scheduledJobRepository := repository.NewScheduledJobRepository(db)
 	scheduledJobRunRepository := repository.NewScheduledJobRunRepository(db)
 	jobHandlerRegistry := service.NewJobHandlerRegistry()
-	if err := jobHandlerRegistry.Register(jobhandlers.NewCVEFileNamesHandler(cfg.RootDir, thirdPartyAPIKeyService)); err != nil {
+	apiKeyRateLimiter := service.NewAPIKeyRateLimiter(thirdPartyAPIKeyService)
+	if err := jobHandlerRegistry.Register(jobhandlers.NewCVEFileNamesHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter)); err != nil {
 		return fmt.Errorf("注册 CVE 文件名定时任务处理器失败: %w", err)
 	}
 	schedulerManager := service.NewSchedulerManager(scheduledJobRepository, scheduledJobRunRepository, jobHandlerRegistry, logger)

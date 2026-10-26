@@ -36,7 +36,7 @@ func TestWriteCVEFileNamesReplacesOutputAtomically(t *testing.T) {
 }
 
 func TestCVEFileNamesHandlerValidate(t *testing.T) {
-	handler := NewCVEFileNamesHandler(t.TempDir(), nil)
+	handler := NewCVEFileNamesHandler(t.TempDir(), nil, nil)
 	if err := handler.Validate([]byte(`{"ref":"main"}`)); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
