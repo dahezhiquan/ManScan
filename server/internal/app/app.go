@@ -79,7 +79,7 @@ func Run() error {
 		return fmt.Errorf("注册 CVE 文件名定时任务处理器失败: %w", err)
 	}
 	schedulerManager := service.NewSchedulerManager(scheduledJobRepository, scheduledJobRunRepository, jobHandlerRegistry, logger)
-	scheduledJobService := service.NewScheduledJobService(scheduledJobRepository, scheduledJobRunRepository, schedulerManager, jobHandlerRegistry)
+	scheduledJobService := service.NewScheduledJobService(scheduledJobRepository, scheduledJobRunRepository, schedulerManager, jobHandlerRegistry, cfg.RootDir)
 	settingService := service.NewSettingService(userSettingRepository)
 	dashboardRepository := repository.NewDashboardRepository(db)
 	dashboardService := service.NewDashboardService(dashboardRepository, logger)

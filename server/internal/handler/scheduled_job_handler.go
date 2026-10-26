@@ -24,6 +24,7 @@ type ScheduledJobHandler interface {
 	Trigger(*gin.Context)
 	ListRuns(*gin.Context)
 	GetRun(*gin.Context)
+	DownloadRunOutput(*gin.Context)
 }
 
 type scheduledJobHandler struct{ service service.ScheduledJobService }
@@ -179,6 +180,25 @@ func (h *scheduledJobHandler) GetRun(c *gin.Context) {
 		return
 	}
 	response.Success(c, data)
+}
+
+// DownloadRunOutput downloads the file produced by one scheduled-job run.
+func (h *scheduledJobHandler) DownloadRunOutput(c *gin.Context) {
+	runID, err := strconv.ParseInt(strings.TrimSpace(c.Param("run_id")), 10, 64)
+	if err != nil || runID <= 0 {
+		response.Fail(c, errcode.InvalidParams, "执行记录 id 不合法")
+		return
+	}
+	data, serviceErr := h.service.GetRunOutput(c.Request.Context(), runID)
+	if serviceErr != nil {
+		if errors.Is(serviceErr, gorm.ErrRecordNotFound) || errors.Is(serviceErr, service.ErrScheduledJobOutputNotFound) {
+			response.Fail(c, errcode.NotFound, "定时任务产出文件不存在")
+			return
+		}
+		response.Fail(c, errcode.InternalServerError, "下载定时任务产出失败")
+		return
+	}
+	c.FileAttachment(data.Path, data.FileName)
 }
 
 func parseScheduledJobID(c *gin.Context) (int64, bool) {

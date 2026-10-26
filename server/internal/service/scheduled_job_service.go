@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"ManScan/server/internal/model/dto"
@@ -23,20 +25,23 @@ type ScheduledJobService interface {
 	Trigger(ctx context.Context, id int64, triggerType string) (*dto.TriggerScheduledJobResponse, error)
 	ListRuns(ctx context.Context, id int64, query dto.ListScheduledJobRunsQuery) (*dto.PageResult[dto.ScheduledJobRunItem], error)
 	GetRun(ctx context.Context, id int64) (*dto.ScheduledJobRunItem, error)
+	GetRunOutput(ctx context.Context, id int64) (*dto.ScheduledJobRunOutput, error)
 }
 
 var ErrInvalidScheduledJob = errors.New("定时任务参数不合法")
+var ErrScheduledJobOutputNotFound = errors.New("定时任务产出文件不存在")
 
 type scheduledJobService struct {
 	jobs      repository.ScheduledJobRepository
 	runs      repository.ScheduledJobRunRepository
 	scheduler SchedulerManager
 	registry  JobHandlerRegistry
+	rootDir   string
 }
 
 // NewScheduledJobService 创建定时任务业务服务。
-func NewScheduledJobService(jobs repository.ScheduledJobRepository, runs repository.ScheduledJobRunRepository, scheduler SchedulerManager, registry JobHandlerRegistry) ScheduledJobService {
-	return &scheduledJobService{jobs: jobs, runs: runs, scheduler: scheduler, registry: registry}
+func NewScheduledJobService(jobs repository.ScheduledJobRepository, runs repository.ScheduledJobRunRepository, scheduler SchedulerManager, registry JobHandlerRegistry, rootDir string) ScheduledJobService {
+	return &scheduledJobService{jobs: jobs, runs: runs, scheduler: scheduler, registry: registry, rootDir: rootDir}
 }
 
 func (s *scheduledJobService) Create(ctx context.Context, request dto.CreateScheduledJobRequest) (*dto.ScheduledJobListItem, error) {
@@ -165,6 +170,42 @@ func (s *scheduledJobService) GetRun(ctx context.Context, id int64) (*dto.Schedu
 	return &result, nil
 }
 
+func (s *scheduledJobService) GetRunOutput(ctx context.Context, id int64) (*dto.ScheduledJobRunOutput, error) {
+	item, err := s.runs.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	relative := filepath.Clean(filepath.FromSlash(strings.TrimSpace(item.OutputPath)))
+	if relative == "." || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, ErrScheduledJobOutputNotFound
+	}
+	root, err := filepath.Abs(filepath.Clean(s.rootDir))
+	if err != nil {
+		return nil, ErrScheduledJobOutputNotFound
+	}
+	absolute, err := filepath.Abs(filepath.Join(root, relative))
+	if err != nil {
+		return nil, ErrScheduledJobOutputNotFound
+	}
+	rootResolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, ErrScheduledJobOutputNotFound
+	}
+	fileResolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return nil, ErrScheduledJobOutputNotFound
+	}
+	relativeResolved, err := filepath.Rel(rootResolved, fileResolved)
+	if err != nil || relativeResolved == ".." || strings.HasPrefix(relativeResolved, ".."+string(filepath.Separator)) {
+		return nil, ErrScheduledJobOutputNotFound
+	}
+	info, err := os.Stat(fileResolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, ErrScheduledJobOutputNotFound
+	}
+	return &dto.ScheduledJobRunOutput{Path: fileResolved, FileName: filepath.Base(relative)}, nil
+}
+
 func buildScheduledJob(name, description, jobType, cronExpr, timezone string, enabled bool, apiKeyID *int64, config, concurrency string, timeout int, registry JobHandlerRegistry) (*entity.ScheduledJob, error) {
 	name, jobType, cronExpr, timezone, concurrency = strings.TrimSpace(name), strings.TrimSpace(jobType), strings.TrimSpace(cronExpr), strings.TrimSpace(timezone), strings.TrimSpace(concurrency)
 	if timezone == "" {
@@ -203,5 +244,5 @@ func toScheduledJobRunItem(item entity.ScheduledJobRun) dto.ScheduledJobRunItem 
 		value := float64(item.ProgressCurrent) * 100 / float64(item.ProgressTotal)
 		percent = &value
 	}
-	return dto.ScheduledJobRunItem{ID: item.ID, JobID: item.JobID, TriggerType: item.TriggerType, Status: item.Status, ProgressCurrent: item.ProgressCurrent, ProgressTotal: item.ProgressTotal, ProgressPercent: percent, ProgressPhase: item.ProgressPhase, ProgressMessage: item.ProgressMessage, ProgressUpdatedAt: item.ProgressUpdatedAt, StartedAt: item.StartedAt, FinishedAt: item.FinishedAt, RelatedType: item.RelatedType, RelatedID: item.RelatedID, ResultRef: item.ResultRef, ResultSummary: resultSummary, ErrorMessage: item.ErrorMessage, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	return dto.ScheduledJobRunItem{ID: item.ID, JobID: item.JobID, TriggerType: item.TriggerType, Status: item.Status, ProgressCurrent: item.ProgressCurrent, ProgressTotal: item.ProgressTotal, ProgressPercent: percent, ProgressPhase: item.ProgressPhase, ProgressMessage: item.ProgressMessage, ProgressUpdatedAt: item.ProgressUpdatedAt, StartedAt: item.StartedAt, FinishedAt: item.FinishedAt, RelatedType: item.RelatedType, RelatedID: item.RelatedID, OutputPath: item.OutputPath, ResultRef: item.ResultRef, ResultSummary: resultSummary, ErrorMessage: item.ErrorMessage, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }

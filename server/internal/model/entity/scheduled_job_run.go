@@ -18,6 +18,7 @@ type ScheduledJobRun struct {
 	FinishedAt        *time.Time `gorm:"column:finished_at"`
 	RelatedType       string     `gorm:"column:related_type;type:varchar(32)"`
 	RelatedID         *int64     `gorm:"column:related_id"`
+	OutputPath        string     `gorm:"column:output_path;type:varchar(1024)"`
 	ResultRef         string     `gorm:"column:result_ref;type:varchar(1024)"`
 	ResultSummary     *string    `gorm:"column:result_summary;type:json"`
 	ErrorMessage      string     `gorm:"column:error_message;type:varchar(2048)"`

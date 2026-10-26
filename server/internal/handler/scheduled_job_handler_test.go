@@ -6,10 +6,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"ManScan/server/internal/middleware"
+	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -21,11 +24,16 @@ type scheduledJobControlStub struct {
 	err    error
 	called bool
 	count  int
+	output *dto.ScheduledJobRunOutput
 }
 
 func (s *scheduledJobControlStub) Stop(context.Context, int64) (int, error) {
 	s.called = true
 	return s.count, s.err
+}
+
+func (s *scheduledJobControlStub) GetRunOutput(context.Context, int64) (*dto.ScheduledJobRunOutput, error) {
+	return s.output, s.err
 }
 
 func TestScheduledJobStopHandler(t *testing.T) {
@@ -73,5 +81,24 @@ func TestScheduledJobStopHandler(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestScheduledJobRunOutputDownload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cves.txt")
+	if err := os.WriteFile(path, []byte("CVE-2026-0001\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	stub := &scheduledJobControlStub{output: &dto.ScheduledJobRunOutput{Path: path, FileName: "cves.txt"}}
+	h := NewScheduledJobHandler(stub)
+	router := gin.New()
+	router.GET("/scheduled-job-runs/:run_id/output", h.DownloadRunOutput)
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/scheduled-job-runs/1/output", nil))
+	if recorder.Code != http.StatusOK || recorder.Body.String() != "CVE-2026-0001\n" {
+		t.Fatalf("status=%d, body=%q", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Header().Get("Content-Disposition"), "cves.txt") {
+		t.Fatalf("unexpected content disposition: %q", recorder.Header().Get("Content-Disposition"))
 	}
 }

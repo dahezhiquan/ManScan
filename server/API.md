@@ -2807,9 +2807,24 @@ curl -X POST -H 'Authorization: Bearer <access_token>' -H 'Content-Type: applica
 
 - 请求方法和路径：`GET /api/v1/scheduled-jobs/:id/runs`、`GET /api/v1/scheduled-job-runs/:run_id`。
 - 请求参数：列表接口支持 `page`、`page_size`；详情接口使用正整数 `run_id`。
-- 响应格式：执行记录包含 `status`（`queued`、`running`、`success`、`failed`、`timeout`、`skipped`、`cancelled`）、`progress_current`、`progress_total`、`progress_percent`、`progress_phase`、`progress_message`、时间字段、错误信息及预留的结果引用字段。`progress_total=0` 时百分比为空，表示任务尚未提供可计算总量。
+- 响应格式：执行记录包含 `status`（`queued`、`running`、`success`、`failed`、`timeout`、`skipped`、`cancelled`）、`progress_current`、`progress_total`、`progress_percent`、`progress_phase`、`progress_message`、`output_path`、时间字段、错误信息及预留的结果引用字段。`progress_total=0` 时百分比为空，表示任务尚未提供可计算总量。`output_path` 是相对于服务根目录的产出文件路径，没有产出时为空。
 - 错误码：`40001` 参数不合法；`40101` 未登录；`40401` 任务或执行记录不存在；`50001` 查询失败。
 - 使用示例：`curl -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1/runs?page=1&page_size=10'`
+- 数据库升级：已有数据库需执行 `docs/SQL/alter_manscan_scheduled_job_runs_add_output_path.sql`；新建数据库使用更新后的 `docs/SQL/create_manscan_scheduled_job_runs.sql`。
+
+### 下载定时任务产出
+
+- 请求方法和路径：`GET /api/v1/scheduled-job-runs/:run_id/output`
+- 请求参数：路径参数 `run_id` 为正整数；执行记录必须已经写入产出路径且对应文件仍存在。
+- 响应格式：成功时直接返回产出文件内容，并通过 `Content-Disposition` 以原文件名下载；当前 GitHub CVE 同步任务的文件名为 `cves.txt`。
+- 错误码：`40001` 执行记录 ID 不合法；`40101` 未登录；`40401` 执行记录或产出文件不存在；`50001` 下载失败。
+- 使用示例：
+
+```bash
+curl -L -OJ \
+  -H 'Authorization: Bearer <access_token>' \
+  'http://127.0.0.1:8686/api/v1/scheduled-job-runs/12/output'
+```
 
 ### 任务处理器扩展约定
 
@@ -2821,6 +2836,7 @@ curl -X POST -H 'Authorization: Bearer <access_token>' -H 'Content-Type: applica
 - 默认计划：`0 0 * * *`，时区 `Asia/Shanghai`，每天零点执行。
 - `config_json`：可选 `{"ref":"main"}`，用于指定 GitHub 分支、标签或提交 SHA；为空时使用 `main`。
 - 输出：成功获取完整列表后，使用临时文件原子替换 `data/tmp/cve_data/cves.txt`，失败时保留上一次成功文件。
+- 产出：成功执行后，在本次执行记录的 `output_path` 字段写入固定路径 `data/tmp/cve_data/cves.txt`，前端可使用“产出下载”按钮调用执行记录产出下载接口。
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_cve_file_names.sql`，可重复执行，不会重复插入同一 `job_type`。
 
 以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。

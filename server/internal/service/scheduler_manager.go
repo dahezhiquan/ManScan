@@ -312,6 +312,10 @@ func (p *scheduledJobProgress) Report(ctx context.Context, current, total int64,
 	return p.runs.UpdateFields(ctx, p.runID, map[string]interface{}{"progress_current": current, "progress_total": total, "progress_phase": phase, "progress_message": message, "progress_updated_at": now})
 }
 
+func (p *scheduledJobProgress) SetOutputPath(ctx context.Context, path string) error {
+	return p.runs.UpdateFields(ctx, p.runID, map[string]interface{}{"output_path": path})
+}
+
 func validateScheduledJob(cronExpr, timezone, concurrency string, timeout int) error {
 	if _, err := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor).Parse(strings.TrimSpace(cronExpr)); err != nil {
 		return fmt.Errorf("Cron 表达式不合法: %w", err)

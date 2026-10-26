@@ -255,7 +255,7 @@ func TestSchedulerStopJobCancelsActiveRun(t *testing.T) {
 
 func TestScheduledJobStopPreservesSchedule(t *testing.T) {
 	manager, jobs := newNextRunTestManager(t, "0 0 * * *")
-	svc := NewScheduledJobService(jobs, nil, manager, nil)
+	svc := NewScheduledJobService(jobs, nil, manager, nil, t.TempDir())
 	ctx := context.Background()
 	runningCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

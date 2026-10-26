@@ -13,6 +13,7 @@ CREATE TABLE `manscan_scheduled_job_runs` (
     `finished_at` DATETIME DEFAULT NULL COMMENT '结束时间',
     `related_type` VARCHAR(32) NOT NULL DEFAULT '' COMMENT '关联业务类型，预留',
     `related_id` BIGINT UNSIGNED DEFAULT NULL COMMENT '关联业务ID，预留',
+    `output_path` VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '任务产出文件相对服务根目录路径',
     `result_ref` VARCHAR(1024) NOT NULL DEFAULT '' COMMENT '结果引用，预留',
     `result_summary` JSON DEFAULT NULL COMMENT '结果摘要，预留',
     `error_message` VARCHAR(2048) NOT NULL DEFAULT '' COMMENT '错误信息',

@@ -75,6 +75,11 @@ func (h *CVEFileNamesHandler) Execute(ctx context.Context, job entity.ScheduledJ
 	if err := writeCVEFileNames(outputPath, names, progress, ctx); err != nil {
 		return err
 	}
+	if reporter, ok := progress.(service.OutputReporter); ok {
+		if err := reporter.SetOutputPath(ctx, filepath.ToSlash(filepath.Join("data", "tmp", "cve_data", "cves.txt"))); err != nil {
+			return fmt.Errorf("保存任务产出路径失败: %w", err)
+		}
+	}
 	return reportProgress(ctx, progress, int64(len(names)), int64(len(names)), "finished", "CVE 列表已更新")
 }
 

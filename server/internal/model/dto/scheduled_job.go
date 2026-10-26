@@ -74,6 +74,7 @@ type ScheduledJobRunItem struct {
 	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 	RelatedType       string     `json:"related_type,omitempty"`
 	RelatedID         *int64     `json:"related_id,omitempty"`
+	OutputPath        string     `json:"output_path,omitempty"`
 	ResultRef         string     `json:"result_ref,omitempty"`
 	ResultSummary     string     `json:"result_summary,omitempty"`
 	ErrorMessage      string     `json:"error_message,omitempty"`
@@ -88,4 +89,9 @@ type TriggerScheduledJobResponse struct {
 type StopScheduledJobResponse struct {
 	ID                  int64 `json:"id"`
 	CancelRequestedRuns int   `json:"cancel_requested_runs"`
+}
+
+type ScheduledJobRunOutput struct {
+	Path     string
+	FileName string
 }

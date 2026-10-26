@@ -16,6 +16,11 @@ type ProgressReporter interface {
 	Report(ctx context.Context, current, total int64, phase, message string) error
 }
 
+// OutputReporter records a file produced by one execution.
+type OutputReporter interface {
+	SetOutputPath(ctx context.Context, path string) error
+}
+
 // JobHandler 是具体后台任务的扩展接口。
 type JobHandler interface {
 	Type() string

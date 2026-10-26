@@ -89,6 +89,7 @@ func NewRouter(
 		protected.POST("/scheduled-jobs/:id/trigger", scheduledJobHandler.Trigger)
 		protected.GET("/scheduled-jobs/:id/runs", scheduledJobHandler.ListRuns)
 		protected.GET("/scheduled-job-runs/:run_id", scheduledJobHandler.GetRun)
+		protected.GET("/scheduled-job-runs/:run_id/output", scheduledJobHandler.DownloadRunOutput)
 	}
 
 	protected.GET("/settings/theme", settingHandler.GetTheme)
