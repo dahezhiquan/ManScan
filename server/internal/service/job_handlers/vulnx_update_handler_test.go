@@ -35,6 +35,10 @@ func (s *vulnxRepositoryStub) Replace(_ context.Context, bundle *repository.Vuln
 	return nil
 }
 
+func (s *vulnxRepositoryStub) UpsertAVD(_ context.Context, _ *repository.VulnerabilityIntelligenceBundle) error {
+	return nil
+}
+
 type vulnxClientStub struct {
 	mu       sync.Mutex
 	ids      []string

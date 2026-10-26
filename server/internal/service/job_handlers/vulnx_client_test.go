@@ -24,10 +24,10 @@ func TestVulnxClientFetchMapsResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bundle.Record.Category != "cve" || bundle.Record.MaxHosts != 12 || bundle.Record.MinHosts != 2 || bundle.Record.VulnerabilityID != "CVE-2024-3094" || bundle.Record.H1Rank == nil || *bundle.Record.H1Rank != 7 || bundle.Record.H1Reports == nil || *bundle.Record.H1Reports != 11 {
+	if bundle.Record.Category == nil || *bundle.Record.Category != "cve" || bundle.Record.MaxHosts == nil || *bundle.Record.MaxHosts != 12 || bundle.Record.MinHosts == nil || *bundle.Record.MinHosts != 2 || bundle.Record.VulnerabilityID != "CVE-2024-3094" || bundle.Record.H1Rank == nil || *bundle.Record.H1Rank != 7 || bundle.Record.H1Reports == nil || *bundle.Record.H1Reports != 11 {
 		t.Fatalf("record mapping = %+v", bundle.Record)
 	}
-	if len(bundle.Components) != 1 || bundle.Components[0].Product != "xz" || len(bundle.Articles) != 1 || len(bundle.POCs) != 1 || len(bundle.ShodanItems) != 1 || bundle.ShodanItems[0].ProductName != "tukaani:xz" {
+	if len(bundle.Components) != 1 || bundle.Components[0].Product != "xz" || len(bundle.Articles) != 1 || len(bundle.POCs) != 1 || len(bundle.ShodanItems) != 1 || bundle.ShodanItems[0].ProductName == nil || *bundle.ShodanItems[0].ProductName != "tukaani:xz" {
 		t.Fatalf("related mapping = %+v", bundle)
 	}
 }
@@ -36,5 +36,27 @@ func TestVulnxClientRejectsInvalidCVEID(t *testing.T) {
 	client := NewVulnxClient("")
 	if _, err := client.Fetch(context.Background(), "CVE-2024/3094"); err == nil || !strings.Contains(err.Error(), "格式不合法") {
 		t.Fatalf("Fetch() error = %v", err)
+	}
+}
+
+func TestVulnxClientPreservesMissingNullableFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"cve_id":"CVE-2024-3094","citations":[{"url":"https://example.test/advisory"}],"affected_products":[{"product":"xz"}],"pocs":[{"url":"https://example.test/poc"}],"exposure":{"values":[{"id":"tukaani:xz","shodan":{"queries":[]}}]}}}`))
+	}))
+	defer server.Close()
+
+	client := NewVulnxClient("")
+	client.BaseURL = server.URL
+	bundle, err := client.Fetch(context.Background(), "CVE-2024-3094")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := bundle.Record
+	if record.AgeInDays != nil || record.Category != nil || record.CreatedAt != nil || record.UpdatedAt != nil || record.MaxHosts != nil || record.IsPOC != nil || record.POCCount != nil || record.Severity != nil {
+		t.Fatalf("missing record fields = %+v, want nil pointers", record)
+	}
+	if len(bundle.Articles) != 1 || bundle.Articles[0].AddedAt != nil || bundle.Articles[0].Source != nil || len(bundle.POCs) != 1 || bundle.POCs[0].AddedAt != nil || bundle.POCs[0].Source != nil || bundle.Components[0].DeploymentModel != nil || bundle.ShodanItems[0].MaxHosts != nil || bundle.ShodanItems[0].MinHosts != nil {
+		t.Fatalf("missing related fields = %+v, want nil pointers", bundle)
 	}
 }

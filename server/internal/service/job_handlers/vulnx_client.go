@@ -25,15 +25,15 @@ type vulnxAPIResponse struct {
 }
 
 type vulnxVulnerability struct {
-	AgeInDays           int                    `json:"age_in_days"`
+	AgeInDays           *int                   `json:"age_in_days"`
 	AffectedProducts    []vulnxAffectedProduct `json:"affected_products"`
-	Category            string                 `json:"category"`
+	Category            *string                `json:"category"`
 	Citations           []vulnxCitation        `json:"citations"`
 	CVEID               string                 `json:"cve_id"`
-	CreatedAt           time.Time              `json:"created_at"`
-	UpdatedAt           time.Time              `json:"updated_at"`
-	CVECreatedAt        time.Time              `json:"cve_created_at"`
-	CVEUpdatedAt        time.Time              `json:"cve_updated_at"`
+	CreatedAt           *time.Time             `json:"created_at"`
+	UpdatedAt           *time.Time             `json:"updated_at"`
+	CVECreatedAt        *time.Time             `json:"cve_created_at"`
+	CVEUpdatedAt        *time.Time             `json:"cve_updated_at"`
 	CVSSMetrics         *string                `json:"cvss_metrics"`
 	CVSSScore           *float64               `json:"cvss_score"`
 	CWE                 []string               `json:"cwe"`
@@ -46,24 +46,24 @@ type vulnxVulnerability struct {
 	Filename            *string                `json:"filename"`
 	H1                  *vulnxH1               `json:"h1"`
 	Impact              *string                `json:"impact"`
-	IsAuth              bool                   `json:"is_auth"`
-	IsKEV               bool                   `json:"is_kev"`
-	IsOSS               bool                   `json:"is_oss"`
-	IsPatchAvailable    bool                   `json:"is_patch_available"`
-	IsTemplate          bool                   `json:"is_template"`
-	IsPOC               bool                   `json:"is_poc"`
-	IsRemote            bool                   `json:"is_remote"`
-	IsVKEV              bool                   `json:"is_vkev"`
-	Name                string                 `json:"name"`
+	IsAuth              *bool                  `json:"is_auth"`
+	IsKEV               *bool                  `json:"is_kev"`
+	IsOSS               *bool                  `json:"is_oss"`
+	IsPatchAvailable    *bool                  `json:"is_patch_available"`
+	IsTemplate          *bool                  `json:"is_template"`
+	IsPOC               *bool                  `json:"is_poc"`
+	IsRemote            *bool                  `json:"is_remote"`
+	IsVKEV              *bool                  `json:"is_vkev"`
+	Name                *string                `json:"name"`
 	NTPS                *float64               `json:"ntps"`
-	POCCount            uint                   `json:"poc_count"`
+	POCCount            *uint                  `json:"poc_count"`
 	POCFirstSeen        *time.Time             `json:"poc_first_seen"`
 	POCs                []vulnxPOC             `json:"pocs"`
 	Product             *string                `json:"product"`
 	Remediation         *string                `json:"remediation"`
-	Severity            string                 `json:"severity"`
-	VulnStatus          string                 `json:"vuln_status"`
-	VulnerabilityType   string                 `json:"vulnerability_type"`
+	Severity            *string                `json:"severity"`
+	VulnStatus          *string                `json:"vuln_status"`
+	VulnerabilityType   *string                `json:"vulnerability_type"`
 	VulnerabilityImpact []string               `json:"vulnerability_impact"`
 	Vendor              *string                `json:"vendor"`
 }
@@ -71,7 +71,7 @@ type vulnxVulnerability struct {
 type vulnxAffectedProduct struct {
 	CPE             []string `json:"cpe"`
 	Category        *string  `json:"category"`
-	DeploymentModel string   `json:"deployment_model"`
+	DeploymentModel *string  `json:"deployment_model"`
 	Industry        *string  `json:"industry"`
 	Product         string   `json:"product"`
 	Summary         *string  `json:"summary"`
@@ -79,15 +79,15 @@ type vulnxAffectedProduct struct {
 }
 
 type vulnxCitation struct {
-	AddedAt time.Time `json:"added_at"`
-	Source  string    `json:"source"`
-	URL     string    `json:"url"`
+	AddedAt *time.Time `json:"added_at"`
+	Source  *string    `json:"source"`
+	URL     string     `json:"url"`
 }
 
 type vulnxPOC struct {
-	AddedAt time.Time `json:"added_at"`
-	Source  string    `json:"source"`
-	URL     string    `json:"url"`
+	AddedAt *time.Time `json:"added_at"`
+	Source  *string    `json:"source"`
+	URL     string     `json:"url"`
 }
 
 type vulnxH1 struct {
@@ -96,21 +96,21 @@ type vulnxH1 struct {
 }
 
 type vulnxExposure struct {
-	MaxHosts uint64              `json:"max_hosts"`
-	MinHosts uint64              `json:"min_hosts"`
+	MaxHosts *uint64             `json:"max_hosts"`
+	MinHosts *uint64             `json:"min_hosts"`
 	Values   []vulnxExposureItem `json:"values"`
 }
 
 type vulnxExposureItem struct {
 	ID       string       `json:"id"`
-	MaxHosts uint64       `json:"max_hosts"`
-	MinHosts uint64       `json:"min_hosts"`
+	MaxHosts *uint64      `json:"max_hosts"`
+	MinHosts *uint64      `json:"min_hosts"`
 	Shodan   *vulnxShodan `json:"shodan"`
 }
 
 type vulnxShodan struct {
-	MaxHosts uint64   `json:"max_hosts"`
-	MinHosts uint64   `json:"min_hosts"`
+	MaxHosts *uint64  `json:"max_hosts"`
+	MinHosts *uint64  `json:"min_hosts"`
 	Queries  []string `json:"queries"`
 }
 
@@ -190,9 +190,12 @@ func (v vulnxVulnerability) bundle(requestedID string) (*repository.Vulnerabilit
 	if id == "" {
 		id = requestedID
 	}
-	category := strings.TrimSpace(v.Category)
-	if category == "" {
-		category = strings.TrimSuffix(strings.TrimSpace(v.DocType), "_template")
+	category := v.Category
+	if category == nil || strings.TrimSpace(*category) == "" {
+		fallback := strings.TrimSuffix(strings.TrimSpace(v.DocType), "_template")
+		if fallback != "" {
+			category = &fallback
+		}
 	}
 	record := &entity.VulnerabilityIntelligenceRecord{
 		Source: "vulnx", VulnerabilityID: id, AgeInDays: v.AgeInDays, Category: category,
@@ -209,18 +212,15 @@ func (v vulnxVulnerability) bundle(requestedID string) (*repository.Vulnerabilit
 		record.H1Rank = &v.H1.Rank
 		record.H1Reports = &v.H1.Reports
 	}
-	if record.CreatedAt.IsZero() {
+	if record.CreatedAt == nil || record.CreatedAt.IsZero() {
 		record.CreatedAt = v.CVECreatedAt
 	}
-	if record.UpdatedAt.IsZero() {
+	if record.UpdatedAt == nil || record.UpdatedAt.IsZero() {
 		record.UpdatedAt = v.CVEUpdatedAt
-	}
-	if record.CreatedAt.IsZero() || record.UpdatedAt.IsZero() {
-		return nil, errors.New("VulnX 响应缺少漏洞时间字段")
 	}
 	bundle := &repository.VulnerabilityIntelligenceBundle{Record: record}
 	for _, item := range v.Citations {
-		if item.URL == "" || item.AddedAt.IsZero() {
+		if item.URL == "" {
 			continue
 		}
 		bundle.Articles = append(bundle.Articles, entity.VulnerabilityIntelligenceArticle{VulnerabilityID: id, AddedAt: item.AddedAt, Source: item.Source, URL: item.URL})
@@ -232,7 +232,7 @@ func (v vulnxVulnerability) bundle(requestedID string) (*repository.Vulnerabilit
 		bundle.Components = append(bundle.Components, entity.VulnerabilityIntelligenceComponent{VulnerabilityID: id, CPE: item.CPE, Category: item.Category, DeploymentModel: item.DeploymentModel, Industry: item.Industry, Product: item.Product, Summary: item.Summary, Vendor: item.Vendor})
 	}
 	for _, item := range v.POCs {
-		if item.URL == "" || item.AddedAt.IsZero() {
+		if item.URL == "" {
 			continue
 		}
 		bundle.POCs = append(bundle.POCs, entity.VulnerabilityIntelligencePOC{VulnerabilityID: id, AddedAt: item.AddedAt, Source: item.Source, URL: item.URL})
@@ -242,10 +242,11 @@ func (v vulnxVulnerability) bundle(requestedID string) (*repository.Vulnerabilit
 			continue
 		}
 		maxHosts, minHosts := item.Shodan.MaxHosts, item.Shodan.MinHosts
-		if maxHosts == 0 && minHosts == 0 {
+		if maxHosts == nil && minHosts == nil {
 			maxHosts, minHosts = item.MaxHosts, item.MinHosts
 		}
-		bundle.ShodanItems = append(bundle.ShodanItems, entity.VulnerabilityIntelligenceShodanExposure{VulnerabilityID: id, ProductName: item.ID, MaxHosts: maxHosts, MinHosts: minHosts, SearchQueries: item.Shodan.Queries})
+		productName := item.ID
+		bundle.ShodanItems = append(bundle.ShodanItems, entity.VulnerabilityIntelligenceShodanExposure{VulnerabilityID: id, ProductName: &productName, MaxHosts: maxHosts, MinHosts: minHosts, SearchQueries: item.Shodan.Queries})
 	}
 	return bundle, nil
 }
