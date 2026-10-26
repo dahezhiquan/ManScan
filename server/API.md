@@ -2852,7 +2852,7 @@ curl -L -OJ \
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_vulnx_vulnerability_sync.sql`，默认启用并使用环境变量 API Key；可在定时任务管理中关联 `api_key_id` 以启用按 Key 限流。脚本按 `job_type` 判断，可重复执行。
 - `config_json`：使用 `{}`；任务固定读取服务根目录下 `data/tmp/cve_data/cves.txt`，逐行去重并过滤非法 CVE 编号。
 - API Key：配置 `api_key_id` 时从第三方 API Key 服务读取并解密，按每次请求发送 `X-Api-Key`；未配置 `api_key_id` 时读取环境变量 `PDCP_API_KEY`。建议优先使用 `api_key_id`，以便配置每分钟限额。
-- 限流：配置 `api_key_id` 后，每个 CVE 请求前复用服务启动时创建的共享限流器，按该 Key 的 `rate_limit_per_minute` 放行；同一 Key 的任务和并发执行共享额度，等待支持取消和超时。使用 `PDCP_API_KEY` 环境变量时不启用服务端限流，仍受 ProjectDiscovery API 自身限流约束。
+- 并发与限流：每次最多并行处理 8 个 CVE；配置 `api_key_id` 后，每次 CVE 请求（包括重试）都复用服务启动时创建的共享限流器，按该 Key 的 `rate_limit_per_minute` 放行。同一 Key 的任务和并发执行共享额度，限流等待支持取消和超时。使用 `PDCP_API_KEY` 环境变量时没有服务端配置的限额，也不启用服务端限流，仍受 ProjectDiscovery API 自身限流约束。
 - 更新范围：每个 CVE 查询 `https://api.projectdiscovery.io/v2/vulnerability/{CVE}`，在一个数据库事务中按 CVE 替换以下五张表的完整快照：
   - `manscan_vulnerability_intelligence_records`：`data` 中漏洞画像、时间、CVSS、CWE、EPSS、暴露主机数、HackerOne、POC、产品、厂商、修复、严重性、状态、漏洞类型和影响字段。
   - `manscan_vulnerability_intelligence_components`：`affected_products[]` 的 CPE、类别、部署方式、行业、产品、摘要和厂商。

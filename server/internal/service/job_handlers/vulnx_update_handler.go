@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/repository"
@@ -17,6 +18,7 @@ import (
 
 const VulnxVulnerabilityUpdateJobType = "vulnx_vulnerability.sync"
 const vulnxRequestRetryCount = 3
+const vulnxRequestConcurrency = 8
 
 // VulnxVulnerabilityUpdateHandler 从 cves.txt 全量同步 VulnX 漏洞情报。
 type VulnxVulnerabilityUpdateHandler struct {
@@ -88,37 +90,80 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 		keyID := *job.APIKeyID
 		client.BeforeRequest = func(ctx context.Context) error { return h.rateLimiter.Wait(ctx, keyID) }
 	}
-	var firstErr error
-	for index, id := range ids {
-		var itemErr error
-		for attempt := 0; attempt <= vulnxRequestRetryCount; attempt++ {
-			if err := ctx.Err(); err != nil {
-				return err
+	type cveResult struct {
+		id  string
+		err error
+	}
+	workerCount := min(len(ids), vulnxRequestConcurrency)
+	tasks := make(chan string)
+	results := make(chan cveResult, len(ids))
+	var workers sync.WaitGroup
+	for range workerCount {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for id := range tasks {
+				var itemErr error
+				for attempt := 0; attempt <= vulnxRequestRetryCount; attempt++ {
+					if err := ctx.Err(); err != nil {
+						itemErr = err
+						break
+					}
+					bundle, fetchErr := fetch(ctx, id)
+					if fetchErr == nil {
+						fetchErr = h.repository.Replace(ctx, bundle)
+					}
+					if fetchErr == nil {
+						itemErr = nil
+						break
+					}
+					itemErr = fetchErr
+				}
+				results <- cveResult{id: id, err: itemErr}
 			}
-			bundle, fetchErr := fetch(ctx, id)
-			if fetchErr == nil {
-				fetchErr = h.repository.Replace(ctx, bundle)
+		}()
+	}
+	go func() {
+		defer close(tasks)
+		for _, id := range ids {
+			select {
+			case tasks <- id:
+			case <-ctx.Done():
+				return
 			}
-			if fetchErr == nil {
-				itemErr = nil
-				break
-			}
-			itemErr = fetchErr
 		}
-		if itemErr != nil {
-			if _, err := fmt.Fprintln(errorFile, id); err != nil {
+	}()
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+	var firstErr error
+	completed := 0
+	var progressErr error
+	for result := range results {
+		completed++
+		if result.err != nil && ctx.Err() == nil {
+			if _, err := fmt.Fprintln(errorFile, result.id); err != nil {
 				return fmt.Errorf("写入 VulnX 失败列表失败: %w", err)
 			}
 			if err := errorFile.Sync(); err != nil {
 				return fmt.Errorf("刷新 VulnX 失败列表失败: %w", err)
 			}
 			if firstErr == nil {
-				firstErr = fmt.Errorf("更新 %s 失败（已重试 %d 次）: %w", id, vulnxRequestRetryCount, itemErr)
+				firstErr = fmt.Errorf("更新 %s 失败（已重试 %d 次）: %w", result.id, vulnxRequestRetryCount, result.err)
 			}
 		}
-		if err := reportProgress(ctx, progress, int64(index+1), int64(len(ids)), "updating", fmt.Sprintf("已处理 %d/%d 个 CVE", index+1, len(ids))); err != nil {
-			return err
+		if progressErr == nil && ctx.Err() == nil {
+			if err := reportProgress(ctx, progress, int64(completed), int64(len(ids)), "updating", fmt.Sprintf("已处理 %d/%d 个 CVE", completed, len(ids))); err != nil {
+				progressErr = err
+			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if progressErr != nil {
+		return progressErr
 	}
 	if firstErr != nil {
 		return firstErr

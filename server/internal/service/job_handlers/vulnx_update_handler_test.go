@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/repository"
@@ -15,11 +20,14 @@ import (
 )
 
 type vulnxRepositoryStub struct {
+	mu      sync.Mutex
 	bundles []*repository.VulnerabilityIntelligenceBundle
 	err     error
 }
 
 func (s *vulnxRepositoryStub) Replace(_ context.Context, bundle *repository.VulnerabilityIntelligenceBundle) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.err != nil {
 		return s.err
 	}
@@ -28,11 +36,14 @@ func (s *vulnxRepositoryStub) Replace(_ context.Context, bundle *repository.Vuln
 }
 
 type vulnxClientStub struct {
+	mu       sync.Mutex
 	ids      []string
 	failures map[string]int
 }
 
 func (c *vulnxClientStub) Fetch(_ context.Context, id string) (*repository.VulnerabilityIntelligenceBundle, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.ids = append(c.ids, id)
 	if c.failures[id] > 0 {
 		c.failures[id]--
@@ -66,8 +77,10 @@ func TestVulnxUpdateHandlerReadsDeduplicatedCVEList(t *testing.T) {
 	if err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, progress); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(client.ids); got != 2 || client.ids[0] != "CVE-2024-3094" || client.ids[1] != "CVE-2021-44228" {
-		t.Fatalf("fetched IDs = %v", client.ids)
+	gotIDs := append([]string(nil), client.ids...)
+	sort.Strings(gotIDs)
+	if len(gotIDs) != 2 || gotIDs[0] != "CVE-2021-44228" || gotIDs[1] != "CVE-2024-3094" {
+		t.Fatalf("fetched IDs = %v", gotIDs)
 	}
 	if progress.current != 2 || progress.total != 2 || len(repo.bundles) != 2 {
 		t.Fatalf("progress = %d/%d, bundles = %d", progress.current, progress.total, len(repo.bundles))
@@ -111,6 +124,59 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	}
 	if string(got) != "CVE-2024-0002\n" {
 		t.Fatalf("error list = %q", got)
+	}
+}
+
+func TestVulnxUpdateHandlerProcessesCVEsConcurrently(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "data", "tmp", "cve_data")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	var input strings.Builder
+	for i := range vulnxRequestConcurrency {
+		_, _ = fmt.Fprintf(&input, "CVE-2024-%04d\n", i+1)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cves.txt"), []byte(input.String()), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	var active, maxActive atomic.Int32
+	allStarted := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, &vulnxRepositoryStub{})
+	handler.clientFn = func(string) *VulnxClient { return nil }
+	handler.fetchFn = func(_ context.Context, id string) (*repository.VulnerabilityIntelligenceBundle, error) {
+		current := active.Add(1)
+		defer active.Add(-1)
+		for observed := maxActive.Load(); current > observed; observed = maxActive.Load() {
+			if maxActive.CompareAndSwap(observed, current) {
+				break
+			}
+		}
+		if current == vulnxRequestConcurrency {
+			once.Do(func() { close(allStarted) })
+		}
+		<-release
+		return &repository.VulnerabilityIntelligenceBundle{Record: &entity.VulnerabilityIntelligenceRecord{Source: "vulnx", VulnerabilityID: id}}, nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, nil)
+	}()
+	select {
+	case <-allStarted:
+	case err := <-done:
+		t.Fatalf("Execute() returned before workers ran concurrently: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for concurrent workers")
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := maxActive.Load(); got != vulnxRequestConcurrency {
+		t.Fatalf("max concurrent requests = %d, want %d", got, vulnxRequestConcurrency)
 	}
 }
 
