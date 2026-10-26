@@ -2,6 +2,7 @@ CREATE TABLE `manscan_scheduled_jobs` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '定时任务主键',
     `name` VARCHAR(128) NOT NULL COMMENT '任务名称',
     `description` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '任务描述',
+    `output_description` VARCHAR(512) NOT NULL DEFAULT '' COMMENT '任务产出内容描述',
     `job_type` VARCHAR(64) NOT NULL COMMENT '任务类型，对应服务端 JobHandler.Type()',
     `cron_expr` VARCHAR(64) NOT NULL COMMENT 'Cron 表达式',
     `timezone` VARCHAR(64) NOT NULL DEFAULT 'Asia/Shanghai' COMMENT 'Cron 时区',

@@ -49,7 +49,7 @@ func (s *scheduledJobService) Create(ctx context.Context, request dto.CreateSche
 	if request.Enabled != nil {
 		enabled = *request.Enabled
 	}
-	item, err := buildScheduledJob(request.Name, request.Description, request.JobType, request.CronExpr, request.Timezone, enabled, request.APIKeyID, request.ConfigJSON, request.ConcurrencyPolicy, request.TimeoutSeconds, s.registry)
+	item, err := buildScheduledJob(request.Name, request.Description, request.OutputDescription, request.JobType, request.CronExpr, request.Timezone, enabled, request.APIKeyID, request.ConfigJSON, request.ConcurrencyPolicy, request.TimeoutSeconds, s.registry)
 	if err != nil {
 		return nil, err
 	}
@@ -88,14 +88,19 @@ func (s *scheduledJobService) Update(ctx context.Context, id int64, request dto.
 	if id <= 0 {
 		return nil, ErrInvalidScheduledJob
 	}
-	item, err := buildScheduledJob(request.Name, request.Description, request.JobType, request.CronExpr, request.Timezone, request.Enabled, request.APIKeyID, request.ConfigJSON, request.ConcurrencyPolicy, request.TimeoutSeconds, s.registry)
+	current, err := s.jobs.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	outputDescription := current.OutputDescription
+	if request.OutputDescription != nil {
+		outputDescription = *request.OutputDescription
+	}
+	item, err := buildScheduledJob(request.Name, request.Description, outputDescription, request.JobType, request.CronExpr, request.Timezone, request.Enabled, request.APIKeyID, request.ConfigJSON, request.ConcurrencyPolicy, request.TimeoutSeconds, s.registry)
 	if err != nil {
 		return nil, err
 	}
 	item.ID = id
-	if _, err := s.jobs.FindByID(ctx, id); err != nil {
-		return nil, err
-	}
 	if err := s.jobs.Update(ctx, item); err != nil {
 		return nil, err
 	}
@@ -206,7 +211,7 @@ func (s *scheduledJobService) GetRunOutput(ctx context.Context, id int64) (*dto.
 	return &dto.ScheduledJobRunOutput{Path: fileResolved, FileName: filepath.Base(relative)}, nil
 }
 
-func buildScheduledJob(name, description, jobType, cronExpr, timezone string, enabled bool, apiKeyID *int64, config, concurrency string, timeout int, registry JobHandlerRegistry) (*entity.ScheduledJob, error) {
+func buildScheduledJob(name, description, outputDescription, jobType, cronExpr, timezone string, enabled bool, apiKeyID *int64, config, concurrency string, timeout int, registry JobHandlerRegistry) (*entity.ScheduledJob, error) {
 	name, jobType, cronExpr, timezone, concurrency = strings.TrimSpace(name), strings.TrimSpace(jobType), strings.TrimSpace(cronExpr), strings.TrimSpace(timezone), strings.TrimSpace(concurrency)
 	if timezone == "" {
 		timezone = "Asia/Shanghai"
@@ -228,11 +233,11 @@ func buildScheduledJob(name, description, jobType, cronExpr, timezone string, en
 			return nil, err
 		}
 	}
-	return &entity.ScheduledJob{Name: name, Description: strings.TrimSpace(description), JobType: jobType, CronExpr: cronExpr, Timezone: timezone, Enabled: enabled, APIKeyID: apiKeyID, ConfigJSON: config, ConcurrencyPolicy: concurrency, TimeoutSeconds: timeout}, nil
+	return &entity.ScheduledJob{Name: name, Description: strings.TrimSpace(description), OutputDescription: strings.TrimSpace(outputDescription), JobType: jobType, CronExpr: cronExpr, Timezone: timezone, Enabled: enabled, APIKeyID: apiKeyID, ConfigJSON: config, ConcurrencyPolicy: concurrency, TimeoutSeconds: timeout}, nil
 }
 
 func toScheduledJobListItem(item entity.ScheduledJob) dto.ScheduledJobListItem {
-	return dto.ScheduledJobListItem{ID: item.ID, Name: item.Name, Description: item.Description, JobType: item.JobType, CronExpr: item.CronExpr, Timezone: item.Timezone, Enabled: item.Enabled, APIKeyID: item.APIKeyID, ConfigJSON: item.ConfigJSON, ConcurrencyPolicy: item.ConcurrencyPolicy, TimeoutSeconds: item.TimeoutSeconds, NextRunAt: item.NextRunAt, LastRunAt: item.LastRunAt, LastStatus: item.LastStatus, LastError: item.LastError, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	return dto.ScheduledJobListItem{ID: item.ID, Name: item.Name, Description: item.Description, OutputDescription: item.OutputDescription, JobType: item.JobType, CronExpr: item.CronExpr, Timezone: item.Timezone, Enabled: item.Enabled, APIKeyID: item.APIKeyID, ConfigJSON: item.ConfigJSON, ConcurrencyPolicy: item.ConcurrencyPolicy, TimeoutSeconds: item.TimeoutSeconds, NextRunAt: item.NextRunAt, LastRunAt: item.LastRunAt, LastStatus: item.LastStatus, LastError: item.LastError, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }
 func toScheduledJobRunItem(item entity.ScheduledJobRun) dto.ScheduledJobRunItem {
 	var percent *float64

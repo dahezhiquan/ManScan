@@ -83,7 +83,7 @@ func (r *scheduledJobRepository) ListEnabled(ctx context.Context) ([]entity.Sche
 
 func (r *scheduledJobRepository) Update(ctx context.Context, item *entity.ScheduledJob) error {
 	return r.db.WithContext(ctx).Model(&entity.ScheduledJob{}).Where("id = ?", item.ID).Updates(map[string]interface{}{
-		"name": item.Name, "description": item.Description, "job_type": item.JobType,
+		"name": item.Name, "description": item.Description, "output_description": item.OutputDescription, "job_type": item.JobType,
 		"cron_expr": item.CronExpr, "timezone": item.Timezone, "enabled": item.Enabled,
 		"api_key_id": item.APIKeyID, "config_json": item.ConfigJSON,
 		"concurrency_policy": item.ConcurrencyPolicy, "timeout_seconds": item.TimeoutSeconds,

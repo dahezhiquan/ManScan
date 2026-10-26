@@ -5,6 +5,7 @@ import "time"
 type CreateScheduledJobRequest struct {
 	Name              string `json:"name" binding:"required,max=128"`
 	Description       string `json:"description" binding:"max=512"`
+	OutputDescription string `json:"output_description" binding:"max=512"`
 	JobType           string `json:"job_type" binding:"required,max=64"`
 	CronExpr          string `json:"cron_expr" binding:"required,max=64"`
 	Timezone          string `json:"timezone" binding:"max=64"`
@@ -16,16 +17,17 @@ type CreateScheduledJobRequest struct {
 }
 
 type UpdateScheduledJobRequest struct {
-	Name              string `json:"name" binding:"required,max=128"`
-	Description       string `json:"description" binding:"max=512"`
-	JobType           string `json:"job_type" binding:"required,max=64"`
-	CronExpr          string `json:"cron_expr" binding:"required,max=64"`
-	Timezone          string `json:"timezone" binding:"max=64"`
-	Enabled           bool   `json:"enabled"`
-	APIKeyID          *int64 `json:"api_key_id"`
-	ConfigJSON        string `json:"config_json" binding:"required"`
-	ConcurrencyPolicy string `json:"concurrency_policy" binding:"max=16"`
-	TimeoutSeconds    int    `json:"timeout_seconds"`
+	Name              string  `json:"name" binding:"required,max=128"`
+	Description       string  `json:"description" binding:"max=512"`
+	OutputDescription *string `json:"output_description" binding:"omitempty,max=512"`
+	JobType           string  `json:"job_type" binding:"required,max=64"`
+	CronExpr          string  `json:"cron_expr" binding:"required,max=64"`
+	Timezone          string  `json:"timezone" binding:"max=64"`
+	Enabled           bool    `json:"enabled"`
+	APIKeyID          *int64  `json:"api_key_id"`
+	ConfigJSON        string  `json:"config_json" binding:"required"`
+	ConcurrencyPolicy string  `json:"concurrency_policy" binding:"max=16"`
+	TimeoutSeconds    int     `json:"timeout_seconds"`
 }
 
 type ListScheduledJobsQuery struct {
@@ -43,6 +45,7 @@ type ScheduledJobListItem struct {
 	ID                int64      `json:"id"`
 	Name              string     `json:"name"`
 	Description       string     `json:"description"`
+	OutputDescription string     `json:"output_description"`
 	JobType           string     `json:"job_type"`
 	CronExpr          string     `json:"cron_expr"`
 	Timezone          string     `json:"timezone"`

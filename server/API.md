@@ -2757,15 +2757,16 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
 
 - 请求方法和路径：`GET /api/v1/scheduled-jobs`
 - 请求参数：`page`、`page_size`（可选，默认 1、10，`page_size` 最大 100）、`keyword`（可选，按名称、描述和类型模糊查询）。
-- 响应格式：`data` 为分页对象，任务字段包括 `id`、`name`、`description`、`job_type`、`cron_expr`、`timezone`、`enabled`、`api_key_id`、`config_json`、`concurrency_policy`、`timeout_seconds`、`next_run_at`、`last_run_at`、`last_status` 和 `last_error`。
+- 响应格式：`data` 为分页对象，任务字段包括 `id`、`name`、`description`、`output_description`、`job_type`、`cron_expr`、`timezone`、`enabled`、`api_key_id`、`config_json`、`concurrency_policy`、`timeout_seconds`、`next_run_at`、`last_run_at`、`last_status` 和 `last_error`。`output_description` 是任务产出内容说明，未设置时为空字符串。
 - `next_run_at` 按任务时区计算：服务启动注册任务、修改计划或启用任务时写入，每次自动触发时刷新为下一次计划时间，不等待任务执行完成；禁用任务时清空（响应省略该字段）。手动触发不改变定时计划。此规则同样适用于任务详情和编辑响应；前端需重新查询接口获取最新值。
 - 错误码：`40101` 未登录；`40001` 分页参数不合法；`50001` 查询失败。
+- 数据库升级：已有数据库需执行 `docs/SQL/alter_manscan_scheduled_jobs_add_output_description.sql`；新建数据库使用更新后的 `docs/SQL/create_manscan_scheduled_jobs.sql`。
 - 使用示例：`curl -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs?page=1&page_size=20'`
 
 ### 新增定时任务
 
 - 请求方法和路径：`POST /api/v1/scheduled-jobs`
-- 请求参数：JSON body。必填 `name`、`job_type`、`cron_expr`、`config_json`；可选 `description`、`timezone`（默认 `Asia/Shanghai`）、`enabled`（默认 true）、`api_key_id`、`concurrency_policy`（`forbid`/`allow`，默认 `forbid`）、`timeout_seconds`（整数，0-2592000 秒，最多 30 天，默认 0，0 表示不限制单次任务执行时长）。`config_json` 必须是合法 JSON，最大 1 MiB。Cron 使用 5 段格式（分钟、小时、日、月、星期）。
+- 请求参数：JSON body。必填 `name`、`job_type`、`cron_expr`、`config_json`；可选 `description`、`output_description`（任务产出内容描述，最长 512 字符，默认空字符串）、`timezone`（默认 `Asia/Shanghai`）、`enabled`（默认 true）、`api_key_id`、`concurrency_policy`（`forbid`/`allow`，默认 `forbid`）、`timeout_seconds`（整数，0-2592000 秒，最多 30 天，默认 0，0 表示不限制单次任务执行时长）。`config_json` 必须是合法 JSON，最大 1 MiB。Cron 使用 5 段格式（分钟、小时、日、月、星期）。
 - 响应格式：HTTP 200，`data` 为新任务对象。
 - 错误码：`40001` 参数、Cron、时区、并发策略或任务配置不合法；`40101` 未登录；`40301` 非管理员；`50001` 保存或注册失败。
 - 使用示例：
@@ -2780,7 +2781,7 @@ curl -X POST -H 'Authorization: Bearer <access_token>' -H 'Content-Type: applica
 
 - 请求方法和路径：`GET /api/v1/scheduled-jobs/:id`、`PUT /api/v1/scheduled-jobs/:id`、`DELETE /api/v1/scheduled-jobs/:id`。
 - 路径参数：`id` 为正整数。
-- 编辑请求：字段与新增相同，`enabled` 必填；`timeout_seconds` 范围为 0-2592000 秒（最多 30 天），0 表示不限制单次任务执行时长；修改 Cron、时区或开关会立即重新注册或移除进程内调度。Cron 使用 5 段格式（分钟、小时、日、月、星期）。
+- 编辑请求：字段与新增相同，`enabled` 必填；`output_description` 可选，最长 512 字符；`timeout_seconds` 范围为 0-2592000 秒（最多 30 天），0 表示不限制单次任务执行时长；修改 Cron、时区或开关会立即重新注册或移除进程内调度。Cron 使用 5 段格式（分钟、小时、日、月、星期）。
 - 响应格式：查询和编辑 HTTP 200，`data` 为任务对象；删除 HTTP 200，`data` 为 `{ "id": <id> }`。
 - 错误码：`40001` 参数不合法；`40101` 未登录；`40301` 编辑/删除非管理员；`40401` 任务不存在；`50001` 数据库或调度注册失败。
 - 使用示例：`curl -X PUT -H 'Authorization: Bearer <access_token>' -H 'Content-Type: application/json' -d '{"name":"数据同步","job_type":"example.sync","cron_expr":"*/10 * * * *","config_json":"{}","enabled":false}' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1'`
@@ -2858,7 +2859,7 @@ curl -L -OJ \
   - `manscan_vulnerability_intelligence_articles`：`citations[]` 的添加时间、来源和 URL。
   - `manscan_vulnerability_intelligence_pocs`：`pocs[]` 的添加时间、来源和 URL。
   - `manscan_vulnerability_intelligence_shodan_exposures`：`exposure.values[]` 的产品 ID、暴露主机数和 Shodan 查询语句。
-- 失败策略：单个 CVE 查询、解析或写库失败后继续处理剩余 CVE；任务进度会继续更新，但只要存在失败项，最终执行状态为 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
+- 失败策略：单个 CVE 查询、解析或写库失败后最多重试 3 次（最多 4 次尝试），然后继续处理剩余 CVE；最终仍失败的 CVE 每行写入服务根目录下 `data/tmp/cve_data/vulnXerror.txt`，每次运行开始时清空旧文件。任务进度按每个 CVE 最终处理结果推进；只要存在失败项，最终执行状态为 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
 
 以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
 

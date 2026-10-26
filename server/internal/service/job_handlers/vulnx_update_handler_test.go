@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"ManScan/server/internal/model/entity"
@@ -15,19 +16,28 @@ import (
 
 type vulnxRepositoryStub struct {
 	bundles []*repository.VulnerabilityIntelligenceBundle
+	err     error
 }
 
 func (s *vulnxRepositoryStub) Replace(_ context.Context, bundle *repository.VulnerabilityIntelligenceBundle) error {
+	if s.err != nil {
+		return s.err
+	}
 	s.bundles = append(s.bundles, bundle)
 	return nil
 }
 
 type vulnxClientStub struct {
-	ids []string
+	ids      []string
+	failures map[string]int
 }
 
 func (c *vulnxClientStub) Fetch(_ context.Context, id string) (*repository.VulnerabilityIntelligenceBundle, error) {
 	c.ids = append(c.ids, id)
+	if c.failures[id] > 0 {
+		c.failures[id]--
+		return nil, errors.New("temporary VulnX error")
+	}
 	return &repository.VulnerabilityIntelligenceBundle{Record: &entity.VulnerabilityIntelligenceRecord{Source: "vulnx", VulnerabilityID: id}}, nil
 }
 
@@ -61,6 +71,46 @@ func TestVulnxUpdateHandlerReadsDeduplicatedCVEList(t *testing.T) {
 	}
 	if progress.current != 2 || progress.total != 2 || len(repo.bundles) != 2 {
 		t.Fatalf("progress = %d/%d, bundles = %d", progress.current, progress.total, len(repo.bundles))
+	}
+	if got, err := os.ReadFile(filepath.Join(path, "vulnXerror.txt")); err != nil || len(got) != 0 {
+		t.Fatalf("error list = %q, err = %v", got, err)
+	}
+}
+
+func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "data", "tmp", "cve_data")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cves.txt"), []byte("CVE-2024-0001\nCVE-2024-0002\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "vulnXerror.txt"), []byte("CVE-OLD-STALE\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	client := &vulnxClientStub{failures: map[string]int{"CVE-2024-0001": 2, "CVE-2024-0002": vulnxRequestRetryCount + 1}}
+	repo := &vulnxRepositoryStub{}
+	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, repo)
+	handler.clientFn = func(string) *VulnxClient { return nil }
+	handler.fetchFn = client.Fetch
+	progress := &vulnxProgressStub{}
+	err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, progress)
+	if err == nil || !strings.Contains(err.Error(), "CVE-2024-0002") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := len(client.ids), (2+1)+(vulnxRequestRetryCount+1); got != want {
+		t.Fatalf("fetch calls = %d, want %d", got, want)
+	}
+	if progress.current != 2 || progress.total != 2 || len(repo.bundles) != 1 {
+		t.Fatalf("progress = %d/%d, bundles = %d", progress.current, progress.total, len(repo.bundles))
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "vulnXerror.txt"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != "CVE-2024-0002\n" {
+		t.Fatalf("error list = %q", got)
 	}
 }
 

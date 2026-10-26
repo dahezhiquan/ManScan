@@ -7,6 +7,7 @@ type ScheduledJob struct {
 	ID                int64      `gorm:"column:id;primaryKey;autoIncrement"`
 	Name              string     `gorm:"column:name;type:varchar(128);not null"`
 	Description       string     `gorm:"column:description;type:varchar(512);not null;default:''"`
+	OutputDescription string     `gorm:"column:output_description;type:varchar(512);not null;default:''"`
 	JobType           string     `gorm:"column:job_type;type:varchar(64);not null"`
 	CronExpr          string     `gorm:"column:cron_expr;type:varchar(64);not null"`
 	Timezone          string     `gorm:"column:timezone;type:varchar(64);not null;default:'Asia/Shanghai'"`

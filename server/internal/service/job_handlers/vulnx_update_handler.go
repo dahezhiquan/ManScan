@@ -16,6 +16,7 @@ import (
 )
 
 const VulnxVulnerabilityUpdateJobType = "vulnx_vulnerability.sync"
+const vulnxRequestRetryCount = 3
 
 // VulnxVulnerabilityUpdateHandler 从 cves.txt 全量同步 VulnX 漏洞情报。
 type VulnxVulnerabilityUpdateHandler struct {
@@ -57,6 +58,15 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 	if err != nil {
 		return err
 	}
+	errorPath := filepath.Join(h.rootDir, "data", "tmp", "cve_data", "vulnXerror.txt")
+	if err := os.MkdirAll(filepath.Dir(errorPath), 0o750); err != nil {
+		return fmt.Errorf("创建 VulnX 失败列表目录失败: %w", err)
+	}
+	errorFile, err := os.OpenFile(errorPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
+	if err != nil {
+		return fmt.Errorf("创建 VulnX 失败列表失败: %w", err)
+	}
+	defer func() { _ = errorFile.Close() }()
 	if err := reportProgress(ctx, progress, 0, int64(len(ids)), "fetching", "正在读取 VulnX 漏洞详情"); err != nil {
 		return err
 	}
@@ -80,15 +90,31 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 	}
 	var firstErr error
 	for index, id := range ids {
-		if err := ctx.Err(); err != nil {
-			return err
+		var itemErr error
+		for attempt := 0; attempt <= vulnxRequestRetryCount; attempt++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			bundle, fetchErr := fetch(ctx, id)
+			if fetchErr == nil {
+				fetchErr = h.repository.Replace(ctx, bundle)
+			}
+			if fetchErr == nil {
+				itemErr = nil
+				break
+			}
+			itemErr = fetchErr
 		}
-		bundle, fetchErr := fetch(ctx, id)
-		if fetchErr == nil {
-			fetchErr = h.repository.Replace(ctx, bundle)
-		}
-		if fetchErr != nil && firstErr == nil {
-			firstErr = fmt.Errorf("更新 %s 失败: %w", id, fetchErr)
+		if itemErr != nil {
+			if _, err := fmt.Fprintln(errorFile, id); err != nil {
+				return fmt.Errorf("写入 VulnX 失败列表失败: %w", err)
+			}
+			if err := errorFile.Sync(); err != nil {
+				return fmt.Errorf("刷新 VulnX 失败列表失败: %w", err)
+			}
+			if firstErr == nil {
+				firstErr = fmt.Errorf("更新 %s 失败（已重试 %d 次）: %w", id, vulnxRequestRetryCount, itemErr)
+			}
 		}
 		if err := reportProgress(ctx, progress, int64(index+1), int64(len(ids)), "updating", fmt.Sprintf("已处理 %d/%d 个 CVE", index+1, len(ids))); err != nil {
 			return err
@@ -96,6 +122,9 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 	}
 	if firstErr != nil {
 		return firstErr
+	}
+	if err := errorFile.Close(); err != nil {
+		return fmt.Errorf("关闭 VulnX 失败列表失败: %w", err)
 	}
 	return reportProgress(ctx, progress, int64(len(ids)), int64(len(ids)), "finished", "VulnX 漏洞情报已更新")
 }
