@@ -93,6 +93,9 @@ func (h *CVEFileNamesHandler) githubToken(ctx context.Context, apiKeyID *int64) 
 }
 
 func writeCVEFileNames(outputPath string, names []string, progress service.ProgressReporter, ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	dir := filepath.Dir(outputPath)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return fmt.Errorf("创建 CVE 输出目录失败: %w", err)
@@ -114,6 +117,9 @@ func writeCVEFileNames(outputPath string, names []string, progress service.Progr
 	}
 	writer := bufio.NewWriter(temporary)
 	for index, name := range names {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if _, err := fmt.Fprintln(writer, name); err != nil {
 			return fmt.Errorf("写入 CVE 文件名失败: %w", err)
 		}
@@ -128,6 +134,9 @@ func writeCVEFileNames(outputPath string, names []string, progress service.Progr
 	}
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("关闭 CVE 临时文件失败: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := os.Rename(temporaryPath, outputPath); err != nil {
 		return fmt.Errorf("替换 CVE 文件失败: %w", err)

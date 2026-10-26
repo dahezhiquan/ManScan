@@ -18,6 +18,7 @@ type ScheduledJobService interface {
 	List(ctx context.Context, query dto.ListScheduledJobsQuery) (*dto.PageResult[dto.ScheduledJobListItem], error)
 	Get(ctx context.Context, id int64) (*dto.ScheduledJobListItem, error)
 	Update(ctx context.Context, id int64, request dto.UpdateScheduledJobRequest) (*dto.ScheduledJobListItem, error)
+	Stop(ctx context.Context, id int64) (int, error)
 	Delete(ctx context.Context, id int64) error
 	Trigger(ctx context.Context, id int64, triggerType string) (*dto.TriggerScheduledJobResponse, error)
 	ListRuns(ctx context.Context, id int64, query dto.ListScheduledJobRunsQuery) (*dto.PageResult[dto.ScheduledJobRunItem], error)
@@ -97,6 +98,17 @@ func (s *scheduledJobService) Update(ctx context.Context, id int64, request dto.
 		return nil, err
 	}
 	return s.Get(ctx, id)
+}
+
+// Stop 请求取消当前执行实例，不改变任务开关和后续定时调度。
+func (s *scheduledJobService) Stop(ctx context.Context, id int64) (int, error) {
+	if id <= 0 {
+		return 0, ErrInvalidScheduledJob
+	}
+	if _, err := s.jobs.FindByID(ctx, id); err != nil {
+		return 0, err
+	}
+	return s.scheduler.StopJob(ctx, id), nil
 }
 
 func (s *scheduledJobService) Delete(ctx context.Context, id int64) error {

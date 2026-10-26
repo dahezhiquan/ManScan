@@ -2785,6 +2785,17 @@ curl -X POST -H 'Authorization: Bearer <access_token>' -H 'Content-Type: applica
 - 错误码：`40001` 参数不合法；`40101` 未登录；`40301` 编辑/删除非管理员；`40401` 任务不存在；`50001` 数据库或调度注册失败。
 - 使用示例：`curl -X PUT -H 'Authorization: Bearer <access_token>' -H 'Content-Type: application/json' -d '{"name":"数据同步","job_type":"example.sync","cron_expr":"*/10 * * * *","config_json":"{}","enabled":false}' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1'`
 
+### 暂停、恢复和停止定时任务
+
+- 请求方法和路径：`POST /api/v1/scheduled-jobs/:id/pause`、`POST /api/v1/scheduled-jobs/:id/resume`、`POST /api/v1/scheduled-jobs/:id/stop`。
+- 权限：仅管理员可调用；路径参数 `id` 为正整数；请求体为空。
+- 暂停：关闭任务的后续定时调度，保留任务配置和历史执行记录；已经运行的实例继续执行。暂停期间错过的计划不会补跑。
+- 恢复：重新启用后续定时调度，并按当前时间计算新的 `next_run_at`，不会补跑暂停期间错过的计划。
+- 停止：先暂停后续调度，再向当前 queued/running 实例发送取消信号；响应只表示取消请求已发出，任务最终状态通过执行记录确认。处理器必须正确响应 `context.Context` 取消；不响应取消的外部操作无法被 Go 服务强制终止。
+- 响应格式：暂停和恢复返回任务对象；停止返回 `{ "id": <id>, "enabled": false, "cancel_requested_runs": <count> }`，HTTP 202。
+- 错误码：`40001` ID 不合法；`40101` 未登录；`40301` 非管理员；`40401` 任务不存在；`50001` 数据库或调度操作失败。
+- 使用示例：`curl -X POST -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1/pause'`、`curl -X POST -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1/resume'`、`curl -X POST -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1/stop'`
+
 ### 立即触发定时任务
 
 - 请求方法和路径：`POST /api/v1/scheduled-jobs/:id/trigger`

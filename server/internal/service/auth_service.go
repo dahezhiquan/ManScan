@@ -77,6 +77,7 @@ const (
 	authChallengeCanvasSize           = 320
 	authChallengeOrbitRadius          = 112
 	authChallengeTrackCoordinateLimit = 10000
+	authSessionTouchInterval          = 30 * time.Second
 )
 
 type LoginFailedError struct {
@@ -353,8 +354,10 @@ func (s *authService) Authenticate(ctx context.Context, token string) (*Authenti
 	if user.ID != claims.UserID || !isEnabledUser(user) {
 		return nil, ErrUnauthorized
 	}
-	if err := s.sessions.Touch(ctx, session.ID, now); err != nil {
-		return nil, err
+	if session.LastSeenAt == nil || now.Sub(*session.LastSeenAt) >= authSessionTouchInterval {
+		if err := s.sessions.Touch(ctx, session.ID, now, now.Add(-authSessionTouchInterval)); err != nil {
+			return nil, err
+		}
 	}
 
 	return &AuthenticatedUser{

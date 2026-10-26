@@ -19,6 +19,7 @@ type ScheduledJobHandler interface {
 	List(*gin.Context)
 	Get(*gin.Context)
 	Update(*gin.Context)
+	Stop(*gin.Context)
 	Delete(*gin.Context)
 	Trigger(*gin.Context)
 	ListRuns(*gin.Context)
@@ -96,6 +97,24 @@ func (h *scheduledJobHandler) Update(c *gin.Context) {
 		return
 	}
 	response.Success(c, data)
+}
+
+// Stop 请求取消当前执行实例，不改变后续定时调度。
+func (h *scheduledJobHandler) Stop(c *gin.Context) {
+	if !isAdminRequest(c) {
+		response.Fail(c, errcode.Forbidden, "仅管理员可取消定时任务执行")
+		return
+	}
+	id, ok := parseScheduledJobID(c)
+	if !ok {
+		return
+	}
+	count, err := h.service.Stop(c.Request.Context(), id)
+	if err != nil {
+		handleScheduledJobError(c, err, "停止定时任务失败")
+		return
+	}
+	response.SuccessWithStatus(c, 202, dto.StopScheduledJobResponse{ID: id, CancelRequestedRuns: count})
 }
 
 func (h *scheduledJobHandler) Delete(c *gin.Context) {

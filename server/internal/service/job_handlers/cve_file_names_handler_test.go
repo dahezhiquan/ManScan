@@ -2,6 +2,7 @@ package job_handlers
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,5 +45,35 @@ func TestCVEFileNamesHandlerValidate(t *testing.T) {
 	}
 	if err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{"}, entity.ScheduledJobRun{}, nil); err == nil {
 		t.Fatal("Execute() accepted invalid JSON")
+	}
+}
+
+type cancellingProgress struct{ cancel context.CancelFunc }
+
+func (p cancellingProgress) Report(context.Context, int64, int64, string, string) error {
+	p.cancel()
+	return nil
+}
+
+func TestWriteCVEFileNamesCancellationPreservesOutput(t *testing.T) {
+	for _, names := range [][]string{{"CVE-2024-0002"}, {"CVE-2024-0002", "CVE-2024-0003"}} {
+		output := filepath.Join(t.TempDir(), "cves.txt")
+		if err := writeCVEFileNames(output, []string{"CVE-2024-0001"}, nil, context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		err := writeCVEFileNames(output, names, cancellingProgress{cancel: cancel}, ctx)
+		cancel()
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("write error = %v, want context.Canceled", err)
+		}
+		content, err := os.ReadFile(output)
+		if err != nil || string(content) != "CVE-2024-0001\n" {
+			t.Fatalf("cancel replaced output: %q, %v", content, err)
+		}
+		entries, err := os.ReadDir(filepath.Dir(output))
+		if err != nil || len(entries) != 1 {
+			t.Fatalf("temporary file was not cleaned up: %v, %v", entries, err)
+		}
 	}
 }

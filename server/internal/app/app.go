@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"time"
 
 	"ManScan/server/config"
 	"ManScan/server/internal/api"
@@ -32,6 +33,19 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("连接数据库失败: %w", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("获取数据库连接池失败: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(50)
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetConnMaxLifetime(30 * time.Minute)
+	sqlDB.SetConnMaxIdleTime(5 * time.Minute)
+	defer func() {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			logger.Error("关闭数据库连接池失败", "error", closeErr)
+		}
+	}()
 
 	templateRepository := repository.NewTemplateRepository(cfg.TemplateDir)
 	templateService := service.NewTemplateService(templateRepository)

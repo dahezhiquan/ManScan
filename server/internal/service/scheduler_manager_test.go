@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -39,6 +40,17 @@ func (r *nextRunJobRepository) UpdateNextRunAt(_ context.Context, _ int64, next 
 	return nil
 }
 
+func (r *nextRunJobRepository) UpdateRuntime(context.Context, int64, *time.Time, *time.Time, string, string) error {
+	return nil
+}
+
+func (r *nextRunJobRepository) UpdateEnabled(_ context.Context, _ int64, enabled bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.job.Enabled = enabled
+	return nil
+}
+
 type nextRunRepository struct {
 	repository.ScheduledJobRunRepository
 }
@@ -46,6 +58,61 @@ type nextRunRepository struct {
 func (r *nextRunRepository) HasRunning(context.Context, int64) (bool, error) {
 	// 模拟触发失败，验证刷新计划不依赖业务执行结果。
 	return false, errors.New("execution unavailable")
+}
+
+type cancellableRunRepository struct {
+	repository.ScheduledJobRunRepository
+	mu   sync.Mutex
+	run  entity.ScheduledJobRun
+	done chan struct{}
+}
+
+func (r *cancellableRunRepository) Create(_ context.Context, run *entity.ScheduledJobRun) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	run.ID = 1
+	r.run = *run
+	return nil
+}
+
+func (r *cancellableRunRepository) HasRunning(context.Context, int64) (bool, error) {
+	return false, nil
+}
+
+func (r *cancellableRunRepository) UpdateFields(_ context.Context, _ int64, fields map[string]interface{}) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if value, ok := fields["status"].(string); ok {
+		r.run.Status = value
+		if value == ScheduledJobStatusCancel {
+			select {
+			case <-r.done:
+			default:
+				close(r.done)
+			}
+		}
+	}
+	return nil
+}
+
+func (r *cancellableRunRepository) snapshot() entity.ScheduledJobRun {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.run
+}
+
+type blockingScheduledJobHandler struct {
+	started chan struct{}
+}
+
+func (h *blockingScheduledJobHandler) Type() string { return "test.blocking" }
+
+func (h *blockingScheduledJobHandler) Validate(json.RawMessage) error { return nil }
+
+func (h *blockingScheduledJobHandler) Execute(ctx context.Context, _ entity.ScheduledJob, _ entity.ScheduledJobRun, _ ProgressReporter) error {
+	close(h.started)
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func newNextRunTestManager(t *testing.T, cronExpr string) (*schedulerManager, *nextRunJobRepository) {
@@ -155,5 +222,96 @@ func TestSchedulerNextRunAtManualTrigger(t *testing.T) {
 	case next := <-jobs.updates:
 		t.Fatalf("manual trigger changed next run: %v", next)
 	default:
+	}
+}
+
+func TestSchedulerStopJobCancelsActiveRun(t *testing.T) {
+	jobs := &nextRunJobRepository{job: entity.ScheduledJob{
+		ID: 1, Name: "test", JobType: "test.blocking", CronExpr: "0 0 * * *",
+		Timezone: "Asia/Shanghai", Enabled: true, ConfigJSON: "{}", ConcurrencyPolicy: "allow",
+	}}
+	runs := &cancellableRunRepository{done: make(chan struct{})}
+	handler := &blockingScheduledJobHandler{started: make(chan struct{})}
+	registry := NewJobHandlerRegistry()
+	if err := registry.Register(handler); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewSchedulerManager(jobs, runs, registry, nil).(*schedulerManager)
+	t.Cleanup(func() { manager.StopJob(context.Background(), 1) })
+	_, err := manager.Trigger(context.Background(), 1, "manual")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-handler.started:
+	case <-time.After(time.Second):
+		t.Fatal("job did not start")
+	}
+	if stopped := manager.StopJob(context.Background(), 1); stopped != 1 {
+		t.Fatalf("stopped runs = %d, want 1", stopped)
+	}
+	select {
+	case <-runs.done:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled job did not finish")
+	}
+	if run := runs.snapshot(); run.Status != ScheduledJobStatusCancel {
+		t.Fatalf("run status = %q, want %q", run.Status, ScheduledJobStatusCancel)
+	}
+}
+
+func TestScheduledJobControls(t *testing.T) {
+	manager, jobs := newNextRunTestManager(t, "0 0 * * *")
+	svc := NewScheduledJobService(jobs, nil, manager, nil)
+	ctx := context.Background()
+	runningCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	otherCtx, otherCancel := context.WithCancel(ctx)
+	defer otherCancel()
+	manager.registerRun(1, 10, cancel)
+	manager.registerRun(2, 20, otherCancel)
+
+	paused, err := svc.Pause(ctx, 1)
+	if err != nil || paused.Enabled || paused.NextRunAt != nil {
+		t.Fatalf("pause = %+v, error = %v", paused, err)
+	}
+	if runningCtx.Err() != nil {
+		t.Fatal("pause cancelled an active execution")
+	}
+	resumed, err := svc.Resume(ctx, 1)
+	if err != nil || !resumed.Enabled || resumed.NextRunAt == nil || !resumed.NextRunAt.After(time.Now()) {
+		t.Fatalf("resume = %+v, error = %v", resumed, err)
+	}
+	if resumed.CronExpr != "0 0 * * *" || resumed.ConfigJSON != "{}" {
+		t.Fatalf("resume changed task configuration: %+v", resumed)
+	}
+	count, err := svc.Stop(ctx, 1)
+	if err != nil || count != 1 || runningCtx.Err() != context.Canceled {
+		t.Fatalf("stop count = %d, error = %v, run context = %v", count, err, runningCtx.Err())
+	}
+	if otherCtx.Err() != nil {
+		t.Fatal("stop cancelled another job")
+	}
+	stopped, err := svc.Get(ctx, 1)
+	if err != nil || stopped.Enabled || stopped.NextRunAt != nil {
+		t.Fatalf("stopped job = %+v, error = %v", stopped, err)
+	}
+	if _, err := manager.Trigger(ctx, 1, "schedule"); err == nil {
+		t.Fatal("stopped job accepted automatic trigger")
+	}
+	manager.unregisterRun(1, 10)
+	if count, err := svc.Stop(ctx, 1); err != nil || count != 0 {
+		t.Fatalf("stop without active runs: count = %d, error = %v", count, err)
+	}
+	for _, id := range []int64{0, -1} {
+		if _, err := svc.Pause(ctx, id); !errors.Is(err, ErrInvalidScheduledJob) {
+			t.Fatalf("pause accepted id %d: %v", id, err)
+		}
+		if _, err := svc.Resume(ctx, id); !errors.Is(err, ErrInvalidScheduledJob) {
+			t.Fatalf("resume accepted id %d: %v", id, err)
+		}
+		if _, err := svc.Stop(ctx, id); !errors.Is(err, ErrInvalidScheduledJob) {
+			t.Fatalf("stop accepted id %d: %v", id, err)
+		}
 	}
 }

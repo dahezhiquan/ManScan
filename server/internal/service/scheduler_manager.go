@@ -33,6 +33,7 @@ type SchedulerManager interface {
 	Stop(ctx context.Context) error
 	AddOrUpdate(ctx context.Context, jobID int64) error
 	Remove(jobID int64)
+	StopJob(ctx context.Context, jobID int64) int
 	Trigger(ctx context.Context, jobID int64, triggerType string) (*entity.ScheduledJobRun, error)
 }
 
@@ -46,14 +47,18 @@ type schedulerManager struct {
 	mu      sync.Mutex
 	entries map[int64]cron.EntryID
 	started bool
+
+	runMu      sync.Mutex
+	runCancels map[int64]map[int64]context.CancelFunc
 }
 
 // NewSchedulerManager 创建调度器；具体业务由 JobHandlerRegistry 提供。
 func NewSchedulerManager(jobs repository.ScheduledJobRepository, runs repository.ScheduledJobRunRepository, registry JobHandlerRegistry, logger *logx.Logger) SchedulerManager {
 	return &schedulerManager{
 		jobs: jobs, runs: runs, registry: registry, logger: logger,
-		cron:    cron.New(cron.WithParser(cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor))),
-		entries: make(map[int64]cron.EntryID),
+		cron:       cron.New(cron.WithParser(cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor))),
+		entries:    make(map[int64]cron.EntryID),
+		runCancels: make(map[int64]map[int64]context.CancelFunc),
 	}
 }
 
@@ -119,6 +124,18 @@ func (s *schedulerManager) Remove(jobID int64) {
 	}
 }
 
+// StopJob 取消指定定时任务当前尚未完成的执行；不会改变后续调度开关。
+func (s *schedulerManager) StopJob(_ context.Context, jobID int64) int {
+	s.runMu.Lock()
+	cancels := s.runCancels[jobID]
+	count := len(cancels)
+	for _, cancel := range cancels {
+		cancel()
+	}
+	s.runMu.Unlock()
+	return count
+}
+
 func (s *schedulerManager) addJob(job entity.ScheduledJob) error {
 	if err := validateScheduledJob(job.CronExpr, job.Timezone, job.ConcurrencyPolicy, job.TimeoutSeconds); err != nil {
 		return err
@@ -177,6 +194,9 @@ func (s *schedulerManager) updateNextRunAt(ctx context.Context, jobID int64, ent
 }
 
 func (s *schedulerManager) Trigger(ctx context.Context, jobID int64, triggerType string) (*entity.ScheduledJobRun, error) {
+	// 创建执行记录与登记取消函数必须原子完成，停止请求才能覆盖刚排队的执行。
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
 	job, err := s.jobs.FindByID(ctx, jobID)
 	if err != nil {
 		return nil, err
@@ -205,22 +225,48 @@ func (s *schedulerManager) Trigger(ctx context.Context, jobID int64, triggerType
 	if err := s.runs.Create(ctx, run); err != nil {
 		return nil, err
 	}
-	go s.execute(*job, *run)
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.registerRun(jobID, run.ID, cancel)
+	go func() {
+		defer cancel()
+		s.execute(runCtx, *job, *run)
+	}()
 	return run, nil
 }
 
-func (s *schedulerManager) execute(job entity.ScheduledJob, run entity.ScheduledJobRun) {
+func (s *schedulerManager) registerRun(jobID, runID int64, cancel context.CancelFunc) {
+	if s.runCancels[jobID] == nil {
+		s.runCancels[jobID] = make(map[int64]context.CancelFunc)
+	}
+	s.runCancels[jobID][runID] = cancel
+}
+
+func (s *schedulerManager) unregisterRun(jobID, runID int64) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	if runs := s.runCancels[jobID]; runs != nil {
+		delete(runs, runID)
+		if len(runs) == 0 {
+			delete(s.runCancels, jobID)
+		}
+	}
+}
+
+func (s *schedulerManager) execute(parent context.Context, job entity.ScheduledJob, run entity.ScheduledJobRun) {
+	defer s.unregisterRun(job.ID, run.ID)
 	started := time.Now()
 	_ = s.runs.UpdateFields(context.Background(), run.ID, map[string]interface{}{"status": ScheduledJobStatusRunning, "started_at": started})
-	ctx := context.Background()
+	ctx := parent
 	if job.TimeoutSeconds > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(job.TimeoutSeconds)*time.Second)
+		ctx, cancel = context.WithTimeout(parent, time.Duration(job.TimeoutSeconds)*time.Second)
 		defer cancel()
 	}
 	progress := &scheduledJobProgress{runs: s.runs, runID: run.ID}
 	var err error
-	if s.registry == nil {
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	} else if s.registry == nil {
 		err = ErrScheduledJobHandlerNotFound
 	} else {
 		handler, handlerErr := s.registry.Get(job.JobType)
@@ -229,19 +275,28 @@ func (s *schedulerManager) execute(job entity.ScheduledJob, run entity.Scheduled
 			err = handler.Execute(ctx, job, run, progress)
 		}
 	}
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	status := ScheduledJobStatusSuccess
 	fields := map[string]interface{}{"finished_at": time.Now(), "updated_at": time.Now()}
 	if err != nil {
 		status = ScheduledJobStatusFailed
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			status = ScheduledJobStatusCancel
+		} else if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			status = ScheduledJobStatusTimeout
 		}
 		fields["error_message"] = err.Error()
 	}
 	fields["status"] = status
-	_ = s.runs.UpdateFields(context.Background(), run.ID, fields)
+	if updateErr := s.runs.UpdateFields(context.Background(), run.ID, fields); updateErr != nil && s.logger != nil {
+		s.logger.Error("update scheduled job result failed", "job_id", job.ID, "run_id", run.ID, "error", updateErr)
+	}
 	now := time.Now()
-	_ = s.jobs.UpdateRuntime(context.Background(), job.ID, nil, &now, status, errorString(err))
+	if updateErr := s.jobs.UpdateRuntime(context.Background(), job.ID, nil, &now, status, errorString(err)); updateErr != nil && s.logger != nil {
+		s.logger.Error("update scheduled job runtime failed", "job_id", job.ID, "run_id", run.ID, "error", updateErr)
+	}
 	if s.logger != nil && err != nil {
 		s.logger.Error("scheduled job execution failed", "job_id", job.ID, "run_id", run.ID, "error", err)
 	}

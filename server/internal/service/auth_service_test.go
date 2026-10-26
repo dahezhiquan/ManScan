@@ -71,6 +71,48 @@ func TestAuthServiceLoginAuthenticateAndLogout(t *testing.T) {
 	}
 }
 
+func TestAuthServiceAuthenticateDoesNotTouchSessionOnEveryRequest(t *testing.T) {
+	db := newAuthServiceTestDB(t)
+	passwordHash := bcryptHashForTest(t, "secret-password")
+	user := entity.User{
+		Username:     "admin",
+		PasswordHash: passwordHash,
+		Role:         "admin",
+		Status:       userStatusEnabled,
+	}
+	if err := db.Create(&user).Error; err != nil {
+		t.Fatalf("Create user error = %v", err)
+	}
+
+	authService := newAuthServiceForTest(db, time.Hour)
+	loginResponse, err := authService.Login(context.Background(), newValidLoginRequestForTest(t, authService, "admin", "secret-password"), "", "")
+	if err != nil {
+		t.Fatalf("Login() error = %v", err)
+	}
+	if _, err := authService.Authenticate(context.Background(), loginResponse.AccessToken); err != nil {
+		t.Fatalf("first Authenticate() error = %v", err)
+	}
+
+	var session entity.UserSession
+	if err := db.Where("user_id = ?", user.ID).First(&session).Error; err != nil {
+		t.Fatalf("Find session error = %v", err)
+	}
+	if session.LastSeenAt == nil {
+		t.Fatal("LastSeenAt is nil after first Authenticate()")
+	}
+	firstSeenAt := *session.LastSeenAt
+
+	if _, err := authService.Authenticate(context.Background(), loginResponse.AccessToken); err != nil {
+		t.Fatalf("second Authenticate() error = %v", err)
+	}
+	if err := db.Where("user_id = ?", user.ID).First(&session).Error; err != nil {
+		t.Fatalf("Find session after second Authenticate() error = %v", err)
+	}
+	if session.LastSeenAt == nil || !session.LastSeenAt.Equal(firstSeenAt) {
+		t.Fatalf("LastSeenAt changed within touch interval: got %v, want %v", session.LastSeenAt, firstSeenAt)
+	}
+}
+
 func TestAuthServiceRejectsInvalidCredentials(t *testing.T) {
 	db := newAuthServiceTestDB(t)
 	user := entity.User{

@@ -84,3 +84,8 @@ type ScheduledJobRunItem struct {
 type TriggerScheduledJobResponse struct {
 	Run *ScheduledJobRunItem `json:"run"`
 }
+
+type StopScheduledJobResponse struct {
+	ID                  int64 `json:"id"`
+	CancelRequestedRuns int   `json:"cancel_requested_runs"`
+}

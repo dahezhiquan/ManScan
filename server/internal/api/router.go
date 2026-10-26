@@ -84,6 +84,7 @@ func NewRouter(
 		protected.GET("/scheduled-jobs/:id", scheduledJobHandler.Get)
 		protected.POST("/scheduled-jobs", scheduledJobHandler.Create)
 		protected.PUT("/scheduled-jobs/:id", scheduledJobHandler.Update)
+		protected.POST("/scheduled-jobs/:id/stop", scheduledJobHandler.Stop)
 		protected.DELETE("/scheduled-jobs/:id", scheduledJobHandler.Delete)
 		protected.POST("/scheduled-jobs/:id/trigger", scheduledJobHandler.Trigger)
 		protected.GET("/scheduled-jobs/:id/runs", scheduledJobHandler.ListRuns)

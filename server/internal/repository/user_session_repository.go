@@ -13,7 +13,7 @@ type UserSessionRepository interface {
 	Create(ctx context.Context, session *entity.UserSession) error
 	FindActiveByTokenID(ctx context.Context, tokenID string, now time.Time) (*entity.UserSession, error)
 	RevokeByTokenID(ctx context.Context, tokenID string, revokedAt time.Time) (int64, error)
-	Touch(ctx context.Context, sessionID int64, seenAt time.Time) error
+	Touch(ctx context.Context, sessionID int64, seenAt, staleBefore time.Time) error
 }
 
 type userSessionRepository struct {
@@ -48,8 +48,8 @@ func (r *userSessionRepository) RevokeByTokenID(ctx context.Context, tokenID str
 	return result.RowsAffected, nil
 }
 
-func (r *userSessionRepository) Touch(ctx context.Context, sessionID int64, seenAt time.Time) error {
+func (r *userSessionRepository) Touch(ctx context.Context, sessionID int64, seenAt, staleBefore time.Time) error {
 	return r.db.WithContext(ctx).Model(&entity.UserSession{}).
-		Where("id = ?", sessionID).
+		Where("id = ? AND (last_seen_at IS NULL OR last_seen_at <= ?)", sessionID, staleBefore).
 		Update("last_seen_at", seenAt).Error
 }
