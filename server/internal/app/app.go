@@ -72,12 +72,16 @@ func Run() error {
 		return fmt.Errorf("初始化第三方 API Key 加密器失败: %w", err)
 	}
 	thirdPartyAPIKeyService := service.NewThirdPartyAPIKeyService(thirdPartyAPIKeyRepository, apiKeyBox)
+	vulnerabilityIntelligenceRepository := repository.NewVulnerabilityIntelligenceRepository(db)
 	scheduledJobRepository := repository.NewScheduledJobRepository(db)
 	scheduledJobRunRepository := repository.NewScheduledJobRunRepository(db)
 	jobHandlerRegistry := service.NewJobHandlerRegistry()
 	apiKeyRateLimiter := service.NewAPIKeyRateLimiter(thirdPartyAPIKeyService)
 	if err := jobHandlerRegistry.Register(jobhandlers.NewCVEFileNamesHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter)); err != nil {
 		return fmt.Errorf("注册 CVE 文件名定时任务处理器失败: %w", err)
+	}
+	if err := jobHandlerRegistry.Register(jobhandlers.NewVulnxVulnerabilityUpdateHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter, vulnerabilityIntelligenceRepository)); err != nil {
+		return fmt.Errorf("注册 VulnX 漏洞更新定时任务处理器失败: %w", err)
 	}
 	schedulerManager := service.NewSchedulerManager(scheduledJobRepository, scheduledJobRunRepository, jobHandlerRegistry, logger)
 	scheduledJobService := service.NewScheduledJobService(scheduledJobRepository, scheduledJobRunRepository, schedulerManager, jobHandlerRegistry, cfg.RootDir)

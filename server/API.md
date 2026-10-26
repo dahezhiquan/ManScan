@@ -2751,7 +2751,7 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
 
 ## 40. 定时任务
 
-定时任务接口用于管理通用后台任务（例如同步数据或执行脚本）。当前已内置 `cve_file_names.sync` 处理器，用于从 GitHub `CVEProject/cvelistV5` 获取 CVE 文件名并原子替换 `data/tmp/cve_data/cves.txt`；未配置 `api_key_id` 时使用 `GITHUB_TOKEN`。创建未知类型仍可保存配置，但触发后会以“定时任务类型未注册”失败；后续注册同名 `JobHandler` 后即可执行。所有接口都需要登录，新增、编辑、删除和立即触发仅管理员可操作。
+定时任务接口用于管理通用后台任务（例如同步数据或执行脚本）。当前已内置 `cve_file_names.sync` 处理器，用于从 GitHub `CVEProject/cvelistV5` 获取 CVE 文件名并原子替换 `data/tmp/cve_data/cves.txt`；`vulnx_vulnerability.sync` 处理器读取该文件并逐行查询 ProjectDiscovery VulnX API，更新五张漏洞情报表。未配置 `api_key_id` 时分别使用 `GITHUB_TOKEN` 或 `PDCP_API_KEY`。创建未知类型仍可保存配置，但触发后会以“定时任务类型未注册”失败；后续注册同名 `JobHandler` 后即可执行。所有接口都需要登录，新增、编辑、删除和立即触发仅管理员可操作。
 
 ### 查询定时任务列表
 
@@ -2843,6 +2843,22 @@ curl -L -OJ \
 - 配置变更与取消：每次请求以及等待唤醒后重新读取当前 API Key 限流值；已有等待在下一次检查时采用新值。等待计入任务的 `timeout_seconds`，支持取消和超时，等待期间取消不预占后续额度，获取列表失败时保留上一次成功文件。
 - 共享范围：限流状态保存在当前服务进程内，重启后清空；多个服务进程或实例之间不共享额度。
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_cve_file_names.sql`，可重复执行，不会重复插入同一 `job_type`。
+
+### 内置任务：全量 VulnX 漏洞更新
+
+- `job_type`：`vulnx_vulnerability.sync`
+- 默认计划建议：`0 30 * * *`，时区 `Asia/Shanghai`，每天凌晨 00:30 执行；应安排在 CVE 文件名同步（00:00）之后。
+- 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_vulnx_vulnerability_sync.sql`，默认启用并使用环境变量 API Key；可在定时任务管理中关联 `api_key_id` 以启用按 Key 限流。脚本按 `job_type` 判断，可重复执行。
+- `config_json`：使用 `{}`；任务固定读取服务根目录下 `data/tmp/cve_data/cves.txt`，逐行去重并过滤非法 CVE 编号。
+- API Key：配置 `api_key_id` 时从第三方 API Key 服务读取并解密，按每次请求发送 `X-Api-Key`；未配置 `api_key_id` 时读取环境变量 `PDCP_API_KEY`。建议优先使用 `api_key_id`，以便配置每分钟限额。
+- 限流：配置 `api_key_id` 后，每个 CVE 请求前复用服务启动时创建的共享限流器，按该 Key 的 `rate_limit_per_minute` 放行；同一 Key 的任务和并发执行共享额度，等待支持取消和超时。使用 `PDCP_API_KEY` 环境变量时不启用服务端限流，仍受 ProjectDiscovery API 自身限流约束。
+- 更新范围：每个 CVE 查询 `https://api.projectdiscovery.io/v2/vulnerability/{CVE}`，在一个数据库事务中按 CVE 替换以下五张表的完整快照：
+  - `manscan_vulnerability_intelligence_records`：`data` 中漏洞画像、时间、CVSS、CWE、EPSS、暴露主机数、HackerOne、POC、产品、厂商、修复、严重性、状态、漏洞类型和影响字段。
+  - `manscan_vulnerability_intelligence_components`：`affected_products[]` 的 CPE、类别、部署方式、行业、产品、摘要和厂商。
+  - `manscan_vulnerability_intelligence_articles`：`citations[]` 的添加时间、来源和 URL。
+  - `manscan_vulnerability_intelligence_pocs`：`pocs[]` 的添加时间、来源和 URL。
+  - `manscan_vulnerability_intelligence_shodan_exposures`：`exposure.values[]` 的产品 ID、暴露主机数和 Shodan 查询语句。
+- 失败策略：单个 CVE 查询、解析或写库失败后继续处理剩余 CVE；任务进度会继续更新，但只要存在失败项，最终执行状态为 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
 
 以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
 
