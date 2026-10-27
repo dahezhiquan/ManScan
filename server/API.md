@@ -2864,6 +2864,16 @@ curl -L -OJ \
   - `manscan_vulnerability_intelligence_shodan_exposures`：`exposure.values[]` 的产品 ID、暴露主机数和 Shodan 查询语句。
 - 失败策略：单个 CVE 查询、解析或写库失败后最多重试 3 次（最多 4 次尝试），然后继续处理剩余 CVE；最终仍失败的 CVE 每行写入服务根目录下 `data/tmp/cve_data/vulnXerror.txt`，每次运行开始时清空旧文件。任务进度按每个 CVE 最终处理结果推进；只要存在失败项，最终执行状态为 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
 
+### 内置任务：长亭无 CVE 漏洞情报同步
+
+- `job_type`：`chaitin_vulnerability.sync`
+- 默认计划建议：`0 30 * * *`，时区 `Asia/Shanghai`。
+- 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_chaitin_vulnerability_sync.sql`，按 `job_type` 判断，可重复执行。
+- 抓取流程：顺序请求 `https://stack.chaitin.com/api/v2/vuln/list/`，使用 `limit=15` 与 `offset=0,15,30...` 全量分页；只同步 `cve_id` 为空的记录，以 `ct_id` 作为漏洞编号。
+- 数据库映射：在事务中按 `source=chaitin` 与 `ct_id` 更新或新增 `manscan_vulnerability_intelligence_records`，并幂等写入 `references` 到 `manscan_vulnerability_intelligence_articles`。
+- records 写入 `category=non-cve`、标题、描述、影响、解决建议、严重性、披露时间和更新时间；`vulnerability_type`、`is_patch_available`、`cvss_metrics`、`cvss_score` 不写入。articles 的 `source` 固定为 `chaitin`，`added_at` 不写入。
+- 不写入 `manscan_vulnerability_intelligence_pocs`、`manscan_vulnerability_intelligence_components` 和 `manscan_vulnerability_intelligence_shodan_exposures`。
+
 ### 内置任务：阿里云高危无 CVE 漏洞采集
 
 - `job_type`：`aliyun_avd_vulnerability.sync`

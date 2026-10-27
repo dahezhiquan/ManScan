@@ -39,6 +39,10 @@ func (s *vulnxRepositoryStub) UpsertAVD(_ context.Context, _ *repository.Vulnera
 	return nil
 }
 
+func (s *vulnxRepositoryStub) UpsertChaitin(_ context.Context, _ *repository.VulnerabilityIntelligenceBundle) error {
+	return nil
+}
+
 type vulnxClientStub struct {
 	mu       sync.Mutex
 	ids      []string

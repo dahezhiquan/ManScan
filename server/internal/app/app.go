@@ -86,6 +86,9 @@ func Run() error {
 	if err := jobHandlerRegistry.Register(jobhandlers.NewAliyunAVDUpdateHandler(cfg.RootDir, vulnerabilityIntelligenceRepository)); err != nil {
 		return fmt.Errorf("注册阿里云 AVD 定时任务处理器失败: %w", err)
 	}
+	if err := jobHandlerRegistry.Register(jobhandlers.NewChaitinVulnerabilityUpdateHandler(vulnerabilityIntelligenceRepository)); err != nil {
+		return fmt.Errorf("注册长亭漏洞定时任务处理器失败: %w", err)
+	}
 	schedulerManager := service.NewSchedulerManager(scheduledJobRepository, scheduledJobRunRepository, jobHandlerRegistry, logger)
 	scheduledJobService := service.NewScheduledJobService(scheduledJobRepository, scheduledJobRunRepository, schedulerManager, jobHandlerRegistry, cfg.RootDir)
 	settingService := service.NewSettingService(userSettingRepository)
