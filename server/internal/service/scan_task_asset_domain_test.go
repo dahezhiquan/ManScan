@@ -578,6 +578,37 @@ func TestBuildAssetHostPortObservationsFromDomainObservationsSkipsDomainEndpoint
 	}
 }
 
+func TestSyncAliveAssetHostPortsFromDomainObservationsCreatesHostWithoutFingerprint(t *testing.T) {
+	t.Parallel()
+
+	hostRepo := &assetHostRepositoryStub{}
+	hostPortRepo := &assetHostPortRepositoryStub{}
+	svc := &scanTaskService{
+		assetHostRepository:     hostRepo,
+		assetHostPortRepository: hostPortRepo,
+	}
+
+	if err := svc.syncAliveAssetHostPortsFromDomainObservations(context.Background(), []repository.AssetDomainObservation{{
+		Domain: "172.30.111.215:8899",
+	}}, buildAssetDomainNetworkRegions([]repository.AssetDomainNetworkItem{{
+		ItemName:      "172.30.0.0/16",
+		SmallCategory: "办公网-软件园办公区",
+	}}), nil); err != nil {
+		t.Fatalf("syncAliveAssetHostPortsFromDomainObservations() error = %v", err)
+	}
+
+	if len(hostRepo.observationValues) != 1 || len(hostRepo.observationValues[0]) != 1 {
+		t.Fatalf("host syncs = %+v, want one alive host", hostRepo.observationValues)
+	}
+	host := hostRepo.observationValues[0][0]
+	if host.IPAddress != "172.30.111.215" || host.Region != "办公网-软件园办公区" || !host.IsAlive {
+		t.Fatalf("host observation = %+v, want alive host from probe-only evidence", host)
+	}
+	if len(hostPortRepo.observationValues) != 1 || len(hostPortRepo.observationValues[0]) != 1 {
+		t.Fatalf("host port syncs = %+v, want one alive port", hostPortRepo.observationValues)
+	}
+}
+
 func TestSyncAssetServiceAssetsKeepsDomainEndpointsOutOfHostAssets(t *testing.T) {
 	t.Parallel()
 

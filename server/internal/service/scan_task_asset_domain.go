@@ -487,14 +487,31 @@ func assetDomainProbeHostCounts(result assetDomainLivenessProbeResult) (int, int
 }
 
 func (s *scanTaskService) syncAliveAssetHostPortsFromDomainObservations(ctx context.Context, observations []repository.AssetDomainObservation, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) error {
-	if s.assetHostPortRepository == nil {
+	if s.assetHostPortRepository == nil && s.assetHostRepository == nil {
 		return nil
 	}
 	hostPortObservations := buildAssetHostPortObservationsFromDomainObservations(ctx, observations, networkRegions)
 	if len(hostPortObservations) == 0 {
 		return nil
 	}
-	if err := s.assetHostPortRepository.SyncObservations(ctx, hostPortObservations, time.Now()); err != nil {
+	observedAt := time.Now()
+	if s.assetHostRepository != nil {
+		if err := s.assetHostRepository.SyncObservations(ctx, buildAssetHostObservationsFromHostPortObservations(hostPortObservations, networkRegions), observedAt); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+			if s.logger != nil {
+				s.logger.Error("sync probed asset host observations failed", "host_count", len(hostPortObservations), "error", err)
+			}
+			if state != nil {
+				state.Append("warn", "asset_host_probe_sync_failed", "扫描前主机资产存活探测完成，但同步主机资产表失败")
+			}
+		}
+	}
+	if s.assetHostPortRepository == nil {
+		return nil
+	}
+	if err := s.assetHostPortRepository.SyncObservations(ctx, hostPortObservations, observedAt); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
