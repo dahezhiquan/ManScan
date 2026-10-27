@@ -1661,6 +1661,9 @@ func splitAssetDomainComponentVersion(value string) (string, string) {
 	if !ok {
 		return value, ""
 	}
+	if !assetDomainComponentVersionTokenPattern.MatchString(strings.Trim(strings.TrimSpace(appVersion), `"'`)) {
+		return value, ""
+	}
 	return strings.TrimSpace(appName), strings.TrimSpace(appVersion)
 }
 

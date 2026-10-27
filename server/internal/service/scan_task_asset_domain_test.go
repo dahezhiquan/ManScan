@@ -1178,6 +1178,41 @@ func TestAssetDomainFingerprintVersionIgnoresProductNameFallback(t *testing.T) {
 	}
 }
 
+func TestAssetDomainFingerprintVersionKeepsZooKeeperBuildVersion(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"zookeeper-detect": {
+					ID:       "zookeeper-detect",
+					Name:     "Apache ZooKeeper 服务识别（指纹识别）",
+					Tags:     []string{"detect", "discovery", "network", "tcp", "zookeeper"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+
+	observations, err := svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), map[string]interface{}{
+		"template-id":       "zookeeper-detect",
+		"matched-at":        "10.32.162.81:8181",
+		"host":              "10.32.162.81",
+		"port":              "8181",
+		"extracted-results": []interface{}{"3.4.14-4c25d480e66aadd371de8bd2fd8da255ac140bcf, built on 03/06/2019 16:18 GMT"},
+		"info": map[string]interface{}{
+			"name": "Apache ZooKeeper 服务识别（指纹识别）",
+			"tags": []interface{}{"detect", "discovery", "network", "tcp", "zookeeper"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayload() error = %v", err)
+	}
+	if len(observations) != 1 || observations[0].AppName != "zookeeper" || observations[0].AppVersion != "3.4.14-4c25d480e66aadd371de8bd2fd8da255ac140bcf" {
+		t.Fatalf("observations = %+v, want zookeeper with build version", observations)
+	}
+}
+
 func TestAssetDomainFingerprintJSONVersionFieldUsesDetectedComponent(t *testing.T) {
 	t.Parallel()
 

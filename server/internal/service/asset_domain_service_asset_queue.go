@@ -20,7 +20,10 @@ const (
 	assetDomainServiceAssetQueueFlushTimeout = time.Second
 )
 
-var assetDomainComponentVersionTokenPattern = regexp.MustCompile(`(?i)^v?\d+(?:[._-]\d+)*(?:[-+._~]?[0-9a-z]+)*$`)
+var (
+	assetDomainComponentVersionTokenPattern  = regexp.MustCompile(`(?i)^v?\d+(?:[._-]\d+)*(?:[-+._~]?[0-9a-z]+)*$`)
+	assetDomainComponentVersionPrefixPattern = regexp.MustCompile(`(?i)^(v?\d+(?:[._-]\d+)*(?:[-+._~]?[0-9a-z]+)*),\s*built on\b`)
+)
 
 type assetDomainServiceAssetResultEvent struct {
 	payload map[string]interface{}
@@ -562,6 +565,11 @@ func normalizeAssetDomainComponentVersion(value string) string {
 	}
 	if assetDomainComponentVersionTokenPattern.MatchString(value) {
 		return value
+	}
+	// Fingerprint extractors may append build metadata, for example
+	// "3.4.14-4c25d..., built on ...". Keep the version token before it.
+	if matches := assetDomainComponentVersionPrefixPattern.FindStringSubmatch(value); len(matches) == 2 {
+		return matches[1]
 	}
 	for _, separator := range []string{"/", " "} {
 		if index := strings.LastIndex(value, separator); index >= 0 && index+1 < len(value) {
