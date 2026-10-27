@@ -53,11 +53,11 @@ type AssetDomainListItem struct {
 	LastAliveAt        *time.Time `json:"last_alive_at"`
 	Region             string     `json:"region"`
 	RiskLevel          string     `json:"risk_level"`
-	HasForm            bool       `json:"has_form"`
-	HasUpload          bool       `json:"has_upload"`
-	HasAdmin           bool       `json:"has_admin"`
-	HasUCLogin         bool       `json:"has_uc_login"`
-	HasBaiduLogin      bool       `json:"has_baidu_login"`
+	HasForm            *bool      `json:"has_form"`
+	HasUpload          *bool      `json:"has_upload"`
+	HasAdmin           *bool      `json:"has_admin"`
+	HasUCLogin         *bool      `json:"has_uc_login"`
+	HasBaiduLogin      *bool      `json:"has_baidu_login"`
 	ScreenshotPath     string     `json:"screenshot_path"`
 	ManualNote         string     `json:"manual_note"`
 	HTTPStatusCode     *uint      `json:"http_status_code"`
@@ -79,11 +79,11 @@ type AssetDomainDetail struct {
 	FirstAliveAt       *time.Time                    `json:"first_alive_at"`
 	LastAliveAt        *time.Time                    `json:"last_alive_at"`
 	Region             string                        `json:"region"`
-	HasForm            bool                          `json:"has_form"`
-	HasUpload          bool                          `json:"has_upload"`
-	HasAdmin           bool                          `json:"has_admin"`
-	HasUCLogin         bool                          `json:"has_uc_login"`
-	HasBaiduLogin      bool                          `json:"has_baidu_login"`
+	HasForm            *bool                         `json:"has_form"`
+	HasUpload          *bool                         `json:"has_upload"`
+	HasAdmin           *bool                         `json:"has_admin"`
+	HasUCLogin         *bool                         `json:"has_uc_login"`
+	HasBaiduLogin      *bool                         `json:"has_baidu_login"`
 	ScreenshotPath     string                        `json:"screenshot_path"`
 	ManualNote         string                        `json:"manual_note"`
 	HTTPStatusCode     *uint                         `json:"http_status_code"`
@@ -98,7 +98,7 @@ type AssetDomainDetail struct {
 
 type AssetDomainServiceAssetItem struct {
 	AppName      string    `json:"app_name"`
-	AppVersion   string    `json:"app_version"`
+	AppVersion   *string   `json:"app_version"`
 	LastFoundAt  time.Time `json:"last_found_at"`
 	FirstFoundAt time.Time `json:"first_found_at"`
 	IsAlive      bool      `json:"is_alive"`

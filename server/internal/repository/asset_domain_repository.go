@@ -393,7 +393,7 @@ func upsertAssetDomainServiceAssets(ctx context.Context, db *gorm.DB, observatio
 			items = append(items, map[string]interface{}{
 				"domain":         observation.Domain,
 				"app_name":       observation.AppName,
-				"app_version":    observation.AppVersion,
+				"app_version":    nullableAssetDomainAppVersion(observation.AppVersion),
 				"first_found_at": observedAt,
 				"last_found_at":  observedAt,
 				"is_alive":       true,
@@ -416,6 +416,13 @@ func upsertAssetDomainServiceAssets(ctx context.Context, db *gorm.DB, observatio
 		}
 	}
 	return nil
+}
+
+func nullableAssetDomainAppVersion(version string) interface{} {
+	if version == "" {
+		return nil
+	}
+	return version
 }
 
 func updateAssetDomainServiceAssetVersions(ctx context.Context, db *gorm.DB, observations []AssetDomainServiceAssetObservation) error {

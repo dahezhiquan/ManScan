@@ -77,6 +77,9 @@ func TestAssetHostPortRepositorySyncObservationsUpsertsAlivePorts(t *testing.T) 
 	if !port.IsAlive {
 		t.Fatal("IsAlive = false, want true")
 	}
+	if port.IsHighRiskPort != nil {
+		t.Fatalf("IsHighRiskPort = %v, want NULL when risk is unknown", *port.IsHighRiskPort)
+	}
 }
 
 func TestAssetHostPortRepositoryMarkHTTPPortsInactiveUpdatesExistingHTTPOnly(t *testing.T) {

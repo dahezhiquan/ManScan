@@ -13,6 +13,8 @@ import (
 	"ManScan/server/internal/repository"
 )
 
+func serviceStringPtr(value string) *string { return &value }
+
 func TestToAssetDomainListItemIncludesRequestAndResponse(t *testing.T) {
 	request := "GET / HTTP/1.1\r\nHost: app.example.com\r\n\r\n"
 	response := "HTTP/1.1 200 OK\r\n\r\nok"
@@ -73,8 +75,8 @@ func TestToAssetDomainDetailIncludesRelatedAssetsAndTitleHistories(t *testing.T)
 			FirstAliveAt:   &earlier,
 			LastAliveAt:    &now,
 			Region:         &region,
-			HasForm:        true,
-			HasAdmin:       true,
+			HasForm:        boolPtr(true),
+			HasAdmin:       boolPtr(true),
 			HTTPStatusCode: &statusCode,
 			Request:        &request,
 			Response:       &response,
@@ -85,7 +87,7 @@ func TestToAssetDomainDetailIncludesRelatedAssetsAndTitleHistories(t *testing.T)
 		ServiceAssets: []entity.AssetDomainServiceAsset{
 			{
 				AppName:      "nginx",
-				AppVersion:   "1.24",
+				AppVersion:   serviceStringPtr("1.24"),
 				FirstFoundAt: earlier,
 				LastFoundAt:  now,
 				IsAlive:      true,
@@ -104,7 +106,7 @@ func TestToAssetDomainDetailIncludesRelatedAssetsAndTitleHistories(t *testing.T)
 	if detail.Domain != "app.example.com:443" || detail.Owner != owner || detail.Title != title || detail.Region != region {
 		t.Fatalf("detail = %+v, want copied domain metadata", detail)
 	}
-	if !detail.HasForm || !detail.HasAdmin || !detail.IsAlive {
+	if detail.HasForm == nil || !*detail.HasForm || detail.HasAdmin == nil || !*detail.HasAdmin || !detail.IsAlive {
 		t.Fatalf("detail booleans = %+v, want true values copied", detail)
 	}
 	if detail.HTTPStatusCode == nil || *detail.HTTPStatusCode != statusCode || detail.Request != request || detail.Response != response {
@@ -113,7 +115,7 @@ func TestToAssetDomainDetailIncludesRelatedAssetsAndTitleHistories(t *testing.T)
 	if detail.RiskLevel != "critical" || detail.VulnerabilityCount != 2 {
 		t.Fatalf("risk fields = level:%q count:%d, want critical/2", detail.RiskLevel, detail.VulnerabilityCount)
 	}
-	if len(detail.ServiceAssets) != 1 || detail.ServiceAssets[0].AppName != "nginx" || detail.ServiceAssets[0].AppVersion != "1.24" || !detail.ServiceAssets[0].IsAlive {
+	if len(detail.ServiceAssets) != 1 || detail.ServiceAssets[0].AppName != "nginx" || detail.ServiceAssets[0].AppVersion == nil || *detail.ServiceAssets[0].AppVersion != "1.24" || !detail.ServiceAssets[0].IsAlive {
 		t.Fatalf("service assets = %+v, want nginx detail", detail.ServiceAssets)
 	}
 	if len(detail.TitleHistories) != 1 || detail.TitleHistories[0].HistoryTitle != "Example App" || !detail.TitleHistories[0].IsAlive {

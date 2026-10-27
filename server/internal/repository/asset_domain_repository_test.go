@@ -15,6 +15,8 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+func assetDomainTestPtr[T any](value T) *T { return &value }
+
 func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 	t.Parallel()
 
@@ -131,7 +133,7 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 		{
 			Domain:       endpoint,
 			AppName:      "nginx",
-			AppVersion:   "",
+			AppVersion:   nil,
 			FirstFoundAt: now,
 			LastFoundAt:  now,
 			IsAlive:      true,
@@ -139,7 +141,7 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 		{
 			Domain:       endpoint,
 			AppName:      "apache",
-			AppVersion:   "",
+			AppVersion:   nil,
 			FirstFoundAt: now,
 			LastFoundAt:  now,
 			IsAlive:      false,
@@ -147,7 +149,7 @@ func TestAssetDomainRepositoryListFiltersAndReturnsItems(t *testing.T) {
 		{
 			Domain:       highEndpoint,
 			AppName:      "tomcat",
-			AppVersion:   "",
+			AppVersion:   nil,
 			FirstFoundAt: now,
 			LastFoundAt:  now,
 			IsAlive:      true,
@@ -346,8 +348,8 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 		FirstAliveAt:   &earlier,
 		LastAliveAt:    &now,
 		Region:         &region,
-		HasForm:        true,
-		HasUpload:      true,
+		HasForm:        assetDomainTestPtr(true),
+		HasUpload:      assetDomainTestPtr(true),
 		HTTPStatusCode: &statusCode,
 		Request:        &request,
 		Response:       &response,
@@ -437,7 +439,7 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 		{
 			Domain:       "app.example.com:443",
 			AppName:      "nginx",
-			AppVersion:   "1.24",
+			AppVersion:   assetDomainTestPtr("1.24"),
 			FirstFoundAt: earlier,
 			LastFoundAt:  now,
 			IsAlive:      true,
@@ -445,7 +447,7 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 		{
 			Domain:       "app.example.com:443",
 			AppName:      "tomcat",
-			AppVersion:   "9",
+			AppVersion:   assetDomainTestPtr("9"),
 			FirstFoundAt: earlier,
 			LastFoundAt:  earlier,
 			IsAlive:      false,
@@ -453,7 +455,7 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 		{
 			Domain:       "other.example.com:443",
 			AppName:      "redis",
-			AppVersion:   "",
+			AppVersion:   nil,
 			FirstFoundAt: earlier,
 			LastFoundAt:  now,
 			IsAlive:      true,
@@ -486,7 +488,7 @@ func TestAssetDomainRepositoryDetailReturnsRelatedAssetsAndTitleHistories(t *tes
 		t.Fatalf("Detail() error = %v", err)
 	}
 
-	if detail.Domain != "app.example.com:443" || detail.Owner == nil || *detail.Owner != owner || !detail.HasForm || !detail.HasUpload {
+	if detail.Domain != "app.example.com:443" || detail.Owner == nil || *detail.Owner != owner || detail.HasForm == nil || !*detail.HasForm || detail.HasUpload == nil || !*detail.HasUpload {
 		t.Fatalf("detail domain = %+v, want saved domain fields", detail.AssetDomain)
 	}
 	if detail.VulnerabilityCount != 2 || detail.CriticalCount != 1 || detail.HighCount != 0 || detail.MediumCount != 0 || detail.LowCount != 0 {
@@ -1007,7 +1009,7 @@ func TestAssetDomainRepositorySyncServiceAssets(t *testing.T) {
 	if err := db.Create(&entity.AssetDomainServiceAsset{
 		Domain:       "app.example.com:443",
 		AppName:      "tomcat",
-		AppVersion:   "9.0.1",
+		AppVersion:   assetDomainTestPtr("9.0.1"),
 		FirstFoundAt: oldFirstFoundAt,
 		LastFoundAt:  oldLastFoundAt,
 		IsAlive:      true,
@@ -1017,7 +1019,7 @@ func TestAssetDomainRepositorySyncServiceAssets(t *testing.T) {
 	if err := db.Create(&entity.AssetDomainServiceAsset{
 		Domain:       "app.example.com:443",
 		AppName:      "nginx",
-		AppVersion:   "1.20.0",
+		AppVersion:   assetDomainTestPtr("1.20.0"),
 		FirstFoundAt: oldFirstFoundAt,
 		LastFoundAt:  oldLastFoundAt,
 		IsAlive:      false,
@@ -1030,6 +1032,7 @@ func TestAssetDomainRepositorySyncServiceAssets(t *testing.T) {
 	if err := repo.SyncServiceAssets(context.Background(), []AssetDomainServiceAssetObservation{
 		{Domain: "app.example.com:443", AppName: "nginx", AppVersion: "1.24.0"},
 		{Domain: "api.example.com:8443", AppName: "spring", AppVersion: "6.1.0"},
+		{Domain: "api.example.com:8443", AppName: "unknown-version"},
 	}, []string{"app.example.com:443", "api.example.com:8443"}, observedAt); err != nil {
 		t.Fatalf("SyncServiceAssets() error = %v", err)
 	}
@@ -1049,16 +1052,20 @@ func TestAssetDomainRepositorySyncServiceAssets(t *testing.T) {
 	}
 
 	nginx := byKey["app.example.com:443\x00nginx"]
-	if !nginx.IsAlive || nginx.AppVersion != "1.24.0" || !nginx.FirstFoundAt.Equal(oldFirstFoundAt) || !nginx.LastFoundAt.Equal(observedAt.Add(time.Hour)) {
+	if !nginx.IsAlive || nginx.AppVersion == nil || *nginx.AppVersion != "1.24.0" || !nginx.FirstFoundAt.Equal(oldFirstFoundAt) || !nginx.LastFoundAt.Equal(observedAt.Add(time.Hour)) {
 		t.Fatalf("nginx = %+v, want alive with retained first time and retained non-empty version", nginx)
 	}
 	tomcat := byKey["app.example.com:443\x00tomcat"]
-	if tomcat.IsAlive || tomcat.AppVersion != "9.0.1" || !tomcat.LastFoundAt.Equal(oldLastFoundAt) {
+	if tomcat.IsAlive || tomcat.AppVersion == nil || *tomcat.AppVersion != "9.0.1" || !tomcat.LastFoundAt.Equal(oldLastFoundAt) {
 		t.Fatalf("tomcat = %+v, want stale component marked not alive without timestamp/version rewrite", tomcat)
 	}
 	spring := byKey["api.example.com:8443\x00spring"]
-	if !spring.IsAlive || spring.AppVersion != "6.1.0" || !spring.FirstFoundAt.Equal(observedAt) || !spring.LastFoundAt.Equal(observedAt) {
+	if !spring.IsAlive || spring.AppVersion == nil || *spring.AppVersion != "6.1.0" || !spring.FirstFoundAt.Equal(observedAt) || !spring.LastFoundAt.Equal(observedAt) {
 		t.Fatalf("spring = %+v, want inserted alive component", spring)
+	}
+	unknownVersion := byKey["api.example.com:8443\x00unknown-version"]
+	if !unknownVersion.IsAlive || unknownVersion.AppVersion != nil {
+		t.Fatalf("unknown version asset = %+v, want alive component with NULL version", unknownVersion)
 	}
 }
 

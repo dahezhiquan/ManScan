@@ -98,8 +98,8 @@ func TestDashboardRepositoryVulnerabilityCountsAndHighRiskPorts(t *testing.T) {
 		{Status: "fixed", Severity: "low"}, {Status: "false_positive", Severity: "info"}, {Status: "ignored", Severity: "unknown"},
 	})
 	createDashboardRows(t, db, &[]entity.AssetHostPort{
-		{IsAlive: true, IsHighRiskPort: true}, {IsAlive: true, IsHighRiskPort: true},
-		{IsAlive: true, IsHighRiskPort: false}, {IsAlive: false, IsHighRiskPort: true},
+		{IsAlive: true, IsHighRiskPort: assetDomainTestPtr(true)}, {IsAlive: true, IsHighRiskPort: assetDomainTestPtr(true)},
+		{IsAlive: true, IsHighRiskPort: assetDomainTestPtr(false)}, {IsAlive: false, IsHighRiskPort: assetDomainTestPtr(true)},
 	})
 	repo := NewDashboardRepository(db)
 	counts, err := repo.ListVulnerabilityCounts(context.Background())
@@ -212,7 +212,7 @@ func BenchmarkDashboardQueries(benchmark *testing.B) {
 	severities := []string{"critical", "high", "medium", "low", "info", "unknown"}
 	for index := range vulnerabilities {
 		vulnerabilities[index] = entity.Vulnerability{AssetHost: &hosts[index%1000].IPAddress, AssetEndpoint: &domains[index%1000].Domain, Status: statuses[index%6], Severity: severities[(index/6)%6]}
-		ports[index] = entity.AssetHostPort{IPAddress: hosts[index%1000].IPAddress, IsAlive: index%5 != 0, IsHighRiskPort: index%3 == 0, ServiceName: dashboardString(fmt.Sprintf("service%d", index%30))}
+		ports[index] = entity.AssetHostPort{IPAddress: hosts[index%1000].IPAddress, IsAlive: index%5 != 0, IsHighRiskPort: assetDomainTestPtr(index%3 == 0), ServiceName: dashboardString(fmt.Sprintf("service%d", index%30))}
 	}
 	for index := range fingerprints {
 		fingerprints[index] = entity.AssetDomainServiceAsset{Domain: domains[index%1000].Domain, AppName: fmt.Sprintf("app%d", index%30), IsAlive: index%5 != 0}

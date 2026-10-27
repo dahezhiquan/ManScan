@@ -72,7 +72,7 @@ type AssetHostPortDetailItem struct {
 	AppName        string     `json:"app_name"`
 	AppVersion     string     `json:"app_version"`
 	IsAlive        bool       `json:"is_alive"`
-	IsHighRiskPort bool       `json:"is_high_risk_port"`
+	IsHighRiskPort *bool      `json:"is_high_risk_port"`
 	LastAliveAt    *time.Time `json:"last_alive_at"`
 	PortCreatedAt  time.Time  `json:"port_created_at"`
 }

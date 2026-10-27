@@ -2307,6 +2307,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
 
 - 说明：
   - `request`、`response` 分别表示该域名资产最近一次探测保存的请求与响应原文；没有记录时返回空字符串。
+  - `has_form`、`has_upload`、`has_admin`、`has_uc_login`、`has_baidu_login` 为可空布尔值；数据库值为 `NULL` 时接口返回 `null`，`false` 表示已确认不存在。
   - `vulnerability_count` 表示漏洞表中 `asset_endpoint` 等于当前域名资产 `domain` 的记录数量。
   - `critical_count`、`high_count`、`medium_count`、`low_count` 表示上述关联漏洞中各严重等级的数量，按漏洞表 `severity` 字段统计。
   - `risk_level` 表示当前资产的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
@@ -2384,6 +2385,7 @@ curl "http://127.0.0.1:8686/api/v1/domain-assets?page=1&page_size=10&keyword=exa
 
 - 说明：
   - `service_assets` 来自 `manscan_asset_domain_service_assets`，按当前域名精确匹配 `domain` 字段。
+  - `service_assets[].app_version` 为可空字符串；未识别到版本时返回 `null`。
   - `title_histories` 来自 `manscan_asset_domain_title_history`，按当前域名精确匹配 `domain` 字段。
   - `vulnerability_count` 表示漏洞表中 `asset_endpoint` 等于当前域名资产 `domain` 的记录数量，但不统计 `status` 为 `fixed`、`false_positive`、`ignored` 的漏洞。
   - `risk_level` 表示过滤上述状态后的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
@@ -2574,6 +2576,7 @@ curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72
 
 - 说明：
   - `ports` 来自 `manscan_asset_host_port`，按当前主机精确匹配 `ip_address` 字段。
+  - `ports[].is_high_risk_port` 为可空布尔值；数据库值为 `NULL` 时接口返回 `null`，`false` 表示已确认非高危端口。
   - `vulnerability_count` 表示漏洞表中 `asset_host` 等于当前主机 `ip_address` 的记录数量，但不统计 `status` 为 `fixed`、`false_positive`、`ignored` 的漏洞。
   - `risk_level` 表示过滤上述状态后的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
   - 端口数组默认按 `is_alive` 倒序、`port_number` 升序和 ID 升序排序。

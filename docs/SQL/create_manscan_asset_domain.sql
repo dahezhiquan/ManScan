@@ -9,12 +9,12 @@ CREATE TABLE `manscan_asset_domain` (
 
                                         `region` VARCHAR(100) DEFAULT NULL COMMENT '区域',
 
-                                        `has_form` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存在表单：0否，1是',
-                                        `has_upload` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存在上传点：0否，1是',
-                                        `has_admin` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否存在后台：0否，1是',
+                                        `has_form` TINYINT(1) DEFAULT NULL COMMENT '是否存在表单：0否，1是',
+                                        `has_upload` TINYINT(1) DEFAULT NULL COMMENT '是否存在上传点：0否，1是',
+                                        `has_admin` TINYINT(1) DEFAULT NULL COMMENT '是否存在后台：0否，1是',
 
-                                        `has_uc_login` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否接入UC登录：0否，1是',
-                                        `has_baidu_login` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否接入百度登录：0否，1是',
+                                        `has_uc_login` TINYINT(1) DEFAULT NULL COMMENT '是否接入UC登录：0否，1是',
+                                        `has_baidu_login` TINYINT(1) DEFAULT NULL COMMENT '是否接入百度登录：0否，1是',
 
                                         `screenshot_path` VARCHAR(500) DEFAULT NULL COMMENT '网页截图路径',
                                         `manual_note` TEXT DEFAULT NULL COMMENT '人工注释',

@@ -6,7 +6,7 @@ type AssetDomainServiceAsset struct {
 	ID           int64     `gorm:"column:id;primaryKey;autoIncrement"`
 	Domain       string    `gorm:"column:domain;not null"`
 	AppName      string    `gorm:"column:app_name;not null"`
-	AppVersion   string    `gorm:"column:app_version;not null"`
+	AppVersion   *string   `gorm:"column:app_version"`
 	LastFoundAt  time.Time `gorm:"column:last_found_at;not null"`
 	FirstFoundAt time.Time `gorm:"column:first_found_at;not null"`
 	IsAlive      bool      `gorm:"column:is_alive;not null;default:false"`

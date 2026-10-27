@@ -91,7 +91,7 @@ func TestToAssetHostDetailReturnsPortsRiskAndCounts(t *testing.T) {
 				AppName:        &appName,
 				AppVersion:     &appVersion,
 				IsAlive:        true,
-				IsHighRiskPort: true,
+				IsHighRiskPort: boolPtr(true),
 				LastAliveAt:    &now,
 				PortCreatedAt:  earlier,
 			},
@@ -111,7 +111,7 @@ func TestToAssetHostDetailReturnsPortsRiskAndCounts(t *testing.T) {
 		t.Fatalf("ports = %+v, want one port", detail.Ports)
 	}
 	port := detail.Ports[0]
-	if port.PortProtocol != "tcp" || port.PortNumber != 8080 || port.ServiceName != serviceName || port.AppName != appName || port.AppVersion != appVersion || !port.IsAlive || !port.IsHighRiskPort {
+	if port.PortProtocol != "tcp" || port.PortNumber != 8080 || port.ServiceName != serviceName || port.AppName != appName || port.AppVersion != appVersion || !port.IsAlive || port.IsHighRiskPort == nil || !*port.IsHighRiskPort {
 		t.Fatalf("port = %+v, want copied port metadata", port)
 	}
 }

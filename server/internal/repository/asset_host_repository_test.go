@@ -296,7 +296,7 @@ func TestAssetHostRepositoryDetailReturnsPortsAndFilteredVulnerabilityStats(t *t
 			AppName:        &nginxName,
 			AppVersion:     &nginxVersion,
 			IsAlive:        true,
-			IsHighRiskPort: false,
+			IsHighRiskPort: assetDomainTestPtr(false),
 		},
 		{
 			IPAddress:      host,
@@ -308,7 +308,7 @@ func TestAssetHostRepositoryDetailReturnsPortsAndFilteredVulnerabilityStats(t *t
 			ServiceName:    &redisName,
 			AppName:        &redisName,
 			IsAlive:        false,
-			IsHighRiskPort: true,
+			IsHighRiskPort: assetDomainTestPtr(true),
 		},
 		{
 			IPAddress:     otherHost,
@@ -346,7 +346,7 @@ func TestAssetHostRepositoryDetailReturnsPortsAndFilteredVulnerabilityStats(t *t
 	if detail.Ports[0].PortNumber != 8080 || !detail.Ports[0].IsAlive || detail.Ports[0].ServiceName == nil || *detail.Ports[0].ServiceName != "http" {
 		t.Fatalf("first port = %+v, want alive http 8080 first", detail.Ports[0])
 	}
-	if detail.Ports[1].PortNumber != 6379 || !detail.Ports[1].IsHighRiskPort {
+	if detail.Ports[1].PortNumber != 6379 || detail.Ports[1].IsHighRiskPort == nil || !*detail.Ports[1].IsHighRiskPort {
 		t.Fatalf("second port = %+v, want high-risk redis 6379", detail.Ports[1])
 	}
 }

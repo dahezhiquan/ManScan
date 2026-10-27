@@ -14,7 +14,7 @@ type AssetHostPort struct {
 	AppName        *string    `gorm:"column:app_name"`
 	AppVersion     *string    `gorm:"column:app_version"`
 	IsAlive        bool       `gorm:"column:is_alive"`
-	IsHighRiskPort bool       `gorm:"column:is_high_risk_port"`
+	IsHighRiskPort *bool      `gorm:"column:is_high_risk_port"`
 }
 
 func (AssetHostPort) TableName() string {
