@@ -48,8 +48,10 @@ type FlowExecutor struct {
 	protoFunctions map[string]func(call goja.FunctionCall, runtime *goja.Runtime) goja.Value // reqFunctions contains functions that allow executing requests/protocols from js
 
 	// logic related variables
-	results *atomic.Bool
-	allErrs mapsutil.SyncLockMap[string, error]
+	results           *atomic.Bool
+	allErrs           mapsutil.SyncLockMap[string, error]
+	estimatedRequests int
+	scheduledRequests int
 	// these are keys whose values are meant to be flatten before executing
 	// a request ex: if dynamic extractor returns ["value"] it will be converted to "value"
 	flattenKeys []string
@@ -98,11 +100,12 @@ func NewFlowExecutor(requests []protocols.Request, ctx *scan.ScanContext, option
 			ReadOnly: atomic.Bool{},
 			Map:      make(map[string]error),
 		},
-		protoFunctions: map[string]func(call goja.FunctionCall, runtime *goja.Runtime) goja.Value{},
-		results:        results,
-		ctx:            ctx,
-		program:        program,
-		executed:       mapsutil.NewSyncLockMap[string, struct{}](),
+		protoFunctions:    map[string]func(call goja.FunctionCall, runtime *goja.Runtime) goja.Value{},
+		results:           results,
+		ctx:               ctx,
+		program:           program,
+		executed:          mapsutil.NewSyncLockMap[string, struct{}](),
+		estimatedRequests: EstimateRequests(requests, options.Flow),
 	}
 	return f, nil
 }

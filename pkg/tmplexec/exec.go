@@ -90,6 +90,10 @@ func (e *TemplateExecuter) Compile() error {
 
 // Requests returns the total number of requests the rule will perform
 func (e *TemplateExecuter) Requests() int {
+	if e.options.Flow != "" {
+		return flow.EstimateRequests(e.requests, e.options.Flow)
+	}
+
 	var count int
 	for _, request := range e.requests {
 		count += request.Requests()

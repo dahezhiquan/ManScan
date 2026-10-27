@@ -1,3 +1,16 @@
+## 2026-10-27 11:51 修复 Flow 模板请求预估低估
+
+- 变动目录：`pkg/tmplexec/`
+- 变动文件：`pkg/tmplexec/exec.go`、`pkg/tmplexec/flow/request_count.go`、`pkg/tmplexec/flow/flow_executor.go`、`pkg/tmplexec/flow/flow_internal.go`、`pkg/tmplexec/flow/request_count_test.go`
+- 具体修改内容：
+  - Flow 模板的 `Requests()` 改为解析 Flow JavaScript，按协议调用、静态数组/对象循环长度和条件分支最大路径计算请求预估；普通模板仍按原有请求基数统计。
+  - 对运行时才能确定循环长度的 Flow，在实际调度请求超过静态预估时动态增加进度总请求数，覆盖变量循环和响应驱动的重复执行。
+  - 保持离线 HTTP 请求在 Flow 中映射到 `http()` 的统计口径一致。
+  - 新增静态循环、条件分支、动态循环兜底和运行时动态扩容的回归测试。
+- 修改目的或影响：
+  - Flow 中同一请求被循环或分支重复调用时，扫描总请求数不再固定停留在单次静态基数，前端进度分母和落盘统计能随实际执行范围修正。
+  - 无法静态确定的循环不会被任意放大；执行时发现额外调用后再补齐总量，避免引入虚假的请求预估。
+
 ## 2026-10-20 16:09 修复自动指纹技术名称被空格拆分
 
 - 变动目录：`pkg/protocols/common/automaticscan/`

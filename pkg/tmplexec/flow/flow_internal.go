@@ -34,6 +34,7 @@ func (f *FlowExecutor) requestExecutor(runtime *goja.Runtime, reqMap mapsutil.Ma
 		// execution logic for http()/dns() etc
 		for index := range f.allProtocols[opts.protoName] {
 			req := f.allProtocols[opts.protoName][index]
+			f.recordScheduledRequest(req)
 			// transform input if required
 			inputItem := f.ctx.Input.Clone()
 			if f.options.InputHelper != nil && f.ctx.Input.MetaInput.Input != "" && !utils.HasOfflineHTTPResponse(f.ctx.Input.MetaInput, req.Type()) {
@@ -71,6 +72,7 @@ func (f *FlowExecutor) requestExecutor(runtime *goja.Runtime, reqMap mapsutil.Ma
 			}
 			return matcherStatus.Load()
 		}
+		f.recordScheduledRequest(req)
 		// transform input if required
 		inputItem := f.ctx.Input.Clone()
 		if f.options.InputHelper != nil && f.ctx.Input.MetaInput.Input != "" && !utils.HasOfflineHTTPResponse(f.ctx.Input.MetaInput, req.Type()) {
@@ -91,6 +93,16 @@ func (f *FlowExecutor) requestExecutor(runtime *goja.Runtime, reqMap mapsutil.Ma
 		}
 	}
 	return matcherStatus.Load()
+}
+
+func (f *FlowExecutor) recordScheduledRequest(request protocols.Request) {
+	f.scheduledRequests += request.Requests()
+	if f.scheduledRequests <= f.estimatedRequests || f.options.Progress == nil {
+		return
+	}
+	delta := f.scheduledRequests - f.estimatedRequests
+	f.options.Progress.AddToTotal(int64(delta))
+	f.estimatedRequests = f.scheduledRequests
 }
 
 func requestKey(proto string, req protocols.Request, id string) string {
