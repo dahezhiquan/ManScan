@@ -64,16 +64,22 @@ func (h *AliyunAVDUpdateHandler) Execute(ctx context.Context, job entity.Schedul
 	if maxPages == 0 {
 		maxPages = aliyunAVDMaxPages
 	}
-	if err := reportProgress(ctx, progress, 0, 0, "fetching", "正在抓取阿里云高危漏洞列表及无 CVE 详情"); err != nil {
+	if err := reportProgress(ctx, progress, 0, int64(maxPages), "fetching", "正在抓取阿里云高危漏洞列表及无 CVE 详情"); err != nil {
 		return err
 	}
 	client := h.clientFn(delay, maxPages)
+	client.progress = func(ctx context.Context, current, total int64, phase, message string) error {
+		return reportProgress(ctx, progress, current, total, phase, message)
+	}
 	collection, err := client.CollectNoCVE(ctx)
 	if err != nil {
 		return err
 	}
 	if h.repository == nil {
 		return errors.New("阿里云 AVD 漏洞情报仓储不可用")
+	}
+	if err := reportProgress(ctx, progress, 0, int64(len(collection.Vulnerabilities)), "syncing", fmt.Sprintf("正在同步 %d 条无 CVE 漏洞详情", len(collection.Vulnerabilities))); err != nil {
+		return err
 	}
 	for index := range collection.Vulnerabilities {
 		if err := ctx.Err(); err != nil {
@@ -86,9 +92,18 @@ func (h *AliyunAVDUpdateHandler) Execute(ctx context.Context, job entity.Schedul
 		if mapErr != nil {
 			collection.Errors = append(collection.Errors, fmt.Sprintf("%s database sync: %v", collection.Vulnerabilities[index].VulnerabilityID, mapErr))
 		}
+		if err := reportProgress(ctx, progress, int64(index+1), int64(len(collection.Vulnerabilities)), "syncing", fmt.Sprintf("已同步 %d/%d 条无 CVE 漏洞详情", index+1, len(collection.Vulnerabilities))); err != nil {
+			return err
+		}
 	}
 	outputPath := filepath.Join(h.rootDir, "data", "tmp", "aliyun_avd", "no_cve_vulnerabilities.json")
+	if err := reportProgress(ctx, progress, 0, 1, "writing", "正在写入阿里云无 CVE 漏洞采集结果"); err != nil {
+		return err
+	}
 	if err := writeAVDCollection(outputPath, collection); err != nil {
+		return err
+	}
+	if err := reportProgress(ctx, progress, 1, 1, "writing", "阿里云无 CVE 漏洞采集结果已写入"); err != nil {
 		return err
 	}
 	if reporter, ok := progress.(service.OutputReporter); ok {
@@ -100,7 +115,7 @@ func (h *AliyunAVDUpdateHandler) Execute(ctx context.Context, job entity.Schedul
 	if len(collection.Errors) > 0 {
 		return fmt.Errorf("%s，%d 条详情失败，首条错误：%s", message, len(collection.Errors), collection.Errors[0])
 	}
-	return reportProgress(ctx, progress, int64(len(collection.Vulnerabilities)), int64(len(collection.Vulnerabilities)), "finished", message)
+	return reportProgress(ctx, progress, 1, 1, "finished", message)
 }
 
 func avdVulnerabilityBundle(vuln *AVDVulnerability) (*repository.VulnerabilityIntelligenceBundle, error) {

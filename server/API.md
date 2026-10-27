@@ -2867,7 +2867,7 @@ curl -L -OJ \
 - 默认计划：`0 30 * * *`，时区 `Asia/Shanghai`；初始化 SQL 默认启用，可在任务管理页面调整。
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_aliyun_avd_no_cve_sync.sql`，按 `job_type` 判断，可重复执行。
 - `config_json`：可选 `{"request_delay_ms":250,"max_pages":0}`；请求间隔范围 0-60000 毫秒（0 使用 250 毫秒默认值），最大列表页数范围 0-10000（0 使用 10000 页上限）。
-- 抓取流程：顺序请求阿里云 `/high-risk/list?page=N`，解析 AVD 编号、标题、类型、披露时间及状态，只对标记无 CVE 或标题无 CVE 编号的记录请求详情页；列表结束时停止。列表与详情均限制为 HTTPS 固定主机 `avd.aliyun.com`，响应体最大 16 MiB，具备请求超时、退避重试、Cookie Jar，并执行页面 WAF 校验脚本以取得校验后的 URL。
+- 抓取流程：顺序请求阿里云 `/high-risk/list?page=N`，解析 AVD 编号、标题、类型、披露时间及状态，只对标记无 CVE 或标题无 CVE 编号的记录请求详情页；列表结束时停止。列表与详情均限制为 HTTPS 固定主机 `avd.aliyun.com`，响应体最大 16 MiB，具备请求超时、退避重试、Cookie Jar，并执行页面 WAF 校验脚本以取得校验后的 URL。进度在抓取阶段按“已处理列表页/最大列表页数”逐页推送，抓取完成后切换为详情数据库同步、产物写入和完成阶段提示。
 - 详情产物：包含 AVD/CVE 编号、标题、严重等级、利用情况、补丁情况、披露时间、描述、解决建议、参考 URL 数组、阿里云评分、评分拆分指标、CWE、受影响软件、阿里云安全产品覆盖、列表元数据、来源 URL 和抓取时间。源页面未提供的字段为空或缺省，不从描述推断填充。
 - 输出：原子写入 `data/tmp/aliyun_avd/no_cve_vulnerabilities.json`，执行记录登记产物路径，可通过定时任务产出下载接口获取。存在部分详情失败时保留成功记录和错误摘要，任务状态标记失败。
 - 数据库映射：在一个事务中按 `source=avd` 与 AVD 编号更新或新增 `manscan_vulnerability_intelligence_records`，并按漏洞编号和 URL 幂等写入参考链接到 `manscan_vulnerability_intelligence_articles`。records 写入 `category=non-cve`、标题、描述、解决建议、阿里云评分、披露时间到 `created_at`，severity 转为 `critical`/`high`/`medium`/`low`/`none`，`is_poc` 在利用情况或 EXP 成熟度为“EXP 已公开”或“POC 已公开”时为 1；`vulnerability_impact` 不写，`updated_at` 不由任务写入。articles 的 `source` 固定为 `avd`，`url` 为参考链接，`added_at` 不由任务写入。已有记录更新时保留现有 `updated_at`、`vulnerability_impact`；新增时间列由数据库默认值生成。

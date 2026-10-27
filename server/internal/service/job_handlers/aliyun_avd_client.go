@@ -111,11 +111,16 @@ type AVDCollection struct {
 	Errors              []string           `json:"errors,omitempty"`
 }
 
+// AVDProgressFunc reports progress after a list page and its candidate details
+// have been processed.
+type AVDProgressFunc func(context.Context, int64, int64, string, string) error
+
 // AVDClient 顺序访问阿里云 AVD 页面，避免并发请求放大 WAF 风险。
 type AVDClient struct {
 	httpClient   *http.Client
 	requestDelay time.Duration
 	maxPages     int
+	progress     AVDProgressFunc
 }
 
 func NewAVDClient(requestDelay time.Duration, maxPages int) *AVDClient {
@@ -160,6 +165,12 @@ func (c *AVDClient) CollectNoCVE(ctx context.Context) (*AVDCollection, error) {
 		}
 		if len(items) == 0 {
 			exhausted = true
+			if c.progress != nil {
+				message := fmt.Sprintf("已处理列表第 %d 页，未发现更多条目", page)
+				if err := c.progress(ctx, int64(page), int64(c.maxPages), "fetching", message); err != nil {
+					return result, err
+				}
+			}
 			break
 		}
 		result.ListPages = page
@@ -184,6 +195,12 @@ func (c *AVDClient) CollectNoCVE(ctx context.Context) (*AVDCollection, error) {
 				continue
 			}
 			result.Vulnerabilities = append(result.Vulnerabilities, *vuln)
+		}
+		if c.progress != nil {
+			message := fmt.Sprintf("已处理列表第 %d 页，筛出 %d 条无 CVE 候选，成功获取 %d 条详情", page, result.NoCVECandidateCount, len(result.Vulnerabilities))
+			if err := c.progress(ctx, int64(page), int64(c.maxPages), "fetching", message); err != nil {
+				return result, err
+			}
 		}
 	}
 	if !exhausted && result.ListPages == c.maxPages {

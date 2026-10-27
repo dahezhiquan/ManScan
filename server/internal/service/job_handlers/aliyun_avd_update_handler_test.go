@@ -1,12 +1,60 @@
 package job_handlers
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+type avdRoundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f avdRoundTripperFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestAVDClientReportsProcessedListPages(t *testing.T) {
+	client := NewAVDClient(0, 3)
+	client.httpClient.Transport = avdRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		body := `<table><tbody><tr><td><a href="/detail?id=AVD-2026-1">AVD-2026-1</a></td><td>Has CVE CVE-2026-10</td><td>type</td><td>2026-01-01</td><td><button title="CVE-2026-10">CVE</button></td></tr></tbody></table>`
+		if request.URL.Query().Get("page") == "2" {
+			body = `<html><body>阿里云漏洞库<table><tbody></tbody></table></body></html>`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})
+	var updates []struct {
+		current int64
+		total   int64
+		message string
+	}
+	client.progress = func(_ context.Context, current, total int64, _, message string) error {
+		updates = append(updates, struct {
+			current int64
+			total   int64
+			message string
+		}{current: current, total: total, message: message})
+		return nil
+	}
+
+	if _, err := client.CollectNoCVE(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("progress update count = %d, want 2", len(updates))
+	}
+	for index, wantCurrent := range []int64{1, 2} {
+		if updates[index].current != wantCurrent || updates[index].total != 3 {
+			t.Errorf("progress[%d] = %d/%d, want %d/3", index, updates[index].current, updates[index].total, wantCurrent)
+		}
+	}
+	if !strings.Contains(updates[1].message, "未发现更多条目") {
+		t.Errorf("terminal-page message = %q", updates[1].message)
+	}
+}
 
 func TestParseAVDListFiltersNoCVE(t *testing.T) {
 	page := []byte(`<table><tbody>
