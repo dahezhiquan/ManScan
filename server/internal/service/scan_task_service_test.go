@@ -665,7 +665,7 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	if got.FirstFoundAt != foundAt || got.LastFoundAt != foundAt {
 		t.Fatalf("found time = %s/%s, want %s", got.FirstFoundAt, got.LastFoundAt, foundAt)
 	}
-	wantFingerprint := buildVulnerabilityFingerprint("CVE-2026-0001", "192.0.2.10", 8443, "http", vulnerabilityKeyPath(map[string]interface{}{
+	wantFingerprint := buildVulnerabilityFingerprint("CVE-2026-0001", "app.example.com:8443", "http", vulnerabilityKeyPath(map[string]interface{}{
 		"path":              "/login",
 		"matcher-name":      "cross-origin-embedder-policy",
 		"extracted-results": []interface{}{"192.168.1.10", "10.0.0.12"},
@@ -742,6 +742,27 @@ func TestResultHandlerUpsertsVulnerabilityWithTemplateDetail(t *testing.T) {
 	}
 	if _, ok := detail["template-path"]; ok {
 		t.Fatal("Detail unexpectedly contains template-path")
+	}
+}
+
+func TestBuildVulnerabilityFingerprintSeparatesAssetEndpoints(t *testing.T) {
+	t.Parallel()
+
+	keyPath := "/service/rest/swagger.json"
+	composerFingerprint := buildVulnerabilityFingerprint(
+		"nexus-repository-swagger-unauth",
+		"composer.duxiaoman-int.com:443",
+		"http",
+		keyPath,
+	)
+	pipFingerprint := buildVulnerabilityFingerprint(
+		"nexus-repository-swagger-unauth",
+		"pip.duxiaoman-int.com:443",
+		"http",
+		keyPath,
+	)
+	if composerFingerprint == pipFingerprint {
+		t.Fatalf("different asset endpoints produced the same fingerprint: %q", composerFingerprint)
 	}
 }
 
