@@ -509,8 +509,9 @@ const removeTargetsChunkSize = 5000
 // delItem removes all hostMap entries matching any of the given targets in a single scan.
 func (i *ListInputProvider) delItem(targets ...*contextargs.MetaInput) {
 	type parsedTarget struct {
-		host  string
-		regex *regexp.Regexp
+		hostname string
+		port     string
+		regex    *regexp.Regexp
 	}
 
 	var parsed []parsedTarget
@@ -519,8 +520,11 @@ func (i *ListInputProvider) delItem(targets ...*contextargs.MetaInput) {
 		if err != nil {
 			continue
 		}
-		re, _ := regexp.Compile(mi.Input)
-		parsed = append(parsed, parsedTarget{host: targetUrl.Host, regex: re})
+		entry := parsedTarget{hostname: targetUrl.Hostname(), port: targetUrl.Port()}
+		if net.ParseIP(entry.hostname) == nil && !strings.Contains(mi.Input, "://") && strings.ContainsAny(mi.Input, `*+?[](){}|^$\`) {
+			entry.regex, _ = regexp.Compile(mi.Input)
+		}
+		parsed = append(parsed, entry)
 	}
 	if len(parsed) == 0 {
 		return
@@ -541,7 +545,11 @@ func (i *ListInputProvider) delItem(targets ...*contextargs.MetaInput) {
 			return nil
 		}
 		for _, pt := range parsed {
-			if tmpUrl.Host == pt.host || (pt.regex != nil && pt.regex.MatchString(tmpUrl.Host)) {
+			matchingHost := strings.EqualFold(tmpUrl.Hostname(), pt.hostname)
+			if ip := net.ParseIP(pt.hostname); ip != nil {
+				matchingHost = ip.Equal(net.ParseIP(tmpUrl.Hostname()))
+			}
+			if (matchingHost && (pt.port == "" || pt.port == tmpUrl.Port())) || (pt.regex != nil && pt.regex.MatchString(tmpUrl.Host)) {
 				keysToDelete = append(keysToDelete, tmpKey)
 				break
 			}

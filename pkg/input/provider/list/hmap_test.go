@@ -52,6 +52,71 @@ func Test_expandCIDR(t *testing.T) {
 	}
 }
 
+func TestExcludeTargetsMatchesHostsPrecisely(t *testing.T) {
+	tests := []struct {
+		name      string
+		exclude   string
+		targets   []string
+		remaining []string
+	}{
+		{"ipv4 without port", "10.107.70.20", []string{"http://10.107.70.20:8188", "http://10.107.70.201:8188", "http://10.107.70.20:9000"}, []string{"http://10.107.70.201:8188"}},
+		{"ipv4 with port", "10.107.70.20:8188", []string{"http://10.107.70.20:8188", "http://10.107.70.20:9000", "http://10.107.70.201:8188"}, []string{"http://10.107.70.20:9000", "http://10.107.70.201:8188"}},
+		{"domain without port", "example.com", []string{"https://EXAMPLE.com:443", "http://example.com:8080", "http://example.com.evil", "http://exampleXcom"}, []string{"http://example.com.evil", "http://exampleXcom"}},
+		{"domain with port", "example.com:443", []string{"https://example.com:443", "http://example.com:8080", "http://example.com.evil:443"}, []string{"http://example.com:8080", "http://example.com.evil:443"}},
+		{"url with path", "https://example.com:443/path", []string{"https://example.com:443/other", "http://example.com:8080"}, []string{"http://example.com:8080"}},
+		{"url with query", "https://example.com:443/path?x=1", []string{"https://example.com:443/other", "http://example.com:8080", "http://example.com.evil:443"}, []string{"http://example.com:8080", "http://example.com.evil:443"}},
+		{"ipv6", "[2001:db8::1]", []string{"http://[2001:0db8::1]:8080", "http://[2001:db8::10]:8080"}, []string{"http://[2001:db8::10]:8080"}},
+		{"cidr", "10.107.70.0/24", []string{"http://10.107.70.201:8188", "http://10.107.71.201:8188"}, []string{"http://10.107.71.201:8188"}},
+		{"explicit regex", `^api[0-9]+\.example\.com`, []string{"http://api1.example.com:80", "http://api.example.com:80"}, []string{"http://api.example.com:80"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hm, err := hybrid.New(hybrid.DefaultDiskOptions)
+			require.NoError(t, err)
+			input := &ListInputProvider{hostMap: hm, excludedHosts: make(map[string]struct{}), ipOptions: &ipOptions{IPV4: true}}
+			t.Cleanup(input.Close)
+			for _, target := range tt.targets {
+				meta := contextargs.NewMetaInput()
+				meta.Input = target
+				input.setItem(meta)
+			}
+			if strings.Contains(tt.exclude, "/") && !strings.Contains(tt.exclude, "://") {
+				input.removeTargets([]string{tt.exclude})
+			} else {
+				input.Del("", tt.exclude)
+			}
+			var remaining []string
+			input.hostMap.Scan(func(k, _ []byte) error {
+				var meta contextargs.MetaInput
+				if err := meta.Unmarshal(string(k)); err != nil {
+					return err
+				}
+				remaining = append(remaining, meta.Input)
+				return nil
+			})
+			require.ElementsMatch(t, tt.remaining, remaining)
+			require.Equal(t, int64(len(tt.targets)-len(tt.remaining)), input.excludedCount)
+		})
+	}
+}
+
+func TestExcludeTargetsDuringInitialization(t *testing.T) {
+	options := types.DefaultOptions()
+	options.IPVersion = []string{"4"}
+	options.Targets = []string{"http://10.107.70.201:8188", "http://10.107.70.20:8188", "https://example.com.evil", "https://example.com"}
+	options.ExcludeTargets = []string{"10.107.70.20", "example.com"}
+	input, err := New(&Options{Options: options})
+	require.NoError(t, err)
+	t.Cleanup(input.Close)
+	var remaining []string
+	input.Iterate(func(meta *contextargs.MetaInput) bool {
+		remaining = append(remaining, meta.Input)
+		return true
+	})
+	require.ElementsMatch(t, []string{"http://10.107.70.201:8188", "https://example.com.evil"}, remaining)
+	require.Equal(t, int64(2), input.excludedCount)
+}
+
 type mockDnsHandler struct{}
 
 func (m *mockDnsHandler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
