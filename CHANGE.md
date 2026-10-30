@@ -1,3 +1,10 @@
+## 2026-10-30 23:21 移除漏洞结果自动脱敏
+
+- 变动目录：`pkg/output/`
+- 变动文件：`pkg/output/output.go`
+- 具体修改内容：移除 `StandardWriter` 写入结果前对请求、响应、curl 命令和匹配内容执行的默认及自定义字段脱敏逻辑，包括脱敏正则和缓存字段；保留既有 `-redact` 参数定义以兼容启动参数，但该参数不再修改输出内容。
+- 修改目的或影响：漏洞结果中的 HTTP 请求和响应会按原始内容写入，避免脱敏正则处理 JSON 编码响应时破坏 `response` 字段结构，确保 `manscan_vulnerabilities.detail` 能保持合法且完整的请求/响应格式。该变更会使输出中可能包含 Cookie、Authorization 或 API Key 等敏感信息，属于用户明确要求保留的风险。
+
 ## 2026-10-30 18:45 修复禁扫目标误匹配
 
 - 变动目录：`pkg/input/provider/list/`

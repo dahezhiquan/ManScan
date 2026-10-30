@@ -85,13 +85,6 @@ type StandardWriter struct {
 	omitTemplate          bool
 	DisableStdout         bool
 	AddNewLinesOutputFile bool // by default this is only done for stdout
-	KeysToRedact          []string
-
-	// redactPatterns caches the compiled credential-redaction regexes so they
-	// are not recompiled on every Write call.
-	redactPatternsOnce sync.Once
-	redactPatterns     []*regexp.Regexp
-
 	// JSONLogRequestHook is a hook that can be used to log request/response
 	// when using custom server code with output
 	JSONLogRequestHook func(*JSONLogRequest)
@@ -297,7 +290,6 @@ func NewStandardWriter(options *types.Options) (*StandardWriter, error) {
 		storeResponse:     options.StoreResponse,
 		storeResponseDir:  options.StoreResponseDir,
 		omitTemplate:      options.OmitTemplate,
-		KeysToRedact:      options.Redact,
 	}
 
 	if v := os.Getenv("DISABLE_STDOUT"); v == "true" || v == "1" {
@@ -353,15 +345,6 @@ func (w *StandardWriter) Write(event *ResultEvent) error {
 		event.Template, event.TemplateURL = utils.TemplatePathURL(types.ToString(event.TemplatePath), types.ToString(event.TemplateID), event.TemplateVerifier)
 	}
 
-	// redact the default credential-bearing keys in addition to any
-	// user-supplied -redact keys. patterns are compiled once and cached to
-	// avoid recompiling regexes on every event in the write hot path.
-	patterns := w.redactionPatterns()
-	event.Request = redactWithPatterns(event.Request, patterns)
-	event.Response = redactWithPatterns(event.Response, patterns)
-	event.CURLCommand = redactWithPatterns(event.CURLCommand, patterns)
-	event.Matched = redactWithPatterns(event.Matched, patterns)
-
 	event.Timestamp = time.Now()
 
 	var data []byte
@@ -399,52 +382,6 @@ func (w *StandardWriter) Write(event *ResultEvent) error {
 	}
 	w.resultCount.Add(1)
 	return nil
-}
-
-// defaultRedactKeys are header and parameter names that are always redacted
-// from output regardless of the -redact flag.
-var defaultRedactKeys = []string{
-	"Authorization",
-	"Proxy-Authorization",
-	"Cookie",
-	"Set-Cookie",
-	"X-Api-Key",
-}
-
-// defaultRedactPatterns are the precompiled regexes for defaultRedactKeys.
-var defaultRedactPatterns = compileRedactPatterns(defaultRedactKeys)
-
-// compileRedactPatterns builds the credential-redaction regexes for the given keys.
-func compileRedactPatterns(keys []string) []*regexp.Regexp {
-	patterns := make([]*regexp.Regexp, 0, len(keys))
-	for _, key := range keys {
-		patterns = append(patterns, regexp.MustCompile(fmt.Sprintf(`(?i)(%s\s*[:=]\s*["']?)[^"'\r\n&]+(["'\r\n]?)`, regexp.QuoteMeta(key))))
-	}
-	return patterns
-}
-
-// redactionPatterns returns the cached set of redaction patterns for this
-// writer (default keys plus any user-supplied -redact keys), compiling them on
-// first use.
-func (w *StandardWriter) redactionPatterns() []*regexp.Regexp {
-	w.redactPatternsOnce.Do(func() {
-		if len(w.KeysToRedact) == 0 {
-			w.redactPatterns = defaultRedactPatterns
-			return
-		}
-		patterns := make([]*regexp.Regexp, 0, len(defaultRedactPatterns)+len(w.KeysToRedact))
-		patterns = append(patterns, defaultRedactPatterns...)
-		patterns = append(patterns, compileRedactPatterns(w.KeysToRedact)...)
-		w.redactPatterns = patterns
-	})
-	return w.redactPatterns
-}
-
-func redactWithPatterns(data string, patterns []*regexp.Regexp) string {
-	for _, pattern := range patterns {
-		data = pattern.ReplaceAllString(data, `$1***$2`)
-	}
-	return data
 }
 
 // JSONLogRequest is a trace/error log request written to file
