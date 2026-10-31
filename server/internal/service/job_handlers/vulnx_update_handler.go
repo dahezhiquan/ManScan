@@ -17,7 +17,7 @@ import (
 )
 
 const VulnxVulnerabilityUpdateJobType = "vulnx_vulnerability.sync"
-const vulnxRequestRetryCount = 3
+const vulnxRequestMaxAttempts = 3
 const vulnxRequestConcurrency = 8
 
 // VulnxVulnerabilityUpdateHandler 从 cves.txt 全量同步 VulnX 漏洞情报。
@@ -104,7 +104,7 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 			defer workers.Done()
 			for id := range tasks {
 				var itemErr error
-				for attempt := 0; attempt <= vulnxRequestRetryCount; attempt++ {
+				for attempt := 0; attempt < vulnxRequestMaxAttempts; attempt++ {
 					if err := ctx.Err(); err != nil {
 						itemErr = err
 						break
@@ -150,7 +150,7 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 				return fmt.Errorf("刷新 VulnX 失败列表失败: %w", err)
 			}
 			if firstErr == nil {
-				firstErr = fmt.Errorf("更新 %s 失败（已重试 %d 次）: %w", result.id, vulnxRequestRetryCount, result.err)
+				firstErr = fmt.Errorf("更新 %s 失败（已尝试 %d 次）: %w", result.id, vulnxRequestMaxAttempts, result.err)
 			}
 		}
 		if progressErr == nil && ctx.Err() == nil {

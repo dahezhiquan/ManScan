@@ -110,7 +110,7 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "vulnXerror.txt"), []byte("CVE-OLD-STALE\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	client := &vulnxClientStub{failures: map[string]int{"CVE-2024-0001": 2, "CVE-2024-0002": vulnxRequestRetryCount + 1}}
+	client := &vulnxClientStub{failures: map[string]int{"CVE-2024-0001": 2, "CVE-2024-0002": vulnxRequestMaxAttempts}}
 	repo := &vulnxRepositoryStub{}
 	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, repo)
 	handler.clientFn = func(string) *VulnxClient { return nil }
@@ -120,7 +120,7 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "CVE-2024-0002") {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if got, want := len(client.ids), (2+1)+(vulnxRequestRetryCount+1); got != want {
+	if got, want := len(client.ids), (2+1)+vulnxRequestMaxAttempts; got != want {
 		t.Fatalf("fetch calls = %d, want %d", got, want)
 	}
 	if progress.current != 2 || progress.total != 2 || len(repo.bundles) != 1 {

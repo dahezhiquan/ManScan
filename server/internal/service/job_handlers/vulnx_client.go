@@ -125,7 +125,7 @@ type VulnxClient struct {
 // NewVulnxClient 创建 VulnX 客户端。
 func NewVulnxClient(apiKey string) *VulnxClient {
 	return &VulnxClient{
-		HTTPClient: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
+		HTTPClient: &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }},
 		BaseURL:    defaultVulnxAPIBaseURL,
 		APIKey:     strings.TrimSpace(apiKey),
 	}
