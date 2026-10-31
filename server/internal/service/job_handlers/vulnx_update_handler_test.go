@@ -110,6 +110,9 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "vulnXerror.txt"), []byte("CVE-OLD-STALE\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "vulnXerrorDetail.log"), []byte("stale detail\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
 	client := &vulnxClientStub{failures: map[string]int{"CVE-2024-0001": 2, "CVE-2024-0002": vulnxRequestMaxAttempts}}
 	repo := &vulnxRepositoryStub{}
 	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, repo)
@@ -132,6 +135,13 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	}
 	if string(got) != "CVE-2024-0002\n" {
 		t.Fatalf("error list = %q", got)
+	}
+	detail, readErr := os.ReadFile(filepath.Join(dir, "vulnXerrorDetail.log"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(detail) != "CVE-2024-0002: temporary VulnX error\n" {
+		t.Fatalf("error detail = %q", detail)
 	}
 }
 

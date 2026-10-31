@@ -1,11 +1,13 @@
 package job_handlers
 
 import (
+	"archive/zip"
 	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +63,7 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 		return err
 	}
 	errorPath := filepath.Join(h.rootDir, "data", "tmp", "cve_data", "vulnXerror.txt")
+	errorDetailPath := filepath.Join(h.rootDir, "data", "tmp", "cve_data", "vulnXerrorDetail.log")
 	if err := os.MkdirAll(filepath.Dir(errorPath), 0o750); err != nil {
 		return fmt.Errorf("创建 VulnX 失败列表目录失败: %w", err)
 	}
@@ -69,6 +72,11 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 		return fmt.Errorf("创建 VulnX 失败列表失败: %w", err)
 	}
 	defer func() { _ = errorFile.Close() }()
+	errorDetailFile, err := os.OpenFile(errorDetailPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
+	if err != nil {
+		return fmt.Errorf("创建 VulnX 失败详情日志失败: %w", err)
+	}
+	defer func() { _ = errorDetailFile.Close() }()
 	if err := reportProgress(ctx, progress, 0, int64(len(ids)), "fetching", "正在读取 VulnX 漏洞详情"); err != nil {
 		return err
 	}
@@ -149,6 +157,12 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 			if err := errorFile.Sync(); err != nil {
 				return fmt.Errorf("刷新 VulnX 失败列表失败: %w", err)
 			}
+			if _, err := fmt.Fprintf(errorDetailFile, "%s: %v\n", result.id, result.err); err != nil {
+				return fmt.Errorf("写入 VulnX 失败详情日志失败: %w", err)
+			}
+			if err := errorDetailFile.Sync(); err != nil {
+				return fmt.Errorf("刷新 VulnX 失败详情日志失败: %w", err)
+			}
 			if firstErr == nil {
 				firstErr = fmt.Errorf("更新 %s 失败（已尝试 %d 次）: %w", result.id, vulnxRequestMaxAttempts, result.err)
 			}
@@ -162,16 +176,77 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := errorFile.Close(); err != nil {
+		return fmt.Errorf("关闭 VulnX 失败列表失败: %w", err)
+	}
+	if err := errorDetailFile.Close(); err != nil {
+		return fmt.Errorf("关闭 VulnX 失败详情日志失败: %w", err)
+	}
+	archivePath, err := writeVulnxErrorArchive(h.rootDir, errorPath, errorDetailPath)
+	if err != nil {
+		return err
+	}
+	if reporter, ok := progress.(service.OutputReporter); ok {
+		if err := reporter.SetOutputPath(ctx, archivePath); err != nil {
+			return fmt.Errorf("保存 VulnX 产物路径失败: %w", err)
+		}
+	}
 	if progressErr != nil {
 		return progressErr
 	}
 	if firstErr != nil {
 		return firstErr
 	}
-	if err := errorFile.Close(); err != nil {
-		return fmt.Errorf("关闭 VulnX 失败列表失败: %w", err)
-	}
 	return reportProgress(ctx, progress, int64(len(ids)), int64(len(ids)), "finished", "VulnX 漏洞情报已更新")
+}
+
+func writeVulnxErrorArchive(rootDir, errorPath, errorDetailPath string) (string, error) {
+	archiveRelativePath := filepath.ToSlash(filepath.Join("data", "tmp", "cve_data", "vulnXerror.zip"))
+	archivePath := filepath.Join(rootDir, filepath.FromSlash(archiveRelativePath))
+	temporary, err := os.CreateTemp(filepath.Dir(archivePath), ".vulnx-error-*.zip")
+	if err != nil {
+		return "", fmt.Errorf("创建 VulnX 产物临时文件失败: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	removeTemporary := true
+	defer func() {
+		_ = temporary.Close()
+		if removeTemporary {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	archive := zip.NewWriter(temporary)
+	for _, path := range []string{errorPath, errorDetailPath} {
+		file, err := os.Open(path)
+		if err != nil {
+			return "", fmt.Errorf("读取 VulnX 产物文件失败: %w", err)
+		}
+		entry, err := archive.Create(filepath.Base(path))
+		if err == nil {
+			_, err = io.Copy(entry, file)
+		}
+		closeErr := file.Close()
+		if err != nil {
+			return "", fmt.Errorf("写入 VulnX 产物文件失败: %w", err)
+		}
+		if closeErr != nil {
+			return "", fmt.Errorf("关闭 VulnX 产物文件失败: %w", closeErr)
+		}
+	}
+	if err := archive.Close(); err != nil {
+		return "", fmt.Errorf("关闭 VulnX 产物压缩包失败: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return "", fmt.Errorf("关闭 VulnX 产物临时文件失败: %w", err)
+	}
+	if err := os.Chmod(temporaryPath, 0o640); err != nil {
+		return "", fmt.Errorf("设置 VulnX 产物权限失败: %w", err)
+	}
+	if err := os.Rename(temporaryPath, archivePath); err != nil {
+		return "", fmt.Errorf("替换 VulnX 产物失败: %w", err)
+	}
+	removeTemporary = false
+	return archiveRelativePath, nil
 }
 
 func (h *VulnxVulnerabilityUpdateHandler) apiKey(ctx context.Context, apiKeyID *int64) (string, error) {

@@ -2862,7 +2862,7 @@ curl -L -OJ \
   - `manscan_vulnerability_intelligence_articles`：`citations[]` 的添加时间、来源和 URL。
   - `manscan_vulnerability_intelligence_pocs`：`pocs[]` 的添加时间、来源和 URL。
   - `manscan_vulnerability_intelligence_shodan_exposures`：`exposure.values[]` 的产品 ID、暴露主机数和 Shodan 查询语句。
-- 失败策略：单个 CVE 查询、解析或写库失败后最多尝试 3 次（首次请求 + 2 次重试），然后继续处理剩余 CVE；最终仍失败的 CVE 每行写入服务根目录下 `data/tmp/cve_data/vulnXerror.txt`，每次运行开始时清空旧文件。任务进度按每个 CVE 最终处理结果推进；只要存在失败项，最终执行状态为 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
+- 失败策略：单个 CVE 查询、解析或写库失败后最多尝试 3 次（首次请求 + 2 次重试），然后继续处理剩余 CVE；最终仍失败的 CVE 的编号写入服务根目录下 `data/tmp/cve_data/vulnXerror.txt`，具体错误写入 `data/tmp/cve_data/vulnXerrorDetail.log`，两个文件每次运行开始时清空。任务结束时将这两个文件打包为 `data/tmp/cve_data/vulnXerror.zip`，可通过执行记录的产出下载接口下载。任务进度按每个 CVE 最终处理结果推进；只要存在失败项，最终执行状态为 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
 
 ### 内置任务：长亭无 CVE 漏洞情报同步
 
