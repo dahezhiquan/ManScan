@@ -2976,14 +2976,14 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/third-party-api-keys/1" \
 ## 漏洞情报分页查询
 
 - 请求方法和路径：`GET /api/v1/vulnerability-intelligence-records`，需要登录。
-- 请求参数：`page` 为可选正整数，默认 `1`；`page_size` 为可选整数，范围 `1-100`，默认 `10`。
-- 响应格式：统一响应 envelope 中的 `data` 为分页对象，包含 `page`、`pageSize`、`total`、`totalPages`、`items`。每条记录仅返回 `source`、`vulnerability_id`、`created_at`、`updated_at`、`cvss_score`、`vul_name`、`is_kev`、`is_vkev`、`is_poc`、`severity`；数据库可空字段保持 `null`，布尔字段为 `true`、`false` 或 `null`。按 `created_at DESC, id DESC` 排序。
-- 错误码：`40001` 分页参数非法，`40101` 未登录或令牌无效，`50001` 数据库查询失败。
+- 请求参数：`page` 为可选正整数，默认 `1`；`page_size` 为可选整数，范围 `1-100`，默认 `10`。`source`、`vulnerability_id`、`vul_name`、`severity` 为可选字符串模糊查询；`is_poc`、`is_kev` 为可选布尔值（支持 `true`/`false`、`1`/`0`、`yes`/`no`、`y`/`n`）。`is_kev=true` 匹配数据库 `is_kev` 或 `is_vkev` 任一为 true 的记录；`is_kev=false` 匹配两者均不为 true 的记录。
+- 响应格式：统一响应 envelope 中的 `data` 为分页对象，包含 `page`、`pageSize`、`total`、`totalPages`、`items`。每条记录仅返回 `source`、`vulnerability_id`、`created_at`、`updated_at`、`cvss_score`、`vul_name`、`is_kev`、`is_poc`、`severity`；`is_kev` 在数据库 `is_kev` 或 `is_vkev` 任一为 true 时为 true，否则为 false。其他数据库可空字段保持 `null`。按 `created_at DESC, id DESC` 排序。
+- 错误码：`40001` 分页参数或布尔筛选参数非法，`40101` 未登录或令牌无效，`50001` 数据库查询失败。
 - 使用示例：
 
 ```bash
 curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  "http://127.0.0.1:8686/api/v1/vulnerability-intelligence-records?page=1&page_size=10"
+  "http://127.0.0.1:8686/api/v1/vulnerability-intelligence-records?page=1&page_size=10&source=vulnx&vulnerability_id=CVE-2026&vul_name=RCE&is_poc=true&severity=critical&is_kev=true"
 ```
 
 ```json
@@ -3003,7 +3003,6 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
       "cvss_score": 9.8,
       "vul_name": "示例漏洞",
       "is_kev": true,
-      "is_vkev": null,
       "is_poc": false,
       "severity": "critical"
     }]
