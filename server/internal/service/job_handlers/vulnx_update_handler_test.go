@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/repository"
 	"ManScan/server/internal/service"
@@ -23,6 +24,10 @@ type vulnxRepositoryStub struct {
 	mu      sync.Mutex
 	bundles []*repository.VulnerabilityIntelligenceBundle
 	err     error
+}
+
+func (s *vulnxRepositoryStub) List(context.Context, dto.ListVulnerabilityIntelligenceRecordsQuery) (*dto.PageResult[entity.VulnerabilityIntelligenceRecord], error) {
+	return &dto.PageResult[entity.VulnerabilityIntelligenceRecord]{}, nil
 }
 
 func (s *vulnxRepositoryStub) Replace(_ context.Context, bundle *repository.VulnerabilityIntelligenceBundle) error {

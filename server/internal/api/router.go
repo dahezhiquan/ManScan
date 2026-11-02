@@ -22,6 +22,7 @@ func NewRouter(
 	thirdPartyAPIKeyHandler handler.ThirdPartyAPIKeyHandler,
 	settingHandler handler.SettingHandler,
 	dashboardHandler handler.DashboardHandler,
+	vulnerabilityIntelligenceHandler handler.VulnerabilityIntelligenceHandler,
 	scheduledJobHandlers ...handler.ScheduledJobHandler,
 ) *gin.Engine {
 	router := gin.New()
@@ -57,6 +58,7 @@ func NewRouter(
 	protected.PATCH("/vulnerabilities/status", vulnerabilityHandler.BatchUpdateStatus)
 	protected.PATCH("/vulnerabilities/:id/status", vulnerabilityHandler.UpdateStatus)
 	protected.GET("/vulnerabilities/:id", vulnerabilityHandler.Detail)
+	protected.GET("/vulnerability-intelligence-records", vulnerabilityIntelligenceHandler.List)
 
 	protected.GET("/domain-assets", assetDomainHandler.List)
 	protected.GET("/domain-assets/detail", assetDomainHandler.Detail)

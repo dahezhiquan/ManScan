@@ -16,7 +16,7 @@ import (
 func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{})
+	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
 	routes := router.Routes()
 	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/overview")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/asset-risks")
@@ -74,7 +74,7 @@ func assertRouteRegistered(t *testing.T, routes gin.RoutesInfo, method, path str
 
 func TestDashboardRoutesRequireAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{})
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
 	for _, path := range []string{"overview", "asset-risks", "host-rankings", "service-fingerprints"} {
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/"+path, nil))
@@ -86,7 +86,7 @@ func TestDashboardRoutesRequireAuthentication(t *testing.T) {
 
 func TestThirdPartyAPIKeyRoutesRequireAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{})
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/third-party-api-keys"},
 		{http.MethodGet, "/api/v1/third-party-api-keys/1"},
@@ -100,6 +100,16 @@ func TestThirdPartyAPIKeyRoutesRequireAuthentication(t *testing.T) {
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("%s %s status = %d, want 401", route.method, route.path, recorder.Code)
 		}
+	}
+}
+
+func TestVulnerabilityIntelligenceRouteRequiresAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/vulnerability-intelligence-records", nil))
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", recorder.Code)
 	}
 }
 
@@ -191,6 +201,10 @@ func (noopScanTaskHandler) DownloadRawLogsArchive(*gin.Context) {
 }
 
 type noopVulnerabilityHandler struct{}
+
+type noopVulnerabilityIntelligenceHandler struct{}
+
+func (noopVulnerabilityIntelligenceHandler) List(*gin.Context) {}
 
 func (noopVulnerabilityHandler) List(*gin.Context)              {}
 func (noopVulnerabilityHandler) Detail(*gin.Context)            {}

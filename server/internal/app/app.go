@@ -73,6 +73,7 @@ func Run() error {
 	}
 	thirdPartyAPIKeyService := service.NewThirdPartyAPIKeyService(thirdPartyAPIKeyRepository, apiKeyBox)
 	vulnerabilityIntelligenceRepository := repository.NewVulnerabilityIntelligenceRepository(db)
+	vulnerabilityIntelligenceService := service.NewVulnerabilityIntelligenceService(vulnerabilityIntelligenceRepository)
 	scheduledJobRepository := repository.NewScheduledJobRepository(db)
 	scheduledJobRunRepository := repository.NewScheduledJobRunRepository(db)
 	jobHandlerRegistry := service.NewJobHandlerRegistry()
@@ -119,6 +120,7 @@ func Run() error {
 		handler.NewThirdPartyAPIKeyHandler(thirdPartyAPIKeyService, logger),
 		handler.NewSettingHandler(settingService),
 		handler.NewDashboardHandler(dashboardService),
+		handler.NewVulnerabilityIntelligenceHandler(vulnerabilityIntelligenceService),
 		handler.NewScheduledJobHandler(scheduledJobService),
 	)
 	if err := schedulerManager.Start(context.Background()); err != nil {
