@@ -2531,6 +2531,10 @@ func (s *vulnerabilityRepositoryStub) List(_ context.Context, _ dto.ListVulnerab
 	return &dto.PageResult[entity.Vulnerability]{}, nil
 }
 
+func (s *vulnerabilityRepositoryStub) EachFiltered(_ context.Context, _ dto.ListVulnerabilitiesQuery, _ func(entity.Vulnerability) error) error {
+	return nil
+}
+
 func (s *vulnerabilityRepositoryStub) FindByID(_ context.Context, _ int64) (*entity.Vulnerability, error) {
 	return nil, gorm.ErrRecordNotFound
 }

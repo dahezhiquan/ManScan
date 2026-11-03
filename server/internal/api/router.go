@@ -54,6 +54,7 @@ func NewRouter(
 	protected.GET("/templates/stats", templateHandler.Stats)
 
 	protected.GET("/vulnerabilities", vulnerabilityHandler.List)
+	protected.GET("/vulnerabilities/export", vulnerabilityHandler.Export)
 	protected.DELETE("/vulnerabilities", vulnerabilityHandler.Delete)
 	protected.PATCH("/vulnerabilities/status", vulnerabilityHandler.BatchUpdateStatus)
 	protected.PATCH("/vulnerabilities/:id/status", vulnerabilityHandler.UpdateStatus)

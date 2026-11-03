@@ -1652,6 +1652,34 @@ curl "http://127.0.0.1:8686/api/v1/vulnerabilities?page=1&page_size=20&keyword=s
   - 翻页、修改每页数量、修改筛选条件时重新请求列表；筛选条件变化后将 `page` 重置为 `1`。
   - 严重级别建议按 `critical`、`high`、`medium`、`low`、`info`、`unknown` 做固定选项；状态建议按 `unreviewed`、`confirmed`、`ticketed`、`fixed`、`false_positive`、`ignored` 做固定选项。
 
+## 18.1 导出漏洞筛选结果
+
+- 请求方法和路径：`GET /api/v1/vulnerabilities/export`
+- 请求参数：与列表接口使用相同的筛选语义，均为可选。多值参数支持逗号分隔和重复传入；`page`、`page_size` 可随列表请求传入，但导出始终包含全部筛选结果，不受分页限制。
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `keyword` | `string` | 否 | 漏洞名称或模板 ID 模糊搜索 |
+| `asset_host` | `string` / `string[]` | 否 | 资产 Host 模糊匹配 |
+| `status` | `string` / `string[]` | 否 | 漏洞状态精确匹配 |
+| `tag` / `tags` | `string` / `string[]` | 否 | 漏洞标签匹配 |
+| `severity` / `level` | `string` / `string[]` | 否 | 严重级别精确匹配 |
+| `template_id` | `string` / `string[]` | 否 | 模板 ID 模糊匹配 |
+| `vulnerability_name` | `string` / `string[]` | 否 | 漏洞名称模糊匹配 |
+| `latest_scan_task_name` | `string` / `string[]` | 否 | 最近扫描任务名称模糊匹配 |
+| `protocol` | `string` / `string[]` | 否 | 协议类型精确匹配 |
+| `page` / `page_size` | `int` | 否 | 接收但不影响导出范围 |
+
+- 响应格式：成功时返回 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` 附件，文件名为 `vulnerabilities-YYYYMMDD-HHMMSS.xlsx`，不使用 JSON 响应封装。`vulnerabilities` 工作表每条漏洞一行，列为 `name`、`severity`、`template_id`、`asset_path`、`asset_endpoint`、`asset_host`、`status`、`tags`、`latest_scan_task_name`、`protocol`、`last_found_at`、`vulnerability_name`、`latest_scan_task_id`、`first_found_at`、`fixed_at`、`asset_port`、`description`、`impact`、`cvss_score`、`vendor`、`product`、`remediation`、`reference_links`、`extracted-results`、`payload`、`detail`、`vuln_fingerprint`。仅排除漏洞主键 `id`。数组和对象以 JSON 文本保存，时间为 RFC3339 格式，空值留空。顺序与列表相同。
+- 超过单元格长度限制的内容在主表显示 `[see large_fields]`，完整内容分段写入 `large_fields` 工作表；该表的 `row` 指向主表行号，`field` 为字段名，按 `part` 升序拼接 `content` 即为原文。空结果仍返回带表头的文件。
+- 文件包含原始漏洞详情，可能含请求、响应、Payload 中的敏感数据；此接口使用与漏洞列表相同的登录认证。前端应复用当前筛选参数请求该路径，并按二进制文件下载。
+- 错误码说明：`50001` 表示创建文件、查询或生成 XLSX 失败；失败响应仍使用 `{ "code", "message", "data" }` JSON 格式。
+- 使用示例：
+
+```bash
+curl -o vulnerabilities.xlsx "http://127.0.0.1:8686/api/v1/vulnerabilities/export?status=unreviewed&severity=high&tag=cve"
+```
+
 ## 19. 更新漏洞状态
 
 - 请求方法和路径：`PATCH /api/v1/vulnerabilities/:id/status`

@@ -32,6 +32,7 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "PUT", "/api/v1/users/:username")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/users/:username")
 	assertRouteRegistered(t, routes, "DELETE", "/api/v1/vulnerabilities")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/vulnerabilities/export")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets")
@@ -207,6 +208,7 @@ type noopVulnerabilityIntelligenceHandler struct{}
 func (noopVulnerabilityIntelligenceHandler) List(*gin.Context) {}
 
 func (noopVulnerabilityHandler) List(*gin.Context)              {}
+func (noopVulnerabilityHandler) Export(*gin.Context)            {}
 func (noopVulnerabilityHandler) Detail(*gin.Context)            {}
 func (noopVulnerabilityHandler) UpdateStatus(*gin.Context)      {}
 func (noopVulnerabilityHandler) BatchUpdateStatus(*gin.Context) {}
