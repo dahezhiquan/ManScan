@@ -1337,6 +1337,10 @@ func (s *assetDomainRepositoryStub) List(context.Context, dto.ListAssetDomainsQu
 	return &dto.PageResult[repository.AssetDomainListRecord]{}, nil
 }
 
+func (s *assetDomainRepositoryStub) EachFiltered(context.Context, dto.ListAssetDomainsQuery, func(repository.AssetDomainExportRecord) error) error {
+	return nil
+}
+
 func (s *assetDomainRepositoryStub) Detail(context.Context, string) (*repository.AssetDomainDetailRecord, error) {
 	return &repository.AssetDomainDetailRecord{}, nil
 }
@@ -1367,6 +1371,10 @@ type assetHostRepositoryStub struct {
 
 func (s *assetHostRepositoryStub) List(context.Context, dto.ListAssetHostsQuery) (*dto.PageResult[repository.AssetHostListRecord], error) {
 	return &dto.PageResult[repository.AssetHostListRecord]{}, nil
+}
+
+func (s *assetHostRepositoryStub) EachFiltered(context.Context, dto.ListAssetHostsQuery, func(repository.AssetHostExportRecord) error) error {
+	return nil
 }
 
 func (s *assetHostRepositoryStub) Detail(context.Context, string) (*repository.AssetHostDetailRecord, error) {

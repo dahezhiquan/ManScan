@@ -14,6 +14,7 @@ import (
 
 type AssetHostRepository interface {
 	List(ctx context.Context, query dto.ListAssetHostsQuery) (*dto.PageResult[AssetHostListRecord], error)
+	EachFiltered(ctx context.Context, query dto.ListAssetHostsQuery, visit func(AssetHostExportRecord) error) error
 	Detail(ctx context.Context, ipAddress string) (*AssetHostDetailRecord, error)
 	UpdateManualNote(ctx context.Context, ipAddress string, manualNote *string) error
 	SyncObservations(ctx context.Context, observations []AssetHostObservation, observedAt time.Time) error
@@ -49,6 +50,11 @@ type AssetHostDetailRecord struct {
 	Ports              []entity.AssetHostPort
 }
 
+type AssetHostExportRecord struct {
+	List  AssetHostListRecord
+	Ports []entity.AssetHostPort
+}
+
 type assetHostVulnerabilityStats struct {
 	VulnerabilityCount int
 	CriticalCount      int
@@ -78,16 +84,7 @@ func (r *assetHostRepository) List(ctx context.Context, query dto.ListAssetHosts
 	}
 
 	items := make([]AssetHostListRecord, 0)
-	if err := r.applyListFilters(r.withAssetHostListStats(r.db.WithContext(ctx).Table("manscan_asset_host AS h")), query).
-		Select(`h.*,
-			COALESCE(v.vulnerability_count, 0) AS vulnerability_count,
-			COALESCE(v.critical_count, 0) AS critical_count,
-			COALESCE(v.high_count, 0) AS high_count,
-			COALESCE(v.medium_count, 0) AS medium_count,
-			COALESCE(v.low_count, 0) AS low_count,
-			COALESCE(p.port_count, 0) AS port_count`).
-		Order("h.last_alive_at DESC").
-		Order("h.id DESC").
+	if err := r.assetHostListItemsQuery(ctx, query).
 		Offset((page - 1) * pageSize).
 		Limit(pageSize).
 		Find(&items).Error; err != nil {
@@ -106,6 +103,19 @@ func (r *assetHostRepository) List(ctx context.Context, query dto.ListAssetHosts
 		TotalPages: totalPages,
 		Items:      items,
 	}, nil
+}
+
+func (r *assetHostRepository) assetHostListItemsQuery(ctx context.Context, query dto.ListAssetHostsQuery) *gorm.DB {
+	return r.applyListFilters(r.withAssetHostListStats(r.db.WithContext(ctx).Table("manscan_asset_host AS h")), query).
+		Select(`h.*,
+			COALESCE(v.vulnerability_count, 0) AS vulnerability_count,
+			COALESCE(v.critical_count, 0) AS critical_count,
+			COALESCE(v.high_count, 0) AS high_count,
+			COALESCE(v.medium_count, 0) AS medium_count,
+			COALESCE(v.low_count, 0) AS low_count,
+			COALESCE(p.port_count, 0) AS port_count`).
+		Order("h.last_alive_at DESC").
+		Order("h.id DESC")
 }
 
 func (r *assetHostRepository) Detail(ctx context.Context, ipAddress string) (*AssetHostDetailRecord, error) {

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -106,6 +107,10 @@ type assetDomainServiceStub struct {
 
 func (s *assetDomainServiceStub) List(context.Context, dto.ListAssetDomainsQuery) (*dto.PageResult[dto.AssetDomainListItem], error) {
 	return nil, nil
+}
+
+func (s *assetDomainServiceStub) Export(context.Context, dto.ListAssetDomainsQuery, io.Writer) error {
+	return nil
 }
 
 func (s *assetDomainServiceStub) Detail(context.Context, string) (*dto.AssetDomainDetail, error) {

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"strings"
 
 	"ManScan/server/internal/model/dto"
@@ -15,6 +16,7 @@ import (
 
 type AssetHostHandler interface {
 	List(c *gin.Context)
+	Export(c *gin.Context)
 	Detail(c *gin.Context)
 	UpdateManualNote(c *gin.Context)
 }
@@ -38,25 +40,49 @@ func (h *assetHostHandler) List(c *gin.Context) {
 		response.Fail(c, errcode.InvalidParams, "page_size 参数必须在 1-100 之间")
 		return
 	}
-	isAlive, hasIsAlive, err := parseOptionalBoolQuery(c.Query("is_alive"))
-	if err != nil {
-		response.Fail(c, errcode.InvalidParams, "is_alive 参数必须是布尔值")
+	query, queryError := assetHostListQuery(c)
+	if queryError != "" {
+		response.Fail(c, errcode.InvalidParams, queryError)
 		return
 	}
-	hasVulnerability, hasHasVulnerability, err := parseOptionalBoolQuery(c.Query("has_vulnerability"))
-	if err != nil {
-		response.Fail(c, errcode.InvalidParams, "has_vulnerability 参数必须是布尔值")
-		return
-	}
-	hasPort, hasHasPort, err := parseOptionalBoolQuery(c.Query("has_port"))
-	if err != nil {
-		response.Fail(c, errcode.InvalidParams, "has_port 参数必须是布尔值")
+	query.Page = page
+	query.PageSize = pageSize
+
+	data, serviceErr := h.service.List(c.Request.Context(), query)
+	if serviceErr != nil {
+		response.Fail(c, errcode.InternalServerError, "获取主机资产清单失败")
 		return
 	}
 
+	response.Success(c, data)
+}
+
+// Export downloads all filtered host assets as an XLSX file.
+func (h *assetHostHandler) Export(c *gin.Context) {
+	query, queryError := assetHostListQuery(c)
+	if queryError != "" {
+		response.Fail(c, errcode.InvalidParams, queryError)
+		return
+	}
+	sendExportXLSX(c, "host-assets", "导出主机资产失败", func(output io.Writer) error {
+		return h.service.Export(c.Request.Context(), query, output)
+	})
+}
+
+func assetHostListQuery(c *gin.Context) (dto.ListAssetHostsQuery, string) {
+	isAlive, hasIsAlive, err := parseOptionalBoolQuery(c.Query("is_alive"))
+	if err != nil {
+		return dto.ListAssetHostsQuery{}, "is_alive 参数必须是布尔值"
+	}
+	hasVulnerability, hasHasVulnerability, err := parseOptionalBoolQuery(c.Query("has_vulnerability"))
+	if err != nil {
+		return dto.ListAssetHostsQuery{}, "has_vulnerability 参数必须是布尔值"
+	}
+	hasPort, hasHasPort, err := parseOptionalBoolQuery(c.Query("has_port"))
+	if err != nil {
+		return dto.ListAssetHostsQuery{}, "has_port 参数必须是布尔值"
+	}
 	query := dto.ListAssetHostsQuery{
-		Page:         page,
-		PageSize:     pageSize,
 		Keyword:      c.Query("keyword"),
 		Owner:        c.Query("owner"),
 		OSType:       c.Query("os_type"),
@@ -74,13 +100,7 @@ func (h *assetHostHandler) List(c *gin.Context) {
 		query.IsAlive = &isAlive
 	}
 
-	data, serviceErr := h.service.List(c.Request.Context(), query)
-	if serviceErr != nil {
-		response.Fail(c, errcode.InternalServerError, "获取主机资产清单失败")
-		return
-	}
-
-	response.Success(c, data)
+	return query, ""
 }
 
 func (h *assetHostHandler) Detail(c *gin.Context) {

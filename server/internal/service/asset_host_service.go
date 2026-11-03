@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/netip"
 	"strings"
 
@@ -11,6 +12,7 @@ import (
 
 type AssetHostService interface {
 	List(ctx context.Context, query dto.ListAssetHostsQuery) (*dto.PageResult[dto.AssetHostListItem], error)
+	Export(ctx context.Context, query dto.ListAssetHostsQuery, output io.Writer) error
 	Detail(ctx context.Context, ipAddress string) (*dto.AssetHostDetail, error)
 	UpdateManualNote(ctx context.Context, request dto.UpdateAssetHostManualNoteRequest) (*dto.UpdateAssetHostManualNoteResponse, error)
 }

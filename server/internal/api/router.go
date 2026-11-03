@@ -62,11 +62,13 @@ func NewRouter(
 	protected.GET("/vulnerability-intelligence-records", vulnerabilityIntelligenceHandler.List)
 
 	protected.GET("/domain-assets", assetDomainHandler.List)
+	protected.GET("/domain-assets/export", assetDomainHandler.Export)
 	protected.GET("/domain-assets/detail", assetDomainHandler.Detail)
 	protected.GET("/domain-assets/screenshots/latest", assetDomainHandler.LatestScreenshot)
 	protected.GET("/domain-assets/screenshots", assetDomainHandler.ListScreenshots)
 	protected.PATCH("/domain-assets/manual-note", assetDomainHandler.UpdateManualNote)
 	protected.GET("/host-assets", assetHostHandler.List)
+	protected.GET("/host-assets/export", assetHostHandler.Export)
 	protected.GET("/host-assets/detail", assetHostHandler.Detail)
 	protected.PATCH("/host-assets/manual-note", assetHostHandler.UpdateManualNote)
 

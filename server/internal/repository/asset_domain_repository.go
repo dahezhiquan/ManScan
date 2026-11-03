@@ -14,6 +14,7 @@ import (
 
 type AssetDomainRepository interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[AssetDomainListRecord], error)
+	EachFiltered(ctx context.Context, query dto.ListAssetDomainsQuery, visit func(AssetDomainExportRecord) error) error
 	Detail(ctx context.Context, domain string) (*AssetDomainDetailRecord, error)
 	UpdateManualNote(ctx context.Context, domain string, manualNote *string) error
 	ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error)
@@ -65,6 +66,12 @@ type AssetDomainDetailRecord struct {
 	LowCount           int `gorm:"column:low_count"`
 	ServiceAssets      []entity.AssetDomainServiceAsset
 	TitleHistories     []entity.AssetDomainTitleHistory
+}
+
+type AssetDomainExportRecord struct {
+	List           AssetDomainListRecord
+	ServiceAssets  []entity.AssetDomainServiceAsset
+	TitleHistories []entity.AssetDomainTitleHistory
 }
 
 type assetDomainVulnerabilityStats struct {
@@ -177,16 +184,7 @@ func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDom
 	}
 
 	items := make([]AssetDomainListRecord, 0)
-	if err := r.applyListFilters(r.withAssetDomainListStats(r.db.WithContext(ctx).Table("manscan_asset_domain AS a")), query).
-		Select(`a.*,
-			COALESCE(v.vulnerability_count, 0) AS vulnerability_count,
-			COALESCE(v.critical_count, 0) AS critical_count,
-			COALESCE(v.high_count, 0) AS high_count,
-			COALESCE(v.medium_count, 0) AS medium_count,
-			COALESCE(v.low_count, 0) AS low_count,
-			COALESCE(c.component_count, 0) AS component_count`).
-		Order("a.last_alive_at DESC").
-		Order("a.id DESC").
+	if err := r.assetDomainListItemsQuery(ctx, query).
 		Offset((page - 1) * pageSize).
 		Limit(pageSize).
 		Find(&items).Error; err != nil {
@@ -205,6 +203,19 @@ func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDom
 		TotalPages: totalPages,
 		Items:      items,
 	}, nil
+}
+
+func (r *assetDomainRepository) assetDomainListItemsQuery(ctx context.Context, query dto.ListAssetDomainsQuery) *gorm.DB {
+	return r.applyListFilters(r.withAssetDomainListStats(r.db.WithContext(ctx).Table("manscan_asset_domain AS a")), query).
+		Select(`a.*,
+			COALESCE(v.vulnerability_count, 0) AS vulnerability_count,
+			COALESCE(v.critical_count, 0) AS critical_count,
+			COALESCE(v.high_count, 0) AS high_count,
+			COALESCE(v.medium_count, 0) AS medium_count,
+			COALESCE(v.low_count, 0) AS low_count,
+			COALESCE(c.component_count, 0) AS component_count`).
+		Order("a.last_alive_at DESC").
+		Order("a.id DESC")
 }
 
 func (r *assetDomainRepository) Detail(ctx context.Context, domain string) (*AssetDomainDetailRecord, error) {

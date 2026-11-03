@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -14,6 +15,7 @@ import (
 
 type AssetDomainService interface {
 	List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[dto.AssetDomainListItem], error)
+	Export(ctx context.Context, query dto.ListAssetDomainsQuery, output io.Writer) error
 	Detail(ctx context.Context, domain string) (*dto.AssetDomainDetail, error)
 	UpdateManualNote(ctx context.Context, request dto.UpdateAssetDomainManualNoteRequest) (*dto.UpdateAssetDomainManualNoteResponse, error)
 	LatestScreenshot(ctx context.Context, domain string) (*dto.AssetDomainScreenshot, error)

@@ -36,11 +36,13 @@ func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/status")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/vulnerabilities/:id/status")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/export")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/detail")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/screenshots/latest")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/domain-assets/screenshots")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/domain-assets/manual-note")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/host-assets")
+	assertRouteRegistered(t, routes, "GET", "/api/v1/host-assets/export")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/host-assets/detail")
 	assertRouteRegistered(t, routes, "PATCH", "/api/v1/host-assets/manual-note")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/asset-config-centers")
@@ -217,6 +219,7 @@ func (noopVulnerabilityHandler) Delete(*gin.Context)            {}
 type noopAssetDomainHandler struct{}
 
 func (noopAssetDomainHandler) List(*gin.Context)             {}
+func (noopAssetDomainHandler) Export(*gin.Context)           {}
 func (noopAssetDomainHandler) Detail(*gin.Context)           {}
 func (noopAssetDomainHandler) UpdateManualNote(*gin.Context) {}
 func (noopAssetDomainHandler) LatestScreenshot(*gin.Context) {}
@@ -225,6 +228,7 @@ func (noopAssetDomainHandler) ListScreenshots(*gin.Context)  {}
 type noopAssetHostHandler struct{}
 
 func (noopAssetHostHandler) List(*gin.Context)             {}
+func (noopAssetHostHandler) Export(*gin.Context)           {}
 func (noopAssetHostHandler) Detail(*gin.Context)           {}
 func (noopAssetHostHandler) UpdateManualNote(*gin.Context) {}
 

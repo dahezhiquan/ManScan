@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"strings"
 
 	"ManScan/server/internal/model/dto"
@@ -15,6 +16,7 @@ import (
 
 type AssetDomainHandler interface {
 	List(c *gin.Context)
+	Export(c *gin.Context)
 	Detail(c *gin.Context)
 	UpdateManualNote(c *gin.Context)
 	LatestScreenshot(c *gin.Context)
@@ -40,25 +42,49 @@ func (h *assetDomainHandler) List(c *gin.Context) {
 		response.Fail(c, errcode.InvalidParams, "page_size 参数必须在 1-100 之间")
 		return
 	}
-	isAlive, hasIsAlive, err := parseOptionalBoolQuery(c.Query("is_alive"))
-	if err != nil {
-		response.Fail(c, errcode.InvalidParams, "is_alive 参数必须是布尔值")
+	query, queryError := assetDomainListQuery(c)
+	if queryError != "" {
+		response.Fail(c, errcode.InvalidParams, queryError)
 		return
 	}
-	hasVulnerability, hasHasVulnerability, err := parseOptionalBoolQuery(c.Query("has_vulnerability"))
-	if err != nil {
-		response.Fail(c, errcode.InvalidParams, "has_vulnerability 参数必须是布尔值")
-		return
-	}
-	hasComponent, hasHasComponent, err := parseOptionalBoolQuery(c.Query("has_component"))
-	if err != nil {
-		response.Fail(c, errcode.InvalidParams, "has_component 参数必须是布尔值")
+	query.Page = page
+	query.PageSize = pageSize
+
+	data, serviceErr := h.service.List(c.Request.Context(), query)
+	if serviceErr != nil {
+		response.Fail(c, errcode.InternalServerError, "获取域名资产清单失败")
 		return
 	}
 
+	response.Success(c, data)
+}
+
+// Export downloads all filtered domain assets as an XLSX file.
+func (h *assetDomainHandler) Export(c *gin.Context) {
+	query, queryError := assetDomainListQuery(c)
+	if queryError != "" {
+		response.Fail(c, errcode.InvalidParams, queryError)
+		return
+	}
+	sendExportXLSX(c, "domain-assets", "导出域名资产失败", func(output io.Writer) error {
+		return h.service.Export(c.Request.Context(), query, output)
+	})
+}
+
+func assetDomainListQuery(c *gin.Context) (dto.ListAssetDomainsQuery, string) {
+	isAlive, hasIsAlive, err := parseOptionalBoolQuery(c.Query("is_alive"))
+	if err != nil {
+		return dto.ListAssetDomainsQuery{}, "is_alive 参数必须是布尔值"
+	}
+	hasVulnerability, hasHasVulnerability, err := parseOptionalBoolQuery(c.Query("has_vulnerability"))
+	if err != nil {
+		return dto.ListAssetDomainsQuery{}, "has_vulnerability 参数必须是布尔值"
+	}
+	hasComponent, hasHasComponent, err := parseOptionalBoolQuery(c.Query("has_component"))
+	if err != nil {
+		return dto.ListAssetDomainsQuery{}, "has_component 参数必须是布尔值"
+	}
 	query := dto.ListAssetDomainsQuery{
-		Page:         page,
-		PageSize:     pageSize,
 		Keyword:      c.Query("keyword"),
 		Owner:        c.Query("owner"),
 		Title:        c.Query("title"),
@@ -76,13 +102,7 @@ func (h *assetDomainHandler) List(c *gin.Context) {
 		query.IsAlive = &isAlive
 	}
 
-	data, serviceErr := h.service.List(c.Request.Context(), query)
-	if serviceErr != nil {
-		response.Fail(c, errcode.InternalServerError, "获取域名资产清单失败")
-		return
-	}
-
-	response.Success(c, data)
+	return query, ""
 }
 
 func (h *assetDomainHandler) Detail(c *gin.Context) {
