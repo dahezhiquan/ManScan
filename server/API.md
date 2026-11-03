@@ -1670,7 +1670,8 @@ curl "http://127.0.0.1:8686/api/v1/vulnerabilities?page=1&page_size=20&keyword=s
 | `protocol` | `string` / `string[]` | 否 | 协议类型精确匹配 |
 | `page` / `page_size` | `int` | 否 | 接收但不影响导出范围 |
 
-- 响应格式：成功时返回 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` 附件，文件名为 `vulnerabilities-YYYYMMDD-HHMMSS.xlsx`，不使用 JSON 响应封装。`vulnerabilities` 工作表每条漏洞一行，列为 `name`、`severity`、`template_id`、`asset_path`、`asset_endpoint`、`asset_host`、`status`、`tags`、`latest_scan_task_name`、`protocol`、`last_found_at`、`vulnerability_name`、`latest_scan_task_id`、`first_found_at`、`fixed_at`、`asset_port`、`description`、`impact`、`cvss_score`、`vendor`、`product`、`remediation`、`reference_links`、`extracted-results`、`payload`、`detail`、`vuln_fingerprint`。仅排除漏洞主键 `id`。数组和对象以 JSON 文本保存，时间为 RFC3339 格式，空值留空。顺序与列表相同。
+- 响应格式：成功时返回 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` 附件，文件名为 `vulnerabilities-YYYYMMDD-HHMMSS.xlsx`，不使用 JSON 响应封装。`vulnerabilities` 工作表每条漏洞一行，列为 `name`、`severity`、`template_id`、`asset_path`、`asset_endpoint`、`asset_host`、`status`、`tags`、`latest_scan_task_name`、`protocol`、`last_found_at`、`latest_scan_task_id`、`first_found_at`、`fixed_at`、`asset_port`、`description`、`impact`、`cvss_score`、`vendor`、`product`、`remediation`、`reference_links`、`extracted-results`、`payload`、`detail`、`vuln_fingerprint`。`name` 即漏洞名称，导出不再重复提供 `vulnerability_name`；仅排除漏洞主键 `id`。数组和对象以 JSON 文本保存，时间为 RFC3339 格式，空值留空。顺序与列表相同。
+- 工作表使用固定表头、交替底色和自动换行；主表行高 48 磅，长字段表行高 84 磅，列宽按内容类型设置。
 - 超过单元格长度限制的内容在主表显示 `[see large_fields]`，完整内容分段写入 `large_fields` 工作表；该表的 `row` 指向主表行号，`field` 为字段名，按 `part` 升序拼接 `content` 即为原文。空结果仍返回带表头的文件。
 - 文件包含原始漏洞详情，可能含请求、响应、Payload 中的敏感数据；此接口使用与漏洞列表相同的登录认证。前端应复用当前筛选参数请求该路径，并按二进制文件下载。
 - 错误码说明：`50001` 表示创建文件、查询或生成 XLSX 失败；失败响应仍使用 `{ "code", "message", "data" }` JSON 格式。
