@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"ManScan/pkg/input/provider/list"
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/pkg/logx"
@@ -828,8 +829,17 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	taskDir := filepath.Dir(state.LogFilePath)
 	fingerprintCachePath := filepath.Join(taskDir, "asset-domain-fingerprints.json")
 	preflightCachePath := filepath.Join(taskDir, "asset-domain-preflight.json")
-	excludeFingerprintTemplates := s.shouldExcludeAssetDomainFingerprintTemplates(plan.Raw, plan.CollectedTargets)
-	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, plan.CollectedTargets, state, fingerprintCachePath, preflightCachePath, runtime.assetDomainServiceAssetQueue, runtime); err != nil {
+	preflightTargets, excludedTargets := list.NewExclusionMatcher(plan.Raw.ExcludeTargets).Filter(plan.CollectedTargets)
+	for _, excluded := range excludedTargets {
+		state.Append("info", "target_excluded", fmt.Sprintf("[禁扫跳过] 目标 %q 命中规则 %q", excluded.Target, excluded.Rule))
+	}
+	if len(preflightTargets) == 0 {
+		state.SetTemplateCount(0)
+		state.Append("info", "main_scan_skipped", "所有目标命中禁扫名单，已跳过前置探测与主扫描")
+		return nil
+	}
+	excludeFingerprintTemplates := s.shouldExcludeAssetDomainFingerprintTemplates(plan.Raw, preflightTargets)
+	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, preflightTargets, state, fingerprintCachePath, preflightCachePath, runtime.assetDomainServiceAssetQueue, runtime); err != nil {
 		return err
 	}
 	if runtime.IsPauseRequested() {
@@ -841,7 +851,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 		return nil
 	}
 	targetsFile := filepath.Join(taskDir, "targets.txt")
-	if err := os.WriteFile(targetsFile, []byte(strings.Join(plan.CollectedTargets, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(targetsFile, []byte(strings.Join(preflightTargets, "\n")+"\n"), 0o644); err != nil {
 		return err
 	}
 	resumeFile := s.resumeFilePath(state.ID)
@@ -898,8 +908,9 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 		scanruntime.StreamCommandOutput(stderrPipe, state, "stderr", false)
 	}()
 
-	waitErr := cmd.Wait()
+	// Wait closes StdoutPipe and StderrPipe, so drain both readers first.
 	wg.Wait()
+	waitErr := cmd.Wait()
 	state.SyncScannerErrors()
 	if errors.Is(cmdCtx.Err(), context.Canceled) {
 		return context.Canceled

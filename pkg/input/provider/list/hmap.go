@@ -9,7 +9,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +35,12 @@ import (
 
 const DefaultMaxDedupeItemsCount = 10000
 
+type excludedInput struct {
+	key    string
+	target string
+	rule   string
+}
+
 // ListInputProvider is a hmap/filekv backed nuclei ListInputProvider provider
 // it supports list type of input ex: urls,file,stdin,uncover,etc. (i.e just url not complete request/response)
 type ListInputProvider struct {
@@ -45,7 +50,7 @@ type ListInputProvider struct {
 	dupeCount         int64
 	skippedCount      int64
 	hostMap           *hybrid.HybridMap
-	excludedHosts     map[string]struct{}
+	excludedHosts     map[string]string
 	hostMapStream     *filekv.FileDB
 	hostMapStreamOnce sync.Once
 	sync.Once
@@ -77,7 +82,7 @@ func New(opts *Options) (*ListInputProvider, error) {
 			IPV4:       sliceutil.Contains(options.IPVersion, "4"),
 			IPV6:       sliceutil.Contains(options.IPVersion, "6"),
 		},
-		excludedHosts: make(map[string]struct{}),
+		excludedHosts: make(map[string]string),
 	}
 	if options.Stream {
 		fkvOptions := filekv.DefaultOptions
@@ -254,8 +259,9 @@ func (i *ListInputProvider) SetWithExclusions(executionId string, value string) 
 	if URL == "" {
 		return nil
 	}
-	if i.isExcluded(URL) {
+	if rule, excluded := i.excludedRule(URL); excluded {
 		i.skippedCount++
+		logExcludedTarget(URL, rule)
 		return nil
 	}
 	i.Set(executionId, URL)
@@ -373,18 +379,22 @@ func (i *ListInputProvider) scanInputFromReader(executionId string, reader io.Re
 	}
 }
 
-// isExcluded checks if a URL is in the exclusion list
-func (i *ListInputProvider) isExcluded(URL string) bool {
+// excludedRule returns the rule that previously removed the input.
+func (i *ListInputProvider) excludedRule(URL string) (string, bool) {
 	metaInput := contextargs.NewMetaInput()
 	metaInput.Input = URL
 	key, err := metaInput.MarshalString()
 	if err != nil {
 		gologger.Warning().Msgf("%s\n", err)
-		return false
+		return "", false
 	}
 
-	_, exists := i.excludedHosts[key]
-	return exists
+	rule, exists := i.excludedHosts[key]
+	return rule, exists
+}
+
+func logExcludedTarget(target, rule string) {
+	gologger.Info().Msgf("[禁扫跳过] 目标 %q 命中规则 %q", target, rule)
 }
 
 func (i *ListInputProvider) Del(executionId string, value string) {
@@ -508,29 +518,17 @@ const removeTargetsChunkSize = 5000
 
 // delItem removes all hostMap entries matching any of the given targets in a single scan.
 func (i *ListInputProvider) delItem(targets ...*contextargs.MetaInput) {
-	type parsedTarget struct {
-		hostname string
-		port     string
-		regex    *regexp.Regexp
-	}
-
-	var parsed []parsedTarget
+	var parsed []exclusionRule
 	for _, mi := range targets {
-		targetUrl, err := urlutil.ParseURL(mi.Input, true)
-		if err != nil {
-			continue
+		if rule, ok := parseHostExclusion(mi.Input); ok {
+			parsed = append(parsed, rule)
 		}
-		entry := parsedTarget{hostname: targetUrl.Hostname(), port: targetUrl.Port()}
-		if net.ParseIP(entry.hostname) == nil && !strings.Contains(mi.Input, "://") && strings.ContainsAny(mi.Input, `*+?[](){}|^$\`) {
-			entry.regex, _ = regexp.Compile(mi.Input)
-		}
-		parsed = append(parsed, entry)
 	}
 	if len(parsed) == 0 {
 		return
 	}
 
-	var keysToDelete []string
+	var keysToDelete []excludedInput
 	i.hostMap.Scan(func(k, _ []byte) error {
 		var tmpMetaInput contextargs.MetaInput
 		if err := tmpMetaInput.Unmarshal(string(k)); err != nil {
@@ -545,23 +543,20 @@ func (i *ListInputProvider) delItem(targets ...*contextargs.MetaInput) {
 			return nil
 		}
 		for _, pt := range parsed {
-			matchingHost := strings.EqualFold(tmpUrl.Hostname(), pt.hostname)
-			if ip := net.ParseIP(pt.hostname); ip != nil {
-				matchingHost = ip.Equal(net.ParseIP(tmpUrl.Hostname()))
-			}
-			if (matchingHost && (pt.port == "" || pt.port == tmpUrl.Port())) || (pt.regex != nil && pt.regex.MatchString(tmpUrl.Host)) {
-				keysToDelete = append(keysToDelete, tmpKey)
+			if pt.matches(tmpUrl.Hostname(), tmpUrl.Port(), tmpUrl.Host, tmpMetaInput.CustomIP) {
+				keysToDelete = append(keysToDelete, excludedInput{key: tmpKey, target: tmpMetaInput.Input, rule: pt.raw})
 				break
 			}
 		}
 		return nil
 	})
 
-	for _, key := range keysToDelete {
-		_ = i.hostMap.Del(key)
-		i.excludedHosts[key] = struct{}{}
+	for _, item := range keysToDelete {
+		_ = i.hostMap.Del(item.key)
+		i.excludedHosts[item.key] = item.rule
 		i.excludedCount++
 		i.inputCount--
+		logExcludedTarget(item.target, item.rule)
 	}
 }
 
@@ -593,7 +588,7 @@ func (i *ListInputProvider) removeTargets(targets []string) {
 
 	// CIDR targets: single scan with containment check
 	if len(cidrs) > 0 {
-		var keysToDelete []string
+		var keysToDelete []excludedInput
 		i.hostMap.Scan(func(k, _ []byte) error {
 			var mi contextargs.MetaInput
 			if err := mi.Unmarshal(string(k)); err != nil {
@@ -607,16 +602,20 @@ func (i *ListInputProvider) removeTargets(targets []string) {
 			if err != nil {
 				return nil
 			}
-			if matchesCIDR(parsed.Hostname(), cidrs) || (mi.CustomIP != "" && matchesCIDR(mi.CustomIP, cidrs)) {
-				keysToDelete = append(keysToDelete, key)
+			for _, cidr := range cidrs {
+				if (exclusionRule{network: cidr}).matches(parsed.Hostname(), parsed.Port(), parsed.Host, mi.CustomIP) {
+					keysToDelete = append(keysToDelete, excludedInput{key: key, target: mi.Input, rule: cidr.String()})
+					break
+				}
 			}
 			return nil
 		})
-		for _, key := range keysToDelete {
-			_ = i.hostMap.Del(key)
-			i.excludedHosts[key] = struct{}{}
+		for _, item := range keysToDelete {
+			_ = i.hostMap.Del(item.key)
+			i.excludedHosts[item.key] = item.rule
 			i.excludedCount++
 			i.inputCount--
+			logExcludedTarget(item.target, item.rule)
 		}
 	}
 
@@ -635,17 +634,4 @@ func (i *ListInputProvider) removeTargets(targets []string) {
 		}
 		i.delItem(metaInputs...)
 	}
-}
-
-func matchesCIDR(host string, cidrs []*net.IPNet) bool {
-	ip := net.ParseIP(host)
-	if ip == nil {
-		return false
-	}
-	for _, ipnet := range cidrs {
-		if ipnet.Contains(ip) {
-			return true
-		}
-	}
-	return false
 }

@@ -1,3 +1,25 @@
+## 2026-11-04 20:02 修复禁扫目标仍被前置探测
+
+- 变动目录：`pkg/input/provider/list/`、`server/internal/service/`、根目录文档。
+- 变动文件：
+  - `pkg/input/provider/list/exclusions.go`：新增可复用的禁扫规则匹配器，按主机、端口、正则、CIDR 和 ASN 规则过滤目标，供服务端在前置探测前使用。
+  - `pkg/input/provider/list/hmap.go`、`hmap_test.go`：主扫描输入过滤复用同一匹配逻辑，并验证两条执行路径对精确主机、端口、正则及 CIDR 的判断一致。
+  - `server/internal/service/scan_task_service.go`：在任何前置探测之前记录禁扫命中日志，将允许目标分别传给前置探测与主扫描；全部目标被排除时直接跳过执行，插件数量记为 0。
+  - `server/internal/service/scan_task_exclusions_test.go`：验证普通扫描和截图任务的禁扫目标不产生 HTTP 请求，混合目标中的允许目标仍被探测并进入主扫描。
+  - `server/API.md`：补充禁扫事件的触发时机和前置探测、截图、主扫描的过滤范围。
+- 修改目的或影响：修复任务 432 这类全部命中禁扫名单的目标仍发生前置探测请求的问题；禁扫日志在请求之前可见。
+
+## 2026-11-04 19:43 记录禁扫名单命中目标
+
+- 变动目录：`pkg/input/provider/list/`、`server/internal/pkg/scanruntime/`、`server/internal/service/`、根目录文档。
+- 变动文件：
+  - `pkg/input/provider/list/hmap.go`：在输入目标被精确规则、正则或 CIDR 禁扫规则移除时，记录目标和首次命中的规则；后续动态发现同一已排除目标时也记录跳过原因。
+  - `pkg/input/provider/list/hmap_test.go`：验证被排除目标对应的规则和未被排除目标状态。
+  - `server/internal/pkg/scanruntime/runtime.go`、`runtime_test.go`：将扫描器的禁扫日志转为可见的 `target_excluded` 任务事件，并覆盖主扫描输出解析。
+  - `server/internal/service/scan_task_asset_domain.go`、`scan_task_asset_domain_test.go`：主动指纹子进程的输出也保留禁扫事件，并覆盖 stderr 解析。
+  - `server/API.md`：说明禁扫事件和所有目标被排除时的插件数量口径。
+- 修改目的或影响：任务目标命中禁扫名单时，扫描日志明确显示被跳过的目标及规则，避免任务以 0 插件、0 命中结束却没有原因提示；过滤规则和扫描行为不变。
+
 ## 2026-10-30 23:21 移除漏洞结果自动脱敏
 
 - 变动目录：`pkg/output/`

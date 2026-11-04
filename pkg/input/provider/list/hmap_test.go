@@ -73,7 +73,7 @@ func TestExcludeTargetsMatchesHostsPrecisely(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			hm, err := hybrid.New(hybrid.DefaultDiskOptions)
 			require.NoError(t, err)
-			input := &ListInputProvider{hostMap: hm, excludedHosts: make(map[string]struct{}), ipOptions: &ipOptions{IPV4: true}}
+			input := &ListInputProvider{hostMap: hm, excludedHosts: make(map[string]string), ipOptions: &ipOptions{IPV4: true}}
 			t.Cleanup(input.Close)
 			for _, target := range tt.targets {
 				meta := contextargs.NewMetaInput()
@@ -96,6 +96,22 @@ func TestExcludeTargetsMatchesHostsPrecisely(t *testing.T) {
 			})
 			require.ElementsMatch(t, tt.remaining, remaining)
 			require.Equal(t, int64(len(tt.targets)-len(tt.remaining)), input.excludedCount)
+			remainingSet := make(map[string]struct{}, len(tt.remaining))
+			matcher := NewExclusionMatcher([]string{tt.exclude})
+			for _, target := range tt.remaining {
+				remainingSet[target] = struct{}{}
+			}
+			for _, target := range tt.targets {
+				_, shouldRemain := remainingSet[target]
+				rule, excluded := input.excludedRule(target)
+				require.Equal(t, !shouldRemain, excluded, target)
+				preflightRule, preflightExcluded := matcher.Match(target)
+				require.Equal(t, excluded, preflightExcluded, target)
+				if excluded {
+					require.Equal(t, tt.exclude, rule, target)
+					require.Equal(t, tt.exclude, preflightRule, target)
+				}
+			}
 		})
 	}
 }

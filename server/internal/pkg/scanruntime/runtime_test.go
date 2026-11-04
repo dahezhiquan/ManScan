@@ -401,6 +401,27 @@ func TestStreamCommandOutputCapturesAutomaticTemplateCountInfo(t *testing.T) {
 	}
 }
 
+func TestStreamCommandOutputRecordsExcludedTarget(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewState(106, "task-106", "runtime-task", 1, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	input := strings.NewReader("[INF] [禁扫跳过] 目标 \"10.107.70.175:22\" 命中规则 \"10.107.70.175\"\n[INF] Targets loaded for current scan: 0\n")
+	StreamCommandOutput(input, state, "stderr", false)
+
+	events := state.EventsSince(0, 10).Events
+	if len(events) != 1 {
+		t.Fatalf("events = %+v, want one exclusion event", events)
+	}
+	if events[0].Level != "info" || events[0].Type != "target_excluded" || events[0].Message != "[禁扫跳过] 目标 \"10.107.70.175:22\" 命中规则 \"10.107.70.175\"" {
+		t.Fatalf("event = %+v, want visible target and matching rule", events[0])
+	}
+}
+
 func TestTrimAutomaticFingerprintMessageRequiresTarget(t *testing.T) {
 	t.Parallel()
 

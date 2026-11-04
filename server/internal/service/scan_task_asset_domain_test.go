@@ -1478,6 +1478,22 @@ func TestStreamAssetDomainFingerprintTemplateStatsRecordsStderrStats(t *testing.
 	}
 }
 
+func TestStreamAssetDomainFingerprintTemplateStatsRecordsExcludedTarget(t *testing.T) {
+	t.Parallel()
+
+	state, err := scanruntime.NewState(432, "task-432", "fingerprint-task", 1, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	streamAssetDomainFingerprintTemplateStats(strings.NewReader("[INF] [禁扫跳过] 目标 \"10.107.70.175:22\" 命中规则 \"10.107.70.175\"\n"), state, nil)
+	events := state.EventsSince(0, 10).Events
+	if len(events) != 1 || events[0].Type != "target_excluded" || events[0].Level != "info" {
+		t.Fatalf("events = %+v, want visible exclusion event", events)
+	}
+}
+
 func TestAssetDomainFingerprintTemplateStatsCanDeferTotal(t *testing.T) {
 	t.Parallel()
 

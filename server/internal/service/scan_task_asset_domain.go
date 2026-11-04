@@ -1422,8 +1422,9 @@ func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context
 		streamAssetDomainFingerprintTemplateStats(stderrPipe, state, statsTracker)
 	}()
 
-	waitErr := cmd.Wait()
+	// Wait closes StdoutPipe and StderrPipe, so drain both readers first.
 	wg.Wait()
+	waitErr := cmd.Wait()
 	queue.CloseAndWait()
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return nil, context.Canceled
@@ -1609,6 +1610,12 @@ func streamAssetDomainFingerprintTemplateResults(reader io.Reader, queue *assetD
 	}
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
+		if exclusionMessage, ok := scanruntime.ParseExcludedTargetLogLine(line); ok {
+			if state != nil {
+				state.Append("info", "target_excluded", exclusionMessage)
+			}
+			continue
+		}
 		if !strings.HasPrefix(line, "{") {
 			continue
 		}
@@ -1631,6 +1638,12 @@ func streamAssetDomainFingerprintTemplateStats(reader io.Reader, state *scanrunt
 	}
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
+		if exclusionMessage, ok := scanruntime.ParseExcludedTargetLogLine(line); ok {
+			if state != nil {
+				state.Append("info", "target_excluded", exclusionMessage)
+			}
+			continue
+		}
 		if !strings.HasPrefix(line, "{") {
 			continue
 		}

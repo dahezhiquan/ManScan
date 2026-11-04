@@ -1178,6 +1178,10 @@ func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream
 				continue
 			}
 		}
+		if exclusionMessage, ok := ParseExcludedTargetLogLine(line); ok {
+			state.Append("info", "target_excluded", exclusionMessage)
+			continue
+		}
 
 		if level, message, ok := ClassifyScannerLogLine(line); ok {
 			if httpStatsCapture {
@@ -1667,6 +1671,19 @@ func ClassifyScannerLogLine(line string) (string, string, bool) {
 	default:
 		return "", "", false
 	}
+}
+
+// ParseExcludedTargetLogLine identifies a scan target skipped by an exclusion rule.
+func ParseExcludedTargetLogLine(line string) (string, bool) {
+	level, message, ok := ClassifyScannerLogLine(line)
+	if !ok || level != "info" {
+		return "", false
+	}
+	message = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(message, "[INF]"), "[INFO]"))
+	if !strings.HasPrefix(message, "[禁扫跳过] 目标 ") {
+		return "", false
+	}
+	return message, true
 }
 
 func ReadScannerErrorEvents(path string, skip int64) ([]TaskLogEvent, int64) {
