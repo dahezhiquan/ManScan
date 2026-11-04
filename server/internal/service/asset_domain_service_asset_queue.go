@@ -23,6 +23,7 @@ const (
 var (
 	assetDomainComponentVersionTokenPattern  = regexp.MustCompile(`(?i)^v?\d+(?:[._-]\d+)*(?:[-+._~]?[0-9a-z]+)*$`)
 	assetDomainComponentVersionPrefixPattern = regexp.MustCompile(`(?i)^(v?\d+(?:[._-]\d+)*(?:[-+._~]?[0-9a-z]+)*),\s*built on\b`)
+	assetSSHSoftwareVersionPattern           = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9.+_-]*)[ _/-]([0-9]+(?:[._-][0-9]+)*(?:p[0-9]+)?)$`)
 )
 
 type assetDomainServiceAssetResultEvent struct {
@@ -518,6 +519,14 @@ func assetDomainFingerprintExtractedVersions(payload map[string]interface{}, com
 	if len(extractedResults) == 0 {
 		return versions
 	}
+	if strings.TrimSpace(scanruntime.AsString(payload["template-id"])) == "ssh-server-enumeration" && len(componentNames) == 1 && componentNames[0] == "ssh" {
+		for _, extracted := range extractedResults {
+			if version := normalizeAssetSSHSoftwareVersion(extracted); version != "" {
+				versions["ssh"] = version
+				return versions
+			}
+		}
+	}
 
 	componentSet := make(map[string]struct{}, len(componentNames))
 	for _, name := range componentNames {
@@ -580,6 +589,14 @@ func normalizeAssetDomainComponentVersion(value string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeAssetSSHSoftwareVersion(value string) string {
+	matches := assetSSHSoftwareVersionPattern.FindStringSubmatch(strings.TrimSpace(value))
+	if len(matches) != 3 {
+		return ""
+	}
+	return matches[1] + " " + matches[2]
 }
 
 func uniqueComponentNames(values []string) []string {

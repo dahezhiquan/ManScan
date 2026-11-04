@@ -2442,6 +2442,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o domain-assets.xlsx "http://
 - 说明：
   - `service_assets` 来自 `manscan_asset_domain_service_assets`，按当前域名精确匹配 `domain` 字段。
   - `service_assets[].app_version` 为可空字符串；未识别到版本时返回 `null`。
+  - SSH 指纹的 `service_assets[].app_version` 包含软件名称和版本，例如 `OpenSSH 7.4`、`WeOnlyDo 2.4.3`。
   - `title_histories` 来自 `manscan_asset_domain_title_history`，按当前域名精确匹配 `domain` 字段。
   - `vulnerability_count` 表示漏洞表中 `asset_endpoint` 等于当前域名资产 `domain` 的记录数量，但不统计 `status` 为 `fixed`、`false_positive`、`ignored` 的漏洞。
   - `risk_level` 表示过滤上述状态后的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
@@ -2659,6 +2660,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o host-assets.xlsx "http://12
 
 - 说明：
   - `ports` 来自 `manscan_asset_host_port`，按当前主机精确匹配 `ip_address` 字段。
+  - SSH 指纹的 `ports[].app_version` 包含软件名称和版本，例如 `OpenSSH 7.4`、`WeOnlyDo 2.4.3`。
   - `ports[].is_high_risk_port` 为可空布尔值；数据库值为 `NULL` 时接口返回 `null`，`false` 表示已确认非高危端口。
   - `vulnerability_count` 表示漏洞表中 `asset_host` 等于当前主机 `ip_address` 的记录数量，但不统计 `status` 为 `fixed`、`false_positive`、`ignored` 的漏洞。
   - `risk_level` 表示过滤上述状态后的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
@@ -3059,14 +3061,14 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/third-party-api-keys/1" \
 ## 漏洞情报分页查询
 
 - 请求方法和路径：`GET /api/v1/vulnerability-intelligence-records`，需要登录。
-- 请求参数：`page` 为可选正整数，默认 `1`；`page_size` 为可选整数，范围 `1-100`，默认 `10`。`source`、`vulnerability_id`、`vul_name`、`severity` 为可选字符串模糊查询；`is_poc`、`is_kev` 为可选布尔值（支持 `true`/`false`、`1`/`0`、`yes`/`no`、`y`/`n`）。`is_kev=true` 匹配数据库 `is_kev` 或 `is_vkev` 任一为 true 的记录；`is_kev=false` 匹配两者均不为 true 的记录。
+- 请求参数：`page` 为可选正整数，默认 `1`；`page_size` 为可选整数，范围 `1-100`，默认 `10`。`source`、`vulnerability_id`、`vul_name` 为可选字符串模糊查询；`severity` 为可选字符串或字符串数组，支持逗号分隔（如 `severity=critical,high`）及重复参数（如 `severity=critical&severity=high`），多个等级按“或”匹配，每个值仍执行模糊查询，并与其他筛选条件按“且”组合。`is_poc`、`is_kev` 为可选布尔值（支持 `true`/`false`、`1`/`0`、`yes`/`no`、`y`/`n`）。`is_kev=true` 匹配数据库 `is_kev` 或 `is_vkev` 任一为 true 的记录；`is_kev=false` 匹配两者均不为 true 的记录。
 - 响应格式：统一响应 envelope 中的 `data` 为分页对象，包含 `page`、`pageSize`、`total`、`totalPages`、`items`。每条记录仅返回 `source`、`vulnerability_id`、`created_at`、`updated_at`、`cvss_score`、`vul_name`、`is_kev`、`is_poc`、`severity`；`is_kev` 在数据库 `is_kev` 或 `is_vkev` 任一为 true 时为 true，否则为 false。其他数据库可空字段保持 `null`。按 `created_at DESC, id DESC` 排序。
 - 错误码：`40001` 分页参数或布尔筛选参数非法，`40101` 未登录或令牌无效，`50001` 数据库查询失败。
 - 使用示例：
 
 ```bash
 curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  "http://127.0.0.1:8686/api/v1/vulnerability-intelligence-records?page=1&page_size=10&source=vulnx&vulnerability_id=CVE-2026&vul_name=RCE&is_poc=true&severity=critical&is_kev=true"
+  "http://127.0.0.1:8686/api/v1/vulnerability-intelligence-records?page=1&page_size=10&source=vulnx&vulnerability_id=CVE-2026&vul_name=RCE&is_poc=true&severity=critical,high&is_kev=true"
 ```
 
 ```json
@@ -3089,6 +3091,30 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
       "is_poc": false,
       "severity": "critical"
     }]
+  }
+}
+```
+
+## 漏洞情报高危等级统计
+
+- 请求方法和路径：`GET /api/v1/vulnerability-intelligence-records/stats`，需要登录。
+- 请求参数：无。
+- 响应格式：统一响应 envelope 中的 `data.last_7_days` 和 `data.last_30_days` 均为整数，分别表示对应时间窗口内 `critical` 与 `high` 等级合并后的记录数量；无匹配记录时返回 `0`。按 `manscan_vulnerability_intelligence_records` 的记录行数统计，不按漏洞编号去重；`created_at` 从请求时刻向前滚动 7×24 小时或 30×24 小时，起止时刻均包含，未来时间和空时间不计入。严重等级大小写不敏感；近 7 天计数包含在近 30 天计数中。
+- 错误码：`40101` 未登录或令牌无效，`50001` 数据库查询失败。
+- 使用示例：
+
+```bash
+curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  "http://127.0.0.1:8686/api/v1/vulnerability-intelligence-records/stats"
+```
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "last_7_days": 3,
+    "last_30_days": 7
   }
 }
 ```

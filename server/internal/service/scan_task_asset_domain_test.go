@@ -1178,6 +1178,60 @@ func TestAssetDomainFingerprintVersionIgnoresProductNameFallback(t *testing.T) {
 	}
 }
 
+func TestAssetDomainFingerprintSSHVersionKeepsSoftwareName(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"ssh-server-enumeration": {
+					ID:       "ssh-server-enumeration",
+					Name:     "SSH 服务识别（指纹识别）",
+					Tags:     []string{"js", "ssh", "detect", "network", "discovery"},
+					Severity: "info",
+				},
+			},
+		},
+	}
+
+	for _, tc := range []struct {
+		name      string
+		extracted string
+		want      string
+	}{
+		{name: "OpenSSH", extracted: "OpenSSH_7.4", want: "OpenSSH 7.4"},
+		{name: "WeOnlyDo", extracted: "WeOnlyDo 2.4.3", want: "WeOnlyDo 2.4.3"},
+		{name: "OpenSSH patch", extracted: "OpenSSH_9.2p1", want: "OpenSSH 9.2p1"},
+		{name: "no software version", extracted: "", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]interface{}{
+				"template-id": "ssh-server-enumeration",
+				"matched-at":  "172.30.72.230:22",
+				"type":        "javascript",
+				"info": map[string]interface{}{
+					"name": "SSH 服务识别（指纹识别）",
+					"tags": []interface{}{"js", "ssh", "detect", "network", "discovery"},
+				},
+			}
+			if tc.extracted != "" {
+				payload["extracted-results"] = []interface{}{tc.extracted}
+			}
+			observations, err := svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), payload)
+			if err != nil {
+				t.Fatalf("buildAssetDomainServiceAssetsFromPayload() error = %v", err)
+			}
+			if len(observations) != 1 || observations[0].AppName != "ssh" || observations[0].AppVersion != tc.want {
+				t.Fatalf("observations = %+v, want ssh version %q", observations, tc.want)
+			}
+			_, hostPorts := splitAssetServiceAssetObservations(context.Background(), observations, nil, nil)
+			if len(hostPorts) != 1 || hostPorts[0].AppVersion != tc.want {
+				t.Fatalf("host ports = %+v, want version %q", hostPorts, tc.want)
+			}
+		})
+	}
+}
+
 func TestAssetDomainFingerprintVersionKeepsZooKeeperBuildVersion(t *testing.T) {
 	t.Parallel()
 

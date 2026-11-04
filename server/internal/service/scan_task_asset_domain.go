@@ -762,7 +762,15 @@ func uniqueAssetHostPortObservations(values []repository.AssetHostPortObservatio
 		value.PortProtocol = normalizeAssetHostPortProtocol(value.PortProtocol)
 		value.ServiceName = normalizeAssetDomainComponentName(value.ServiceName)
 		value.AppName = normalizeAssetDomainComponentName(value.AppName)
-		value.AppVersion = normalizeAssetDomainComponentVersion(value.AppVersion)
+		if value.ServiceName == "ssh" {
+			if version := normalizeAssetSSHSoftwareVersion(value.AppVersion); version != "" {
+				value.AppVersion = version
+			} else {
+				value.AppVersion = normalizeAssetDomainComponentVersion(value.AppVersion)
+			}
+		} else {
+			value.AppVersion = normalizeAssetDomainComponentVersion(value.AppVersion)
+		}
 		if value.IPAddress == "" || value.PortNumber == 0 {
 			continue
 		}

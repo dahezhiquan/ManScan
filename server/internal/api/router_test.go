@@ -109,7 +109,7 @@ func TestThirdPartyAPIKeyRoutesRequireAuthentication(t *testing.T) {
 func TestVulnerabilityIntelligenceRouteRequiresAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
-	for _, path := range []string{"/api/v1/vulnerability-intelligence-records", "/api/v1/vulnerability-intelligence-records/CVE-2026-1"} {
+	for _, path := range []string{"/api/v1/vulnerability-intelligence-records", "/api/v1/vulnerability-intelligence-records/stats", "/api/v1/vulnerability-intelligence-records/CVE-2026-1"} {
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusUnauthorized {
@@ -209,8 +209,9 @@ type noopVulnerabilityHandler struct{}
 
 type noopVulnerabilityIntelligenceHandler struct{}
 
-func (noopVulnerabilityIntelligenceHandler) List(*gin.Context) {}
-func (noopVulnerabilityIntelligenceHandler) Get(*gin.Context)  {}
+func (noopVulnerabilityIntelligenceHandler) List(*gin.Context)  {}
+func (noopVulnerabilityIntelligenceHandler) Stats(*gin.Context) {}
+func (noopVulnerabilityIntelligenceHandler) Get(*gin.Context)   {}
 
 func (noopVulnerabilityHandler) List(*gin.Context)              {}
 func (noopVulnerabilityHandler) Export(*gin.Context)            {}

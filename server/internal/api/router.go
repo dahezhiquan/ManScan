@@ -60,6 +60,7 @@ func NewRouter(
 	protected.PATCH("/vulnerabilities/:id/status", vulnerabilityHandler.UpdateStatus)
 	protected.GET("/vulnerabilities/:id", vulnerabilityHandler.Detail)
 	protected.GET("/vulnerability-intelligence-records", vulnerabilityIntelligenceHandler.List)
+	protected.GET("/vulnerability-intelligence-records/stats", vulnerabilityIntelligenceHandler.Stats)
 	protected.GET("/vulnerability-intelligence-records/:vulnerability_id", vulnerabilityIntelligenceHandler.Get)
 
 	protected.GET("/domain-assets", assetDomainHandler.List)
