@@ -3092,3 +3092,32 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   }
 }
 ```
+
+## 漏洞情报详情查询
+
+- 请求方法和路径：`GET /api/v1/vulnerability-intelligence-records/:vulnerability_id`，需要登录。
+- 请求参数：路径参数 `vulnerability_id`，必填字符串，按完整编号精确查询，去除首尾空白后长度为 1-128 字节，不允许 NUL、回车、换行或制表符。编号应按 URL 路径规则编码。
+- 响应格式：统一响应 envelope 中的 `data` 包含 `records`、`articles`、`components`、`pocs`、`shodan_exposures` 五个数组，对应五张 `manscan_vulnerability_intelligence_*` 表的全部字段，字段名为数据库小写下划线命名。`records` 返回同一编号来自不同来源的全部记录；其余数组按相同编号查询，无关联行时返回 `[]`。各数组按 `id ASC` 排序，可空字段返回 `null`。
+- 错误码：`40001` 编号非法，`40101` 未登录或令牌无效，`40401` 主记录不存在，`50001` 数据库查询失败。
+- 使用示例：
+
+```bash
+curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  "http://127.0.0.1:8686/api/v1/vulnerability-intelligence-records/CVE-2026-12345"
+```
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "records": [{"id": 1, "source": "vulnx", "vulnerability_id": "CVE-2026-12345", "description": "示例描述"}],
+    "articles": [{"id": 2, "vulnerability_id": "CVE-2026-12345", "url": "https://example.test/advisory"}],
+    "components": [{"id": 3, "vulnerability_id": "CVE-2026-12345", "product": "example", "cpe": []}],
+    "pocs": [],
+    "shodan_exposures": []
+  }
+}
+```
+
+示例仅展示部分字段；实际响应会返回每条记录的全部字段。

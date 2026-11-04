@@ -30,6 +30,10 @@ func (s *vulnxRepositoryStub) List(context.Context, dto.ListVulnerabilityIntelli
 	return &dto.PageResult[entity.VulnerabilityIntelligenceRecord]{}, nil
 }
 
+func (s *vulnxRepositoryStub) FindByVulnerabilityID(context.Context, string) (*repository.VulnerabilityIntelligenceDetailData, error) {
+	return nil, nil
+}
+
 func (s *vulnxRepositoryStub) Replace(_ context.Context, bundle *repository.VulnerabilityIntelligenceBundle) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
