@@ -20,6 +20,7 @@ type AssetDomainRepository interface {
 	ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error)
 	SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error
 	SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error
+	MarkServiceAssetsInactive(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error
 }
 
 type assetDomainRepository struct {
@@ -165,6 +166,17 @@ func (r *assetDomainRepository) SyncServiceAssets(ctx context.Context, observati
 		}
 		return markStaleAssetDomainServiceAssets(ctx, tx, observations, checkedDomains, observedAt)
 	})
+}
+
+func (r *assetDomainRepository) MarkServiceAssetsInactive(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error {
+	checkedDomains = uniqueNonEmptyAssetDomains(checkedDomains)
+	if len(checkedDomains) == 0 {
+		return nil
+	}
+	if observedAt.IsZero() {
+		observedAt = time.Now()
+	}
+	return markStaleAssetDomainServiceAssets(ctx, r.db, uniqueAssetDomainServiceAssetObservations(observations), checkedDomains, observedAt)
 }
 
 func (r *assetDomainRepository) List(ctx context.Context, query dto.ListAssetDomainsQuery) (*dto.PageResult[AssetDomainListRecord], error) {

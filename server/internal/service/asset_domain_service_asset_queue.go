@@ -27,7 +27,8 @@ var (
 )
 
 type assetDomainServiceAssetResultEvent struct {
-	payload map[string]interface{}
+	payload         map[string]interface{}
+	completedTarget string
 }
 
 type assetDomainServiceAssetQueue struct {
@@ -209,6 +210,14 @@ func (q *assetDomainServiceAssetQueue) runWorker() {
 				q.flush(batch)
 				return
 			}
+			if event.completedTarget != "" {
+				flushed := q.flush(batch)
+				batch = batch[:0]
+				if flushed {
+					q.syncCompletedTarget(event.completedTarget)
+				}
+				continue
+			}
 			observations := q.build(event)
 			q.record(observations)
 			recordAssetDomainFingerprintObservations(q.state, observations)
@@ -251,14 +260,58 @@ func (q *assetDomainServiceAssetQueue) record(observations []repository.AssetDom
 	q.observations = append(q.observations, observations...)
 }
 
-func (q *assetDomainServiceAssetQueue) flush(batch []repository.AssetDomainServiceAssetObservation) {
+func (q *assetDomainServiceAssetQueue) flush(batch []repository.AssetDomainServiceAssetObservation) bool {
 	batch = uniqueAssetDomainServiceAssetObservations(batch)
 	if len(batch) == 0 {
-		return
+		return true
 	}
 
-	if err := q.service.syncAssetServiceAssets(context.Background(), batch, nil, q.NetworkRegions(), q.DomainObservations(), time.Now()); err != nil && q.service.logger != nil {
-		q.service.logger.Error("batch sync asset service assets failed", "count", len(batch), "error", err)
+	if err := q.service.syncAssetServiceAssets(context.Background(), batch, nil, q.NetworkRegions(), q.DomainObservations(), time.Now()); err != nil {
+		if q.service.logger != nil {
+			q.service.logger.Error("batch sync asset service assets failed", "count", len(batch), "error", err)
+		}
+		return false
+	}
+	return true
+}
+
+func (q *assetDomainServiceAssetQueue) syncCompletedTarget(target string) {
+	if !q.FingerprintStaleSyncEnabled() || q.service.assetDomainRepository == nil {
+		return
+	}
+	q.resolverMu.RLock()
+	resolver := q.resolver
+	q.resolverMu.RUnlock()
+	domain := ""
+	if resolver != nil {
+		domain = resolver.Resolve(map[string]interface{}{"input": target})
+	}
+	if domain == "" {
+		domain = assetDomainFingerprintDomainFromTarget(target)
+	}
+	checked := false
+	for _, value := range q.CheckedDomains() {
+		if value == domain {
+			checked = true
+			break
+		}
+	}
+	if !checked || len(filterDomainServiceAssetCheckedDomains(context.Background(), []string{domain}, q.DomainObservations())) == 0 {
+		return
+	}
+	observations := make([]repository.AssetDomainServiceAssetObservation, 0)
+	for _, observation := range q.Observations() {
+		if observation.Domain == domain {
+			observations = append(observations, observation)
+		}
+	}
+	if err := q.service.assetDomainRepository.MarkServiceAssetsInactive(context.Background(), observations, []string{domain}, time.Now()); err != nil {
+		if q.service.logger != nil {
+			q.service.logger.Error("sync completed fingerprint target failed", "domain", domain, "error", err)
+		}
+		if q.state != nil {
+			q.state.Append("warn", "asset_service_asset_target_sync_failed", "指纹识别完成，但同步域名组件存活状态失败")
+		}
 	}
 }
 

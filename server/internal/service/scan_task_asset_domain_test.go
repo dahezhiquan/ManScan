@@ -914,29 +914,53 @@ func TestCloseAssetDomainServiceAssetQueueDoesNotResyncDomainLiveness(t *testing
 	}
 }
 
-func TestSyncFinishedAssetDomainServiceAssetsMarksStaleForCompletedTask(t *testing.T) {
+func TestFingerprintTargetCompletionMarksStaleWithoutFinalResync(t *testing.T) {
+	t.Parallel()
+
+	repo := &assetDomainRepositoryStub{}
+	repo.markServiceAssetSignal = make(chan struct{}, 1)
+	svc := &scanTaskService{assetDomainRepository: repo}
+	queue := newAssetDomainServiceAssetQueue(svc)
+	queue.RecordCheckedDomains([]string{"app.example.com:443", "other.example.com:443"})
+	queue.RecordDomainObservations([]repository.AssetDomainObservation{{Domain: "app.example.com:443"}})
+	queue.record([]repository.AssetDomainServiceAssetObservation{{
+		Domain:  "app.example.com:443",
+		AppName: "nginx",
+	}})
+	queue.Enqueue(assetDomainServiceAssetResultEvent{completedTarget: "https://app.example.com"})
+	select {
+	case <-repo.markServiceAssetSignal:
+	case <-time.After(3 * time.Second):
+		t.Fatal("first target did not sync before other targets or task completion")
+	}
+	svc.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{assetDomainServiceAssetQueue: queue}, true)
+
+	if len(repo.markServiceAssetCheckedDomains) != 1 {
+		t.Fatalf("MarkServiceAssetsInactive calls = %d, want 1", len(repo.markServiceAssetCheckedDomains))
+	}
+	if got := repo.markServiceAssetCheckedDomains[0]; len(got) != 1 || got[0] != "app.example.com:443" {
+		t.Fatalf("completed target checkedDomains = %v, want only completed domain", got)
+	}
+	if got := repo.markServiceAssetObservations[0]; len(got) != 1 || got[0].AppName != "nginx" {
+		t.Fatalf("completed target observations = %+v, want recorded nginx observation", got)
+	}
+	if len(repo.syncServiceAssetCheckedDomains) != 0 {
+		t.Fatalf("SyncServiceAssets calls = %d, want no final component resync", len(repo.syncServiceAssetCheckedDomains))
+	}
+}
+
+func TestFingerprintTargetCompletionRequiresStaleSyncEnabled(t *testing.T) {
 	t.Parallel()
 
 	repo := &assetDomainRepositoryStub{}
 	svc := &scanTaskService{assetDomainRepository: repo}
 	queue := newAssetDomainServiceAssetQueue(svc)
+	queue.SetFingerprintStaleSyncEnabled(false)
 	queue.RecordCheckedDomains([]string{"app.example.com:443"})
-	queue.record([]repository.AssetDomainServiceAssetObservation{{
-		Domain:  "app.example.com:443",
-		AppName: "nginx",
-	}})
+	queue.Enqueue(assetDomainServiceAssetResultEvent{completedTarget: "https://app.example.com"})
 	queue.CloseAndWait()
-
-	svc.syncFinishedAssetDomainServiceAssets(queue, nil)
-
-	if len(repo.syncServiceAssetCheckedDomains) != 1 {
-		t.Fatalf("SyncServiceAssets calls = %d, want 1", len(repo.syncServiceAssetCheckedDomains))
-	}
-	if got := repo.syncServiceAssetCheckedDomains[0]; len(got) != 1 || got[0] != "app.example.com:443" {
-		t.Fatalf("final SyncServiceAssets checkedDomains = %v, want completed checked domain", got)
-	}
-	if got := repo.syncServiceAssetObservations[0]; len(got) != 1 || got[0].AppName != "nginx" {
-		t.Fatalf("final SyncServiceAssets observations = %+v, want recorded nginx observation", got)
+	if len(repo.markServiceAssetCheckedDomains) != 0 {
+		t.Fatalf("MarkServiceAssetsInactive calls = %d, want none with fingerprint sync disabled", len(repo.markServiceAssetCheckedDomains))
 	}
 }
 
@@ -958,6 +982,8 @@ func TestAssetDomainServiceAssetQueueStreamsFingerprintObservations(t *testing.T
 		},
 	}
 	queue := newAssetDomainServiceAssetQueue(svc, state)
+	queue.RecordCheckedDomains([]string{"app.example.com:8443"})
+	queue.RecordDomainObservations([]repository.AssetDomainObservation{{Domain: "app.example.com:8443"}})
 	queue.Enqueue(assetDomainServiceAssetResultEvent{payload: map[string]interface{}{
 		"template-id":       "nginx-detect",
 		"matched-at":        "https://app.example.com:8443/login",
@@ -970,7 +996,15 @@ func TestAssetDomainServiceAssetQueueStreamsFingerprintObservations(t *testing.T
 			"tags": []interface{}{"tech", "nginx", "http"},
 		},
 	}})
+	queue.Enqueue(assetDomainServiceAssetResultEvent{completedTarget: "https://app.example.com:8443"})
 	queue.CloseAndWait()
+	repo := svc.assetDomainRepository.(*assetDomainRepositoryStub)
+	if len(repo.syncServiceAssetObservations) != 1 || len(repo.markServiceAssetObservations) != 1 {
+		t.Fatalf("component syncs = %d, stale checks = %d, want result flush before completion", len(repo.syncServiceAssetObservations), len(repo.markServiceAssetObservations))
+	}
+	if got := repo.markServiceAssetObservations[0]; len(got) != 1 || got[0].AppName != "nginx" {
+		t.Fatalf("completed target observations = %+v, want flushed nginx result", got)
+	}
 
 	summary := state.SnapshotResultSummary()
 	if summary.TechCount != 1 {
@@ -1380,6 +1414,9 @@ type assetDomainRepositoryStub struct {
 	syncObservationCheckedDomains  [][]string
 	syncServiceAssetObservations   [][]repository.AssetDomainServiceAssetObservation
 	syncServiceAssetCheckedDomains [][]string
+	markServiceAssetObservations   [][]repository.AssetDomainServiceAssetObservation
+	markServiceAssetCheckedDomains [][]string
+	markServiceAssetSignal         chan struct{}
 }
 
 func (s *assetDomainRepositoryStub) List(context.Context, dto.ListAssetDomainsQuery) (*dto.PageResult[repository.AssetDomainListRecord], error) {
@@ -1411,6 +1448,15 @@ func (s *assetDomainRepositoryStub) SyncObservations(_ context.Context, observat
 func (s *assetDomainRepositoryStub) SyncServiceAssets(_ context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, _ time.Time) error {
 	s.syncServiceAssetObservations = append(s.syncServiceAssetObservations, append([]repository.AssetDomainServiceAssetObservation(nil), observations...))
 	s.syncServiceAssetCheckedDomains = append(s.syncServiceAssetCheckedDomains, append([]string(nil), checkedDomains...))
+	return nil
+}
+
+func (s *assetDomainRepositoryStub) MarkServiceAssetsInactive(_ context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, _ time.Time) error {
+	s.markServiceAssetObservations = append(s.markServiceAssetObservations, append([]repository.AssetDomainServiceAssetObservation(nil), observations...))
+	s.markServiceAssetCheckedDomains = append(s.markServiceAssetCheckedDomains, append([]string(nil), checkedDomains...))
+	if s.markServiceAssetSignal != nil {
+		s.markServiceAssetSignal <- struct{}{}
+	}
 	return nil
 }
 

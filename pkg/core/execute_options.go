@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -61,6 +62,12 @@ func (e *Engine) ExecuteScanWithOpts(ctx context.Context, templatesList []*templ
 
 	// 0 matches means no templates were found in the directory
 	if len(finalTemplates) == 0 {
+		if os.Getenv("MANSCAN_ASSET_DOMAIN_FINGERPRINT_TARGET_EVENTS") == "preflight" {
+			target.Iterate(func(value *contextargs.MetaInput) bool {
+				e.emitFingerprintTargetCompleted(value.Input)
+				return true
+			})
+		}
 		return &atomic.Bool{}
 	}
 
@@ -183,10 +190,24 @@ func (e *Engine) executeHostSpray(ctx context.Context, templatesList []*template
 		go func(targetval *contextargs.MetaInput) {
 			defer wp.Done()
 			e.executeTemplatesOnTarget(ctx, templatesList, targetval, results)
+			if ctx.Err() == nil && os.Getenv("MANSCAN_ASSET_DOMAIN_FINGERPRINT_TARGET_EVENTS") == "preflight" {
+				e.emitFingerprintTargetCompleted(targetval.Input)
+			}
 		}(value)
 		return true
 	})
 	return results
+}
+
+func (e *Engine) emitFingerprintTargetCompleted(target string) {
+	if e.executerOpts == nil || e.executerOpts.Output == nil {
+		return
+	}
+	if emitter, ok := e.executerOpts.Output.(interface{ WriteFingerprintTargetCompleted(string) error }); ok {
+		if err := emitter.WriteFingerprintTargetCompleted(target); err != nil && e.Logger != nil {
+			e.Logger.Warning().Msgf("Could not emit fingerprint completion for %s: %s", target, err)
+		}
+	}
 }
 
 type targetExecutionStats struct {

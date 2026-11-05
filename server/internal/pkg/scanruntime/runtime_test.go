@@ -377,6 +377,26 @@ func TestStreamCommandOutputCapturesAutomaticFingerprintInfo(t *testing.T) {
 	}
 }
 
+func TestStreamCommandOutputForwardsFingerprintCompletionWithoutResult(t *testing.T) {
+	t.Parallel()
+	state, err := NewState(106, "task-106", "runtime-task", 1, t.TempDir())
+	if err != nil {
+		t.Fatalf("NewState() error = %v", err)
+	}
+	defer state.Close()
+
+	var targets []string
+	StreamCommandOutputWithResultHandler(strings.NewReader(`{"_manscan_event":"fingerprint_target_completed","target":"https://app.example.com"}`+"\n"), state, "stdout", true, func(payload map[string]interface{}) {
+		targets = append(targets, AsString(payload["target"]))
+	})
+	if len(targets) != 1 || targets[0] != "https://app.example.com" {
+		t.Fatalf("completion targets = %v", targets)
+	}
+	if events := state.EventsSince(0, 10).Events; len(events) != 0 {
+		t.Fatalf("completion control event became a result: %+v", events)
+	}
+}
+
 func TestStreamCommandOutputCapturesAutomaticTemplateCountInfo(t *testing.T) {
 	t.Parallel()
 

@@ -39,6 +39,17 @@ func (mw *MultiWriter) Write(event *ResultEvent) error {
 	return nil
 }
 
+func (mw *MultiWriter) WriteFingerprintTargetCompleted(target string) error {
+	for _, writer := range mw.writers {
+		if emitter, ok := writer.(interface{ WriteFingerprintTargetCompleted(string) error }); ok {
+			if err := emitter.WriteFingerprintTargetCompleted(target); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (mw *MultiWriter) WriteFailure(event *InternalWrappedEvent) error {
 	for _, writer := range mw.writers {
 		if err := writer.WriteFailure(event); err != nil {

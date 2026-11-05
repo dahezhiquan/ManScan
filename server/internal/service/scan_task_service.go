@@ -863,6 +863,9 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	cmd := exec.CommandContext(cmdCtx, executable, args...)
 	cmd.Dir = s.rootDir
 	cmd.Env = append(os.Environ(), assetDomainFingerprintCacheEnv+"="+fingerprintCachePath)
+	if plan.Raw.AutomaticScan {
+		cmd.Env = append(cmd.Env, "MANSCAN_ASSET_DOMAIN_FINGERPRINT_TARGET_EVENTS=automatic")
+	}
 	prepareTaskCommand(cmd)
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -970,7 +973,6 @@ func (s *scanTaskService) closeAssetDomainServiceAssetQueue(runtime *scanTaskRun
 	queue.CloseAndWait()
 	if syncStale {
 		s.syncFinishedAssetHostHTTPPorts(queue, runtime.state)
-		s.syncFinishedAssetDomainServiceAssets(queue, runtime.state)
 	}
 	runtime.assetDomainServiceAssetQueue = nil
 }
@@ -986,28 +988,6 @@ func (s *scanTaskService) syncFinishedAssetHostHTTPPorts(queue *assetDomainServi
 	if err := s.syncInactiveAssetHostHTTPPorts(context.Background(), checkedDomains, queue.DomainObservations(), queue.NetworkRegions(), state); err != nil {
 		if s.logger != nil {
 			s.logger.Error("sync finished inactive asset host http ports failed", "checked_domain_count", len(checkedDomains), "error", err)
-		}
-	}
-}
-
-func (s *scanTaskService) syncFinishedAssetDomainServiceAssets(queue *assetDomainServiceAssetQueue, state *scanruntime.State) {
-	if queue == nil {
-		return
-	}
-	checkedDomains := queue.CheckedDomains()
-	if len(checkedDomains) == 0 {
-		return
-	}
-	if !queue.FingerprintStaleSyncEnabled() {
-		checkedDomains = nil
-	}
-	observations := queue.Observations()
-	if err := s.syncAssetServiceAssets(context.Background(), observations, checkedDomains, queue.NetworkRegions(), queue.DomainObservations(), time.Now()); err != nil {
-		if s.logger != nil {
-			s.logger.Error("sync finished asset service assets failed", "service_asset_count", len(observations), "checked_domain_count", len(checkedDomains), "error", err)
-		}
-		if state != nil {
-			state.Append("warn", "asset_service_asset_final_sync_failed", "扫描完成，但同步资产组件最终存活状态失败")
 		}
 	}
 }

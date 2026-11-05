@@ -2344,6 +2344,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
   - `critical_count`、`high_count`、`medium_count`、`low_count` 表示上述关联漏洞中各严重等级的数量，按漏洞表 `severity` 字段统计。
   - `risk_level` 表示当前资产的最高风险等级，按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
   - `component_count` 表示域名组件表中 `domain` 等于当前域名资产 `domain` 且 `is_alive = true` 的组件数量。
+  - 组件在扫描前被动指纹识别或后续指纹结果写入时更新 `last_found_at`；`first_found_at` 仅在首次发现时设置。单个目标完成主动指纹识别或自动模板映射的指纹识别后，立即将该地址本次未识别到的旧组件设为 `is_alive=false`，不改动其发现时间；未启用这两类识别时不执行旧组件失活检查。任务成功结束时不再重复同步组件或改写 `last_found_at`。
   - `title`、`region` 为模糊筛选；`risk_level=high` 仅返回最高风险等级为高危的资产，存在严重漏洞的资产会归入 `critical`。
   - 列表默认按最近存活时间和 ID 倒序排序。
   - 当前后端表结构没有 `organization`、`scan_task`、`business_system` 字段，因此这些前端筛选项不会作为服务端查询条件。
@@ -2445,6 +2446,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o domain-assets.xlsx "http://
 - 说明：
   - `is_alive`、`first_alive_at`、`last_alive_at` 与域名资产清单采用相同的扫描前探测同步口径；任务结束时不再重写 `last_alive_at`。
   - `service_assets` 来自 `manscan_asset_domain_service_assets`，按当前域名精确匹配 `domain` 字段。
+  - `service_assets[].first_found_at` 仅记录首次发现时间；`last_found_at` 在扫描前被动识别或后续指纹结果写入时更新。新识别到的组件立即设为 `is_alive=true`；启用主动指纹识别或自动模板映射时，每个目标的指纹识别完成后，立即将该地址本次未识别到的旧组件设为 `is_alive=false`，但保留两个发现时间。未启用这两类识别时不执行旧组件失活检查；任务成功结束时不再重复同步或改写 `last_found_at`。
   - `service_assets[].app_version` 为可空字符串；未识别到版本时返回 `null`。
   - SSH 指纹的 `service_assets[].app_version` 包含软件名称和版本，例如 `OpenSSH 7.4`、`WeOnlyDo 2.4.3`。
   - `title_histories` 来自 `manscan_asset_domain_title_history`，按当前域名精确匹配 `domain` 字段。

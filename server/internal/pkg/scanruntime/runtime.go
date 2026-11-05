@@ -1254,6 +1254,12 @@ func HandleJSONResultLineWithResultHandler(line string, state *State, resultHand
 	if err := json.Unmarshal([]byte(line), &payload); err != nil {
 		return false
 	}
+	if payload["_manscan_event"] == "fingerprint_target_completed" {
+		if resultHandler != nil {
+			resultHandler(payload)
+		}
+		return true
+	}
 
 	if IsMatcherStatusFailurePayload(payload) {
 		state.Append("info", "match_failure", FormatJSONMatcherFailureMessage(payload))

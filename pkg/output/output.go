@@ -2,6 +2,7 @@ package output
 
 import (
 	"encoding/base64"
+	stdjson "encoding/json"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -382,6 +383,24 @@ func (w *StandardWriter) Write(event *ResultEvent) error {
 	}
 	w.resultCount.Add(1)
 	return nil
+}
+
+// WriteFingerprintTargetCompleted emits an ordered control event after a target's fingerprint results.
+func (w *StandardWriter) WriteFingerprintTargetCompleted(target string) error {
+	if w == nil || !w.json || w.DisableStdout || target == "" {
+		return nil
+	}
+	data, err := stdjson.Marshal(map[string]string{
+		"_manscan_event": "fingerprint_target_completed",
+		"target":         target,
+	})
+	if err != nil {
+		return err
+	}
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+	_, err = os.Stdout.Write(append(data, '\n'))
+	return err
 }
 
 // JSONLogRequest is a trace/error log request written to file

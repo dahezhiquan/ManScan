@@ -164,16 +164,15 @@ func TestDisabledPreflightFingerprintKeepsPassiveProbeAndCache(t *testing.T) {
 	repo.syncServiceAssetObservations = nil
 	repo.syncServiceAssetCheckedDomains = nil
 	hostPortRepo.observationValues = nil
-	service.syncFinishedAssetHostHTTPPorts(queue, state)
-	service.syncFinishedAssetDomainServiceAssets(queue, state)
+	service.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{state: state, assetDomainServiceAssetQueue: queue}, true)
 	if len(hostPortRepo.inactiveObservationValues) != 0 {
 		t.Fatalf("host port stale syncs = %+v, want none without active fingerprinting", hostPortRepo.inactiveObservationValues)
 	}
-	if len(repo.syncServiceAssetCheckedDomains) != 1 || len(repo.syncServiceAssetCheckedDomains[0]) != 0 {
-		t.Fatalf("service asset checked domains = %+v, want empty stale scope without active fingerprinting", repo.syncServiceAssetCheckedDomains)
+	if len(repo.markServiceAssetCheckedDomains) != 0 {
+		t.Fatalf("component stale syncs = %+v, want none without active fingerprinting", repo.markServiceAssetCheckedDomains)
 	}
-	if len(repo.syncServiceAssetObservations) != 1 || len(repo.syncServiceAssetObservations[0]) == 0 {
-		t.Fatalf("service asset observations = %+v, want current passive fingerprints retained", repo.syncServiceAssetObservations)
+	if len(repo.syncServiceAssetObservations) != 0 {
+		t.Fatalf("component final resyncs = %+v, want none", repo.syncServiceAssetObservations)
 	}
 	beforeReuse := requests.Load()
 	if err := service.syncAliveAssetDomainsBeforeScan(context.Background(), request, []string{server.URL}, state, fingerprintCachePath, preflightCachePath, nil, nil); err != nil {

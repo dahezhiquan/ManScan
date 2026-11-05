@@ -1,3 +1,18 @@
+## 2026-11-05 19:13 域名组件按目标完成指纹识别后同步存活状态
+
+- 变动目录：`pkg/core/`、`pkg/output/`、`pkg/protocols/common/automaticscan/`、`server/internal/`，并同步更新根目录变更记录。
+- 变动文件：
+  - `pkg/core/execute_options.go`：主动指纹的逐目标执行完成后发出目标完成事件；没有可执行模板时也逐目标发出完成事件。
+  - `pkg/output/output.go`、`pkg/output/multi_writer.go`：将目标完成事件写入有序 JSON 输出流，并透传给组合输出器。
+  - `pkg/protocols/common/automaticscan/automaticscan.go`：自动模板映射在单个目标完成指纹探测和检测模板后发出完成事件。
+  - `server/internal/pkg/scanruntime/runtime.go`、`runtime_test.go`：解析并转发目标完成事件，避免将控制事件记录为扫描结果。
+  - `server/internal/repository/asset_domain_repository.go`、`asset_domain_repository_test.go`：新增仅将旧组件标记失活的仓储操作，并验证不改写首次及最近发现时间。
+  - `server/internal/service/asset_domain_service_asset_queue.go`：按输出顺序先持久化指纹结果，再对已完成目标执行旧组件失活检查。
+  - `server/internal/service/scan_task_asset_domain.go`、`scan_task_asset_domain_test.go`、`scan_task_preflight_fingerprint_test.go`：前置主动指纹按目标执行并接收完成事件，逐目标同步组件状态；覆盖无识别功能与任务结束场景。
+  - `server/internal/service/scan_task_service.go`、`vulnerability_result.go`：自动映射启用目标完成事件，并移除任务成功结束时的组件二次同步。
+  - `server/API.md`：同步域名资产列表与详情接口的组件发现时间和存活状态口径。
+- 修改目的或影响：单个目标识别完成后即可看到该地址旧组件的最新 `is_alive`，无须等待其他目标或任务结束；`last_found_at` 只在组件被实际识别并写入时更新，旧组件失活和任务结束均不改写发现时间。
+
 ## 2026-11-04 20:02 修复禁扫目标仍被前置探测
 
 - 变动目录：`pkg/input/provider/list/`、`server/internal/service/`、根目录文档。

@@ -185,9 +185,15 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		if runtime != nil && runtime.IsPauseRequested() {
 			return errScanTaskPausedBeforeProcess
 		}
+		if aliveErr == nil && serviceAssetQueue != nil {
+			serviceAssetQueue.record(activeServiceAssets)
+		}
 		unresponsiveServiceAssets, unresponsiveErr := s.runAssetDomainFingerprintTemplates(ctx, request, pendingUnresponsiveFingerprintTargets, filepath.Dir(fingerprintCachePath), state, runtime, true)
 		if runtime != nil && runtime.IsPauseRequested() {
 			return errScanTaskPausedBeforeProcess
+		}
+		if unresponsiveErr == nil && serviceAssetQueue != nil {
+			serviceAssetQueue.record(unresponsiveServiceAssets)
 		}
 		if err := firstNonNilError(aliveErr, unresponsiveErr); err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -205,9 +211,6 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 			preflightCache.markActiveFingerprintDone(pendingUnresponsiveFingerprintTargets, activeServiceAssets)
 			if err := writeAssetDomainPreflightCache(preflightCachePath, preflightCache); err != nil && s.logger != nil {
 				s.logger.Error("write asset domain preflight cache failed", "path", preflightCachePath, "error", err)
-			}
-			if serviceAssetQueue != nil {
-				serviceAssetQueue.record(activeServiceAssets)
 			}
 			if state != nil {
 				state.Append("info", "asset_domain_fingerprint_template_finished", "智能主动指纹识别完成，"+assetDomainComponentCountSummary(activeServiceAssets))
@@ -1394,6 +1397,14 @@ func (s *scanTaskService) runAssetDomainFingerprintTemplates(ctx context.Context
 	if queue == nil {
 		return nil, nil
 	}
+	if runtime != nil && runtime.assetDomainServiceAssetQueue != nil {
+		mainQueue := runtime.assetDomainServiceAssetQueue
+		queue.RecordDomainObservations(mainQueue.DomainObservations())
+		queue.RecordCheckedDomains(mainQueue.CheckedDomains())
+		queue.SetNetworkRegions(mainQueue.NetworkRegions())
+		queue.record(mainQueue.Observations())
+	}
+	cmd.Env = append(os.Environ(), "MANSCAN_ASSET_DOMAIN_FINGERPRINT_TARGET_EVENTS=preflight")
 	statsTracker := &assetDomainFingerprintTemplateStatsTracker{deferTotal: true}
 
 	if err := cmd.Start(); err != nil {
@@ -1508,7 +1519,7 @@ func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskReques
 	appendFlag("--sni", request.SNI)
 	appendFlag("-sip", request.SourceIP)
 	appendFlag("--project-path", request.ProjectPath)
-	appendFlag("-ss", firstNonEmpty(request.ScanStrategy, "auto"))
+	appendFlag("-ss", "host-spray")
 	for _, item := range cleanStringSlice(request.HeadlessOptionalArguments) {
 		args = append(args, "-ho", item)
 	}
@@ -1624,6 +1635,12 @@ func streamAssetDomainFingerprintTemplateResults(reader io.Reader, queue *assetD
 		}
 		var payload map[string]interface{}
 		if err := json.Unmarshal([]byte(line), &payload); err != nil {
+			continue
+		}
+		if payload["_manscan_event"] == "fingerprint_target_completed" {
+			if queue != nil {
+				queue.Enqueue(assetDomainServiceAssetResultEvent{completedTarget: strings.TrimSpace(scanruntime.AsString(payload["target"]))})
+			}
 			continue
 		}
 		queue.Enqueue(assetDomainServiceAssetResultEvent{payload: payload})

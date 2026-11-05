@@ -1069,6 +1069,40 @@ func TestAssetDomainRepositorySyncServiceAssets(t *testing.T) {
 	}
 }
 
+func TestAssetDomainRepositoryMarkServiceAssetsInactivePreservesFoundTimes(t *testing.T) {
+	t.Parallel()
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	if err := db.AutoMigrate(&entity.AssetDomainServiceAsset{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+	first := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	last := first.Add(time.Hour)
+	for _, name := range []string{"nginx", "tomcat"} {
+		if err := db.Create(&entity.AssetDomainServiceAsset{
+			Domain: "app.example.com:443", AppName: name, FirstFoundAt: first, LastFoundAt: last, IsAlive: true,
+		}).Error; err != nil {
+			t.Fatalf("Create(%s) error = %v", name, err)
+		}
+	}
+	repo := NewAssetDomainRepository(db)
+	if err := repo.MarkServiceAssetsInactive(context.Background(), []AssetDomainServiceAssetObservation{{Domain: "app.example.com:443", AppName: "nginx"}}, []string{"app.example.com:443"}, last.Add(time.Hour)); err != nil {
+		t.Fatalf("MarkServiceAssetsInactive() error = %v", err)
+	}
+	for name, wantAlive := range map[string]bool{"nginx": true, "tomcat": false} {
+		var asset entity.AssetDomainServiceAsset
+		if err := db.Where("domain = ? AND app_name = ?", "app.example.com:443", name).First(&asset).Error; err != nil {
+			t.Fatalf("Find(%s) error = %v", name, err)
+		}
+		if asset.IsAlive != wantAlive || !asset.FirstFoundAt.Equal(first) || !asset.LastFoundAt.Equal(last) {
+			t.Fatalf("asset %s = %+v, want alive=%t with unchanged found times", name, asset, wantAlive)
+		}
+	}
+}
+
 func TestAssetDomainRepositoryListNetworkItems(t *testing.T) {
 	t.Parallel()
 

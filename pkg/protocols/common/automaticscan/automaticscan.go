@@ -336,6 +336,13 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 	finalTags = filterAutomaticScanExecutionTags(finalTags)
 
 	s.opts.Logger.Info().Msgf("%s 已完成自动指纹识别：%s", input.Input, automaticFingerprintTagsMessage(finalTags))
+	if os.Getenv("MANSCAN_ASSET_DOMAIN_FINGERPRINT_TARGET_EVENTS") == "automatic" {
+		if emitter, ok := s.opts.Output.(interface{ WriteFingerprintTargetCompleted(string) error }); ok {
+			if err := emitter.WriteFingerprintTargetCompleted(input.Input); err != nil {
+				s.opts.Logger.Warning().Msgf("Could not emit fingerprint completion for %s: %s", input.Input, err)
+			}
+		}
+	}
 
 	if len(finalTags) == 0 {
 		gologger.Warning().Msgf("Skipping automatic scan since no vulnerability tags were found on %v\n", input.Input)
