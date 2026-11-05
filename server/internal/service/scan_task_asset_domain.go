@@ -139,7 +139,7 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 		return err
 	}
 
-	if err := s.assetDomainRepository.SyncObservations(ctx, probeResult.Observations, nil, time.Now()); err != nil {
+	if err := s.assetDomainRepository.SyncObservations(ctx, probeResult.Observations, probeResult.CheckedDomains, time.Now()); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}

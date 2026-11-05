@@ -969,30 +969,10 @@ func (s *scanTaskService) closeAssetDomainServiceAssetQueue(runtime *scanTaskRun
 	queue := runtime.assetDomainServiceAssetQueue
 	queue.CloseAndWait()
 	if syncStale {
-		s.syncFinishedAssetDomainObservations(queue, runtime.state)
 		s.syncFinishedAssetHostHTTPPorts(queue, runtime.state)
 		s.syncFinishedAssetDomainServiceAssets(queue, runtime.state)
 	}
 	runtime.assetDomainServiceAssetQueue = nil
-}
-
-func (s *scanTaskService) syncFinishedAssetDomainObservations(queue *assetDomainServiceAssetQueue, state *scanruntime.State) {
-	if s.assetDomainRepository == nil || queue == nil {
-		return
-	}
-	checkedDomains := queue.CheckedDomains()
-	if len(checkedDomains) == 0 {
-		return
-	}
-	observations := queue.DomainObservations()
-	if err := s.assetDomainRepository.SyncObservations(context.Background(), observations, checkedDomains, time.Now()); err != nil {
-		if s.logger != nil {
-			s.logger.Error("sync finished asset domain observations failed", "alive_domain_count", len(observations), "checked_domain_count", len(checkedDomains), "error", err)
-		}
-		if state != nil {
-			state.Append("warn", "asset_domain_final_sync_failed", "扫描完成，但同步域名资产最终存活状态失败")
-		}
-	}
 }
 
 func (s *scanTaskService) syncFinishedAssetHostHTTPPorts(queue *assetDomainServiceAssetQueue, state *scanruntime.State) {

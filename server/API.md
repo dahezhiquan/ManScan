@@ -2336,6 +2336,8 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
 ```
 
 - 说明：
+  - 域名资产在扫描前 HTTP 探测完成后同步存活状态：成功取得响应的地址设为 `is_alive=true`，本次已检查但未取得响应的已有地址设为 `is_alive=false`；任务成功结束时不再重复同步域名存活状态。
+  - `first_alive_at` 记录首次探测存活的同步时间，已有值不覆盖；`last_alive_at` 记录最近一次探测存活的扫描前同步时间。探测不存活时保留两个时间字段的原值。
   - `request`、`response` 分别表示该域名资产最近一次探测保存的请求与响应原文；没有记录时返回空字符串。
   - `has_form`、`has_upload`、`has_admin`、`has_uc_login`、`has_baidu_login` 为可空布尔值；数据库值为 `NULL` 时接口返回 `null`，`false` 表示已确认不存在。
   - `vulnerability_count` 表示漏洞表中 `asset_endpoint` 等于当前域名资产 `domain` 的记录数量。
@@ -2441,6 +2443,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o domain-assets.xlsx "http://
 ```
 
 - 说明：
+  - `is_alive`、`first_alive_at`、`last_alive_at` 与域名资产清单采用相同的扫描前探测同步口径；任务结束时不再重写 `last_alive_at`。
   - `service_assets` 来自 `manscan_asset_domain_service_assets`，按当前域名精确匹配 `domain` 字段。
   - `service_assets[].app_version` 为可空字符串；未识别到版本时返回 `null`。
   - SSH 指纹的 `service_assets[].app_version` 包含软件名称和版本，例如 `OpenSSH 7.4`、`WeOnlyDo 2.4.3`。

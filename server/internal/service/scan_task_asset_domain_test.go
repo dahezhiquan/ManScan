@@ -742,7 +742,7 @@ func TestRecordAssetDomainFingerprintObservationsCountsUniqueTechResults(t *test
 	}
 }
 
-func TestSyncAliveAssetDomainsBeforeScanDefersServiceAssetStaleMarking(t *testing.T) {
+func TestSyncAliveAssetDomainsBeforeScanUpdatesDomainLiveness(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -760,7 +760,7 @@ func TestSyncAliveAssetDomainsBeforeScanDefersServiceAssetStaleMarking(t *testin
 		AutomaticScan:    true,
 		ProbeConcurrency: 1,
 		Timeout:          3,
-	}, []string{server.URL}, state, "", "", queue, nil); err != nil {
+	}, []string{server.URL, "http://127.0.0.1:1"}, state, "", "", queue, nil); err != nil {
 		t.Fatalf("syncAliveAssetDomainsBeforeScan() error = %v", err)
 	}
 
@@ -770,14 +770,17 @@ func TestSyncAliveAssetDomainsBeforeScanDefersServiceAssetStaleMarking(t *testin
 	if len(repo.syncObservationCheckedDomains) != 1 {
 		t.Fatalf("SyncObservations calls = %d, want 1", len(repo.syncObservationCheckedDomains))
 	}
-	if got := repo.syncObservationCheckedDomains[0]; len(got) != 0 {
-		t.Fatalf("pre-scan SyncObservations checkedDomains = %v, want nil/empty to defer stale marking", got)
+	if got := repo.syncObservationCheckedDomains[0]; len(got) != 2 {
+		t.Fatalf("pre-scan SyncObservations checkedDomains = %v, want alive and unresponsive endpoints", got)
+	}
+	if got := repo.syncObservationValues[0]; len(got) != 1 {
+		t.Fatalf("pre-scan SyncObservations observations = %+v, want only the responsive endpoint", got)
 	}
 	if got := repo.syncServiceAssetCheckedDomains[0]; len(got) != 0 {
 		t.Fatalf("pre-scan SyncServiceAssets checkedDomains = %v, want nil/empty to defer stale marking", got)
 	}
-	if checked := queue.CheckedDomains(); len(checked) != 1 || !strings.Contains(checked[0], ":") {
-		t.Fatalf("queue.CheckedDomains() = %v, want probed endpoint recorded", checked)
+	if checked := queue.CheckedDomains(); len(checked) != 2 {
+		t.Fatalf("queue.CheckedDomains() = %v, want both probed endpoints recorded", checked)
 	}
 }
 
@@ -893,7 +896,7 @@ func TestAssetDomainPreflightCacheRequiresActiveFingerprintForManualScan(t *test
 	}
 }
 
-func TestSyncFinishedAssetDomainObservationsMarksStaleForCompletedTask(t *testing.T) {
+func TestCloseAssetDomainServiceAssetQueueDoesNotResyncDomainLiveness(t *testing.T) {
 	t.Parallel()
 
 	repo := &assetDomainRepositoryStub{}
@@ -904,18 +907,10 @@ func TestSyncFinishedAssetDomainObservationsMarksStaleForCompletedTask(t *testin
 		Domain:         "app.example.com:443",
 		HTTPStatusCode: http.StatusOK,
 	}})
-	queue.CloseAndWait()
+	svc.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{assetDomainServiceAssetQueue: queue}, true)
 
-	svc.syncFinishedAssetDomainObservations(queue, nil)
-
-	if len(repo.syncObservationCheckedDomains) != 1 {
-		t.Fatalf("SyncObservations calls = %d, want 1", len(repo.syncObservationCheckedDomains))
-	}
-	if got := repo.syncObservationCheckedDomains[0]; len(got) != 2 {
-		t.Fatalf("final SyncObservations checkedDomains = %v, want completed checked domains", got)
-	}
-	if got := repo.syncObservationValues[0]; len(got) != 1 || got[0].Domain != "app.example.com:443" {
-		t.Fatalf("final SyncObservations observations = %+v, want recorded alive observation", got)
+	if len(repo.syncObservationCheckedDomains) != 0 {
+		t.Fatalf("SyncObservations calls = %d, want no domain liveness resync at task completion", len(repo.syncObservationCheckedDomains))
 	}
 }
 
