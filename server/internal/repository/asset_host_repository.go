@@ -206,7 +206,7 @@ func (r *assetHostRepository) withAssetHostListStats(db *gorm.DB) *gorm.DB {
 			WHERE asset_host IS NOT NULL AND asset_host <> ''
 			GROUP BY asset_host
 		) AS v ON v.asset_host = h.ip_address`).
-		Joins("LEFT JOIN (SELECT ip_address, COUNT(*) AS port_count FROM manscan_asset_host_port WHERE ip_address <> '' AND is_alive = ? GROUP BY ip_address) AS p ON p.ip_address = h.ip_address", true)
+		Joins("LEFT JOIN (SELECT ip_address, COUNT(DISTINCT port_number) AS port_count FROM manscan_asset_host_port WHERE ip_address <> '' AND is_alive = ? GROUP BY ip_address) AS p ON p.ip_address = h.ip_address", true)
 }
 
 func (r *assetHostRepository) applyListFilters(db *gorm.DB, query dto.ListAssetHostsQuery) *gorm.DB {

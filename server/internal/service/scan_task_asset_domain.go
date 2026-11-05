@@ -159,6 +159,9 @@ func (s *scanTaskService) syncAliveAssetDomainsBeforeScan(ctx context.Context, r
 	if err := s.syncAliveAssetHostPortsFromDomainObservations(ctx, probeResult.Observations, networkRegions, state); err != nil {
 		return err
 	}
+	if err := s.syncInactiveAssetHostHTTPPorts(ctx, probeResult.CheckedDomains, probeResult.Observations, networkRegions, state); err != nil {
+		return err
+	}
 	if err := s.syncAssetServiceAssets(ctx, probeResult.ServiceAssets, nil, networkRegions, probeResult.Observations, time.Now()); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
@@ -544,7 +547,7 @@ func (s *scanTaskService) syncInactiveAssetHostHTTPPorts(ctx context.Context, ch
 			s.logger.Error("sync inactive asset host http ports failed", "port_count", len(hostPortObservations), "error", err)
 		}
 		if state != nil {
-			state.Append("warn", "asset_host_port_inactive_sync_failed", "扫描完成，但同步不存活 HTTP 端口失败")
+			state.Append("warn", "asset_host_port_inactive_sync_failed", "扫描前探测完成，但同步不存活 HTTP 端口失败")
 		}
 	}
 	return nil
@@ -777,7 +780,7 @@ func uniqueAssetHostPortObservations(values []repository.AssetHostPortObservatio
 		if value.IPAddress == "" || value.PortNumber == 0 {
 			continue
 		}
-		key := value.IPAddress + "\x00" + value.PortProtocol + "\x00" + strconv.FormatUint(uint64(value.PortNumber), 10)
+		key := value.IPAddress + "\x00" + value.PortProtocol + "\x00" + strconv.FormatUint(uint64(value.PortNumber), 10) + "\x00" + value.ServiceName
 		if _, ok := seen[key]; ok {
 			continue
 		}

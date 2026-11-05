@@ -15,6 +15,7 @@ import (
 type AssetHostPortRepository interface {
 	SyncObservations(ctx context.Context, observations []AssetHostPortObservation, observedAt time.Time) error
 	MarkHTTPPortsInactive(ctx context.Context, observations []AssetHostPortObservation) error
+	MarkServicesInactive(ctx context.Context, ipAddress string, portNumber uint, observed []AssetHostPortObservation) error
 }
 
 type assetHostPortRepository struct {
@@ -54,6 +55,21 @@ func (r *assetHostPortRepository) MarkHTTPPortsInactive(ctx context.Context, obs
 	return nil
 }
 
+// MarkServicesInactive marks unobserved services on one IP port inactive without changing observation times.
+func (r *assetHostPortRepository) MarkServicesInactive(ctx context.Context, ipAddress string, portNumber uint, observed []AssetHostPortObservation) error {
+	if ipAddress == "" || portNumber == 0 {
+		return nil
+	}
+	query := r.db.WithContext(ctx).Model(&entity.AssetHostPort{}).
+		Where("ip_address = ? AND port_number = ? AND is_alive = ?", ipAddress, portNumber, true)
+	for _, item := range uniqueAssetHostPortObservations(observed) {
+		if item.IPAddress == ipAddress && item.PortNumber == portNumber {
+			query = query.Where("NOT (port_protocol = ? AND service_name = ?)", item.PortProtocol, item.ServiceName)
+		}
+	}
+	return query.Update("is_alive", false).Error
+}
+
 func (r *assetHostPortRepository) SyncObservations(ctx context.Context, observations []AssetHostPortObservation, observedAt time.Time) error {
 	observations = uniqueAssetHostPortObservations(observations)
 	if len(observations) == 0 {
@@ -79,16 +95,13 @@ func (r *assetHostPortRepository) SyncObservations(ctx context.Context, observat
 				"port_created_at": observedAt,
 				"port_protocol":   observation.PortProtocol,
 				"port_number":     observation.PortNumber,
-				"service_name":    nil,
+				"service_name":    observation.ServiceName,
 				"app_name":        nil,
 				"app_version":     nil,
 				"is_alive":        observation.IsAlive,
 			}
 			if observation.Region != "" {
 				item["region"] = observation.Region
-			}
-			if observation.ServiceName != "" {
-				item["service_name"] = observation.ServiceName
 			}
 			if observation.AppName != "" {
 				item["app_name"] = observation.AppName
@@ -105,11 +118,11 @@ func (r *assetHostPortRepository) SyncObservations(ctx context.Context, observat
 					{Name: "ip_address"},
 					{Name: "port_protocol"},
 					{Name: "port_number"},
+					{Name: "service_name"},
 				},
 				DoUpdates: clause.AssignmentColumns([]string{
 					"region",
 					"last_alive_at",
-					"service_name",
 					"app_name",
 					"app_version",
 					"is_alive",
@@ -135,7 +148,7 @@ func uniqueAssetHostPortObservations(values []AssetHostPortObservation) []AssetH
 		if value.IPAddress == "" || value.PortNumber == 0 {
 			continue
 		}
-		key := value.IPAddress + "\x00" + value.PortProtocol + "\x00" + strconv.FormatUint(uint64(value.PortNumber), 10)
+		key := value.IPAddress + "\x00" + value.PortProtocol + "\x00" + strconv.FormatUint(uint64(value.PortNumber), 10) + "\x00" + value.ServiceName
 		if _, ok := seen[key]; ok {
 			continue
 		}

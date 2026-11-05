@@ -505,6 +505,25 @@ func TestSyncAssetServiceAssetsRoutesIPEndpointsToHostPorts(t *testing.T) {
 	}
 }
 
+func TestSyncAssetServiceAssetsKeepsMultipleFingerprintsOnSameIPPort(t *testing.T) {
+	t.Parallel()
+
+	hostPortRepo := &assetHostPortRepositoryStub{}
+	svc := &scanTaskService{assetHostPortRepository: hostPortRepo}
+	if err := svc.syncAssetServiceAssets(context.Background(), []repository.AssetDomainServiceAssetObservation{
+		{Domain: "10.72.160.153:8080", AppName: "nginx"},
+		{Domain: "10.72.160.153:8080", AppName: "tomcat"},
+	}, nil, nil, nil, time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("syncAssetServiceAssets() error = %v", err)
+	}
+	if len(hostPortRepo.observationValues) != 1 || len(hostPortRepo.observationValues[0]) != 2 {
+		t.Fatalf("host port observations = %+v, want two fingerprints on one port", hostPortRepo.observationValues)
+	}
+	if got := hostPortRepo.observationValues[0]; got[0].ServiceName != "nginx" || got[1].ServiceName != "tomcat" {
+		t.Fatalf("host port services = %+v, want nginx and tomcat", got)
+	}
+}
+
 func TestSyncAssetServiceAssetsKeepsHTTPServiceForHTTPProbedIPEndpoint(t *testing.T) {
 	t.Parallel()
 
@@ -900,17 +919,21 @@ func TestCloseAssetDomainServiceAssetQueueDoesNotResyncDomainLiveness(t *testing
 	t.Parallel()
 
 	repo := &assetDomainRepositoryStub{}
-	svc := &scanTaskService{assetDomainRepository: repo}
+	hostPortRepo := &assetHostPortRepositoryStub{}
+	svc := &scanTaskService{assetDomainRepository: repo, assetHostPortRepository: hostPortRepo}
 	queue := newAssetDomainServiceAssetQueue(svc)
 	queue.RecordCheckedDomains([]string{"app.example.com:443", "down.example.com:443"})
 	queue.RecordDomainObservations([]repository.AssetDomainObservation{{
 		Domain:         "app.example.com:443",
 		HTTPStatusCode: http.StatusOK,
 	}})
-	svc.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{assetDomainServiceAssetQueue: queue}, true)
+	svc.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{assetDomainServiceAssetQueue: queue})
 
 	if len(repo.syncObservationCheckedDomains) != 0 {
 		t.Fatalf("SyncObservations calls = %d, want no domain liveness resync at task completion", len(repo.syncObservationCheckedDomains))
+	}
+	if len(hostPortRepo.observationValues) != 0 || len(hostPortRepo.inactiveObservationValues) != 0 || len(hostPortRepo.staleTargets) != 0 {
+		t.Fatalf("host port syncs at task completion: observations=%v inactive=%v stale=%v", hostPortRepo.observationValues, hostPortRepo.inactiveObservationValues, hostPortRepo.staleTargets)
 	}
 }
 
@@ -933,7 +956,7 @@ func TestFingerprintTargetCompletionMarksStaleWithoutFinalResync(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("first target did not sync before other targets or task completion")
 	}
-	svc.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{assetDomainServiceAssetQueue: queue}, true)
+	svc.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{assetDomainServiceAssetQueue: queue})
 
 	if len(repo.markServiceAssetCheckedDomains) != 1 {
 		t.Fatalf("MarkServiceAssetsInactive calls = %d, want 1", len(repo.markServiceAssetCheckedDomains))
@@ -961,6 +984,48 @@ func TestFingerprintTargetCompletionRequiresStaleSyncEnabled(t *testing.T) {
 	queue.CloseAndWait()
 	if len(repo.markServiceAssetCheckedDomains) != 0 {
 		t.Fatalf("MarkServiceAssetsInactive calls = %d, want none with fingerprint sync disabled", len(repo.markServiceAssetCheckedDomains))
+	}
+}
+
+func TestFingerprintTargetCompletionSyncsHostPortServicesBeforeTaskEnd(t *testing.T) {
+	t.Parallel()
+
+	for _, testCase := range []struct {
+		name        string
+		domain      string
+		target      string
+		portNumber  uint
+		observation repository.AssetDomainServiceAssetObservation
+		httpAlive   bool
+		wantService string
+	}{
+		{name: "non HTTP", domain: "10.0.0.1:8080", target: "10.0.0.1:8080", portNumber: 8080, observation: repository.AssetDomainServiceAssetObservation{Domain: "10.0.0.1:8080", AppName: "nginx"}, wantService: "nginx"},
+		{name: "HTTP", domain: "10.0.0.2:8443", target: "https://10.0.0.2:8443", portNumber: 8443, observation: repository.AssetDomainServiceAssetObservation{Domain: "10.0.0.2:8443", AppName: "nginx"}, httpAlive: true, wantService: "http"},
+		{name: "service hinted target", domain: "10.0.0.4:6379", target: "10.0.0.4:6379,redis", portNumber: 6379, observation: repository.AssetDomainServiceAssetObservation{Domain: "10.0.0.4:6379", AppName: "redis"}, wantService: "redis"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			hostPortRepo := &assetHostPortRepositoryStub{staleSignal: make(chan struct{}, 1)}
+			svc := &scanTaskService{assetDomainRepository: &assetDomainRepositoryStub{}, assetHostPortRepository: hostPortRepo}
+			queue := newAssetDomainServiceAssetQueue(svc)
+			queue.RecordCheckedDomains([]string{testCase.domain, "10.0.0.3:9090"})
+			if testCase.httpAlive {
+				queue.RecordDomainObservations([]repository.AssetDomainObservation{{Domain: testCase.domain}})
+			}
+			queue.record([]repository.AssetDomainServiceAssetObservation{testCase.observation})
+			queue.Enqueue(assetDomainServiceAssetResultEvent{completedTarget: testCase.target})
+			select {
+			case <-hostPortRepo.staleSignal:
+			case <-time.After(3 * time.Second):
+				t.Fatal("host port service state was not synced at target completion")
+			}
+			queue.CloseAndWait()
+			if len(hostPortRepo.staleTargets) != 1 || hostPortRepo.staleTargets[0].PortNumber != testCase.portNumber {
+				t.Fatalf("stale targets = %+v", hostPortRepo.staleTargets)
+			}
+			if len(hostPortRepo.staleObserved) != 1 || len(hostPortRepo.staleObserved[0]) != 1 || hostPortRepo.staleObserved[0][0].ServiceName != testCase.wantService {
+				t.Fatalf("observed services = %+v, want %s", hostPortRepo.staleObserved, testCase.wantService)
+			}
+		})
 	}
 }
 
@@ -1488,6 +1553,9 @@ func (s *assetHostRepositoryStub) SyncObservations(_ context.Context, observatio
 type assetHostPortRepositoryStub struct {
 	observationValues         [][]repository.AssetHostPortObservation
 	inactiveObservationValues [][]repository.AssetHostPortObservation
+	staleTargets              []repository.AssetHostPortObservation
+	staleObserved             [][]repository.AssetHostPortObservation
+	staleSignal               chan struct{}
 }
 
 func (s *assetHostPortRepositoryStub) SyncObservations(_ context.Context, observations []repository.AssetHostPortObservation, _ time.Time) error {
@@ -1497,6 +1565,15 @@ func (s *assetHostPortRepositoryStub) SyncObservations(_ context.Context, observ
 
 func (s *assetHostPortRepositoryStub) MarkHTTPPortsInactive(_ context.Context, observations []repository.AssetHostPortObservation) error {
 	s.inactiveObservationValues = append(s.inactiveObservationValues, append([]repository.AssetHostPortObservation(nil), observations...))
+	return nil
+}
+
+func (s *assetHostPortRepositoryStub) MarkServicesInactive(_ context.Context, ipAddress string, portNumber uint, observed []repository.AssetHostPortObservation) error {
+	s.staleTargets = append(s.staleTargets, repository.AssetHostPortObservation{IPAddress: ipAddress, PortNumber: portNumber})
+	s.staleObserved = append(s.staleObserved, append([]repository.AssetHostPortObservation(nil), observed...))
+	if s.staleSignal != nil {
+		s.staleSignal <- struct{}{}
+	}
 	return nil
 }
 

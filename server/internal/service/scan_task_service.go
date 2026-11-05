@@ -952,7 +952,7 @@ func (s *scanTaskService) finishSuccessTask(taskID int64, runtime *scanTaskRunti
 		return
 	}
 	runtime.closeVulnerabilityQueue()
-	s.closeAssetDomainServiceAssetQueue(runtime, true)
+	s.closeAssetDomainServiceAssetQueue(runtime)
 	s.archiveStoredResponses(taskID, runtime.state)
 
 	state := runtime.state
@@ -965,31 +965,13 @@ func (s *scanTaskService) finishSuccessTask(taskID int64, runtime *scanTaskRunti
 	s.releaseState(taskID, runtime)
 }
 
-func (s *scanTaskService) closeAssetDomainServiceAssetQueue(runtime *scanTaskRuntime, syncStale bool) {
+func (s *scanTaskService) closeAssetDomainServiceAssetQueue(runtime *scanTaskRuntime) {
 	if runtime == nil || runtime.assetDomainServiceAssetQueue == nil {
 		return
 	}
 	queue := runtime.assetDomainServiceAssetQueue
 	queue.CloseAndWait()
-	if syncStale {
-		s.syncFinishedAssetHostHTTPPorts(queue, runtime.state)
-	}
 	runtime.assetDomainServiceAssetQueue = nil
-}
-
-func (s *scanTaskService) syncFinishedAssetHostHTTPPorts(queue *assetDomainServiceAssetQueue, state *scanruntime.State) {
-	if s.assetHostPortRepository == nil || queue == nil || !queue.FingerprintStaleSyncEnabled() {
-		return
-	}
-	checkedDomains := queue.CheckedDomains()
-	if len(checkedDomains) == 0 {
-		return
-	}
-	if err := s.syncInactiveAssetHostHTTPPorts(context.Background(), checkedDomains, queue.DomainObservations(), queue.NetworkRegions(), state); err != nil {
-		if s.logger != nil {
-			s.logger.Error("sync finished inactive asset host http ports failed", "checked_domain_count", len(checkedDomains), "error", err)
-		}
-	}
 }
 
 func (s *scanTaskService) finishCancelledTask(taskID int64, runtime *scanTaskRuntime, startedAt *time.Time) {

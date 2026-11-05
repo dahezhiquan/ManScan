@@ -72,7 +72,7 @@ Authorization: Bearer <access_token>
 
 - 字段说明：所有数量均为整数；`vulnerability_status` 从 `manscan_vulnerabilities` 统计所有漏洞记录（包括已修复、误报和忽略），六个状态分别对应未审核、已确认、已发单、已修复、误报和忽略。
 - 待处理口径：仅统计 `status=unreviewed` 的漏洞，`total` 与 `vulnerability_status.unreviewed` 相等，等级字段依次表示严重、高危、中危、低危。`info`、`unknown` 等等级计入 `total`，不计入这四个等级字段，因此四项之和可能小于 `total`。
-- 高危开放端口口径：`manscan_asset_host_port` 中同时满足 `is_alive=1` 和 `is_high_risk_port=1` 的记录数，不按主机去重。
+- 高危开放端口口径：`manscan_asset_host_port` 中同时满足 `is_alive=1` 和 `is_high_risk_port=1` 的记录，按 `ip_address` 与 `port_number` 去重后计数；不同主机的相同端口数字分别计数。
 - 错误码：`40101` / HTTP 401 表示未登录或令牌无效；`50301` / HTTP 503 表示查询失败或超时，`data=null`，可稍后重试。
 - 使用示例：
 
@@ -133,9 +133,9 @@ curl -H 'Authorization: Bearer <access_token>' \
 }
 ```
 
-- 字段说明：`top_vulnerabilities` 表示主机 IP 与漏洞数量，`top_ports` 表示主机 IP 与开放端口数量。只返回存在对应记录且登记在 `manscan_asset_host` 中的主机，不补零，不要求主机本身 `is_alive=1`。
+- 字段说明：`top_vulnerabilities` 表示主机 IP 与漏洞数量，`top_ports` 表示主机 IP 与存活端口数字数量。只返回存在对应记录且登记在 `manscan_asset_host` 中的主机，不补零，不要求主机本身 `is_alive=1`。
 - 漏洞数量口径：按 `asset_host` 关联 IP，统计所有状态的漏洞记录，与主机资产列表的漏洞总数口径一致；不会将仅有域名端点、没有主机 IP 关联的漏洞猜测分配给主机。
-- 端口数量口径：按 `ip_address` 关联 IP，仅统计端口 `is_alive=1` 的记录，同一 IP 的 TCP/UDP 不同协议端口分别计数，与主机资产列表的开放端口数量口径一致。
+- 端口数量口径：按 `ip_address` 关联 IP，仅统计 `is_alive=1` 的记录；同一主机的相同 `port_number` 只计 1 个，不区分协议和服务名，与主机资产列表的 `port_count` 口径一致。
 - 排序：数量降序；数量相同按 IP 字符串升序。少于 10 项时返回实际条数，无数据返回 `[]`。
 - 错误码：`40101` / HTTP 401 表示未登录或令牌无效；`50301` / HTTP 503 表示任一查询失败或超时，`data=null`。
 - 使用示例：
@@ -2576,7 +2576,7 @@ curl -X PATCH "http://127.0.0.1:8686/api/v1/domain-assets/manual-note" \
   - `vulnerability_count` 表示漏洞表中 `asset_host` 等于当前主机 `ip_address` 的记录数量。
   - `critical_count`、`high_count`、`medium_count`、`low_count` 表示上述关联漏洞中各严重等级的数量，按漏洞表 `severity` 字段统计。
   - `risk_level` 表示当前资产的最高风险等级，计算方式暂时与域名资产一致：按 `critical > high > medium > low` 取值；存在漏洞但没有可识别等级时返回 `unknown`，没有漏洞时返回 `info`。
-  - `port_count` 表示主机端口表中 `ip_address` 等于当前主机 `ip_address` 且 `is_alive = true` 的端口数量。
+  - `port_count` 表示主机端口表中 `ip_address` 等于当前主机 `ip_address` 且 `is_alive = true` 的不同 `port_number` 数量；同一端口数字的多个协议或服务名只计 1 个。
   - `os_type`、`region` 为模糊筛选；`risk_level=high` 仅返回最高风险等级为高危的资产，存在严重漏洞的资产会归入 `critical`。
   - 列表默认按最近存活时间和 ID 倒序排序。
 
@@ -2609,7 +2609,7 @@ curl "http://127.0.0.1:8686/api/v1/host-assets?page=1&page_size=10&keyword=10.72
 | `page` / `page_size` | `int` | 否 | 接收但不影响导出范围 |
 
 - 响应格式：成功返回 XLSX 附件，`Content-Type` 为 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`，文件名为 `host-assets-YYYYMMDD-HHMMSS.xlsx`。`host_assets` 工作表每条匹配资产一行，按列表顺序排列，列为 `ip_address`、`region`、`owner`、`os_type`、`os_version`、`scan_created_at`、`last_alive_at`、`manual_note`、`is_alive`、`related_domains`、`risk_level`、`vulnerability_count`、`critical_count`、`high_count`、`medium_count`、`low_count`、`port_count`、`ports`。`ip_address` 即列表中的 `asset_address`，不重复导出；不包含主键 `id`。
-- `ports` 包含详情接口对应的完整端口数组，包括非存活端口，保存为 JSON 文本；`port_count` 只统计存活端口。统计列和 `risk_level` 使用列表接口口径；可空字段留空，时间为 RFC3339 文本。工作表沿用漏洞导出的列宽、行高、冻结首行、交替底色和长字段分段规则；超长内容存入 `large_fields` 工作表。无匹配结果时仍返回带表头的文件。
+- `ports` 包含详情接口对应的完整端口数组，包括非存活记录，保存为 JSON 文本；`port_count` 只统计存活记录中去重后的端口数字。统计列和 `risk_level` 使用列表接口口径；可空字段留空，时间为 RFC3339 文本。工作表沿用漏洞导出的列宽、行高、冻结首行、交替底色和长字段分段规则；超长内容存入 `large_fields` 工作表。无匹配结果时仍返回带表头的文件。
 - 错误码说明：`40001` 表示布尔筛选值非法；`50001` 表示创建文件、查询或生成 XLSX 失败，错误响应使用 `{ "code", "message", "data" }` JSON 格式。
 - 使用示例：
 
@@ -2665,7 +2665,9 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o host-assets.xlsx "http://12
 ```
 
 - 说明：
-  - `ports` 来自 `manscan_asset_host_port`，按当前主机精确匹配 `ip_address` 字段。
+  - `ports` 来自 `manscan_asset_host_port`，按当前主机精确匹配 `ip_address` 字段；同一 IP、协议、端口可按不同 `service_name` 返回多条记录。
+  - `ports[].port_created_at` 仅在首次写入该 IP、协议、端口数字和服务名的组合时设置；`ports[].last_alive_at` 在该组合实际被 HTTP 探测或指纹结果再次确认时更新。任务成功结束不再对端口表执行二次同步；关闭结果队列时尚未落库的实际指纹结果仍会按结果观察时间写入，不使用任务结束时间重写存活时间。
+  - 扫描前 HTTP 探测完成后，已检查但未取得响应的 IP 端口，其已有 HTTP 服务记录立即设为 `is_alive=false`。启用前置指纹识别或自动模板映射时，单个目标的指纹识别完成后，立即把该 IP 端口本次未识别到的旧服务设为 `is_alive=false`；已取得 HTTP 响应的端口保留 HTTP 服务存活。失活操作不改写两个时间字段，未启用这两类识别时不执行旧服务指纹失活检查。
   - SSH 指纹的 `ports[].app_version` 包含软件名称和版本，例如 `OpenSSH 7.4`、`WeOnlyDo 2.4.3`。
   - `ports[].is_high_risk_port` 为可空布尔值；数据库值为 `NULL` 时接口返回 `null`，`false` 表示已确认非高危端口。
   - `vulnerability_count` 表示漏洞表中 `asset_host` 等于当前主机 `ip_address` 的记录数量，但不统计 `status` 为 `fixed`、`false_positive`、`ignored` 的漏洞。

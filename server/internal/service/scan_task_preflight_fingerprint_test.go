@@ -164,7 +164,7 @@ func TestDisabledPreflightFingerprintKeepsPassiveProbeAndCache(t *testing.T) {
 	repo.syncServiceAssetObservations = nil
 	repo.syncServiceAssetCheckedDomains = nil
 	hostPortRepo.observationValues = nil
-	service.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{state: state, assetDomainServiceAssetQueue: queue}, true)
+	service.closeAssetDomainServiceAssetQueue(&scanTaskRuntime{state: state, assetDomainServiceAssetQueue: queue})
 	if len(hostPortRepo.inactiveObservationValues) != 0 {
 		t.Fatalf("host port stale syncs = %+v, want none without active fingerprinting", hostPortRepo.inactiveObservationValues)
 	}
@@ -188,5 +188,31 @@ func TestDisabledPreflightFingerprintKeepsPassiveProbeAndCache(t *testing.T) {
 	completed, pending = cache.splitCompletedTargets([]string{server.URL}, dto.CreateScanTaskRequest{AutomaticScan: true, PreflightFingerprint: &disabled})
 	if len(pending) != 0 || len(completed.ServiceAssets) == 0 || len(completed.Fingerprints) == 0 {
 		t.Fatal("automatic mapping must still reuse passive fingerprints")
+	}
+}
+
+func TestUnresponsiveHTTPPortBecomesInactiveAfterPreflightProbe(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	target := server.URL
+	server.Close()
+
+	disabled := false
+	hostPortRepo := &assetHostPortRepositoryStub{}
+	service := &scanTaskService{
+		assetDomainRepository:   &assetDomainRepositoryStub{},
+		assetHostPortRepository: hostPortRepo,
+		rootDir:                 t.TempDir(),
+	}
+	if err := service.syncAliveAssetDomainsBeforeScan(context.Background(), dto.CreateScanTaskRequest{
+		PreflightFingerprint: &disabled,
+		ProbeConcurrency:     1,
+		Timeout:              1,
+	}, []string{target}, nil, "", "", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(hostPortRepo.inactiveObservationValues) != 1 || len(hostPortRepo.inactiveObservationValues[0]) != 1 {
+		t.Fatalf("inactive HTTP ports = %+v, want immediate preflight sync", hostPortRepo.inactiveObservationValues)
 	}
 }

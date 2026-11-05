@@ -26,7 +26,7 @@ func TestAssetHostPortRepositorySyncObservationsUpsertsAlivePorts(t *testing.T) 
 	if err := db.AutoMigrate(&entity.AssetHostPort{}); err != nil {
 		t.Fatalf("AutoMigrate() error = %v", err)
 	}
-	if err := db.Exec("CREATE UNIQUE INDEX uk_ip_protocol_port ON manscan_asset_host_port(ip_address, port_protocol, port_number)").Error; err != nil {
+	if err := db.Exec("CREATE UNIQUE INDEX uk_ip_protocol_port ON manscan_asset_host_port(ip_address, port_protocol, port_number, service_name)").Error; err != nil {
 		t.Fatalf("create unique index error = %v", err)
 	}
 
@@ -79,6 +79,52 @@ func TestAssetHostPortRepositorySyncObservationsUpsertsAlivePorts(t *testing.T) 
 	}
 	if port.IsHighRiskPort != nil {
 		t.Fatalf("IsHighRiskPort = %v, want NULL when risk is unknown", *port.IsHighRiskPort)
+	}
+}
+
+func TestAssetHostPortRepositorySyncObservationsKeepsServicesOnSamePort(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("gorm.Open() error = %v", err)
+	}
+	if err := db.AutoMigrate(&entity.AssetHostPort{}); err != nil {
+		t.Fatalf("AutoMigrate() error = %v", err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_ip_protocol_port ON manscan_asset_host_port(ip_address, port_protocol, port_number, service_name)").Error; err != nil {
+		t.Fatalf("create unique index error = %v", err)
+	}
+
+	first := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	later := first.Add(time.Hour)
+	repo := NewAssetHostPortRepository(db)
+	observations := []AssetHostPortObservation{
+		{IPAddress: "10.72.160.153", PortProtocol: "tcp", PortNumber: 8080, ServiceName: "nginx", IsAlive: true},
+		{IPAddress: "10.72.160.153", PortProtocol: "tcp", PortNumber: 8080, ServiceName: "tomcat", IsAlive: true},
+	}
+	if err := repo.SyncObservations(context.Background(), observations, first); err != nil {
+		t.Fatalf("SyncObservations() insert error = %v", err)
+	}
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{
+		{IPAddress: "10.72.160.153", PortProtocol: "tcp", PortNumber: 8080, ServiceName: "nginx", AppVersion: "1.24", IsAlive: true},
+	}, later); err != nil {
+		t.Fatalf("SyncObservations() update error = %v", err)
+	}
+
+	var ports []entity.AssetHostPort
+	if err := db.Order("service_name ASC").Find(&ports).Error; err != nil {
+		t.Fatalf("Find() error = %v", err)
+	}
+	if len(ports) != 2 {
+		t.Fatalf("port records = %d, want two services on one port", len(ports))
+	}
+	if ports[0].ServiceName == nil || *ports[0].ServiceName != "nginx" || ports[0].AppVersion == nil || *ports[0].AppVersion != "1.24" || !ports[0].PortCreatedAt.Equal(first) || ports[0].LastAliveAt == nil || !ports[0].LastAliveAt.Equal(later) {
+		t.Fatalf("nginx port = %+v, want independently updated service", ports[0])
+	}
+	if ports[1].ServiceName == nil || *ports[1].ServiceName != "tomcat" || !ports[1].PortCreatedAt.Equal(first) || ports[1].LastAliveAt == nil || !ports[1].LastAliveAt.Equal(first) {
+		t.Fatalf("tomcat port = %+v, want unchanged second service", ports[1])
 	}
 }
 
@@ -153,5 +199,55 @@ func TestAssetHostPortRepositoryMarkHTTPPortsInactiveUpdatesExistingHTTPOnly(t *
 	}
 	if count != 0 {
 		t.Fatalf("non-existing port count = %d, want 0", count)
+	}
+}
+
+func TestAssetHostPortRepositoryMarkServicesInactivePreservesObservationTimes(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&entity.AssetHostPort{}); err != nil {
+		t.Fatal(err)
+	}
+	first := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	last := first.Add(time.Hour)
+	services := []string{"nginx", "tomcat", "ssh"}
+	ports := make([]entity.AssetHostPort, 0, len(services))
+	for _, name := range services {
+		name := name
+		ports = append(ports, entity.AssetHostPort{
+			IPAddress: "10.0.0.1", PortProtocol: "tcp", PortNumber: 8080,
+			ServiceName: &name, PortCreatedAt: first, LastAliveAt: &last, IsAlive: true,
+		})
+	}
+	if err := db.Create(&ports).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := NewAssetHostPortRepository(db)
+	if err := repo.MarkServicesInactive(context.Background(), "10.0.0.1", 8080, []AssetHostPortObservation{
+		{IPAddress: "10.0.0.1", PortProtocol: "tcp", PortNumber: 8080, ServiceName: "nginx"},
+		{IPAddress: "10.0.0.1", PortProtocol: "tcp", PortNumber: 8080, ServiceName: "tomcat"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var got []entity.AssetHostPort
+	if err := db.Order("service_name ASC").Find(&got).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("ports = %d, want 3", len(got))
+	}
+	for _, port := range got {
+		if port.PortCreatedAt != first || port.LastAliveAt == nil || !port.LastAliveAt.Equal(last) {
+			t.Fatalf("service %v observation times changed: %+v", port.ServiceName, port)
+		}
+		wantAlive := *port.ServiceName != "ssh"
+		if port.IsAlive != wantAlive {
+			t.Fatalf("service %s alive = %v, want %v", *port.ServiceName, port.IsAlive, wantAlive)
+		}
 	}
 }

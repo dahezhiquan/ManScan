@@ -38,11 +38,14 @@ func (repo *dashboardRepository) ListVulnerabilityCounts(ctx context.Context) ([
 	return counts, err
 }
 
-// CountHighRiskOpenPorts 统计存活的高危端口记录。
+// CountHighRiskOpenPorts 按主机和端口数字统计存活的高危端口。
 func (repo *dashboardRepository) CountHighRiskOpenPorts(ctx context.Context) (int64, error) {
 	var count int64
-	err := repo.db.WithContext(ctx).Model(&entity.AssetHostPort{}).
-		Where("is_alive = ? AND is_high_risk_port = ?", true, true).Count(&count).Error
+	ports := repo.db.WithContext(ctx).Model(&entity.AssetHostPort{}).
+		Select("ip_address, port_number").
+		Where("is_alive = ? AND is_high_risk_port = ?", true, true).
+		Group("ip_address, port_number")
+	err := repo.db.WithContext(ctx).Table("(?) AS ports", ports).Count(&count).Error
 	return count, err
 }
 
@@ -86,13 +89,13 @@ func (repo *dashboardRepository) ListTopHostVulnerabilities(ctx context.Context)
 	return counts, err
 }
 
-// ListTopHostPorts 返回存活端口记录最多的十个登记主机。
+// ListTopHostPorts 返回存活端口数字最多的十个登记主机。
 func (repo *dashboardRepository) ListTopHostPorts(ctx context.Context) ([]entity.DashboardHostCount, error) {
 	counts := make([]entity.DashboardHostCount, 0)
 	err := repo.db.WithContext(ctx).Table("manscan_asset_host_port AS p").
 		Joins("INNER JOIN manscan_asset_host AS h ON h.ip_address = p.ip_address").
 		Where("p.is_alive = ?", true).
-		Select("h.ip_address AS ip_address, COUNT(*) AS count").
+		Select("h.ip_address AS ip_address, COUNT(DISTINCT p.port_number) AS count").
 		Group("h.ip_address").Order("count DESC, h.ip_address ASC").Limit(10).Scan(&counts).Error
 	return counts, err
 }

@@ -100,6 +100,22 @@ func TestAssetHostRepositoryListFiltersAndReturnsItems(t *testing.T) {
 		},
 		{
 			IPAddress:     host,
+			PortCreatedAt: now,
+			PortProtocol:  "tcp",
+			PortNumber:    80,
+			ServiceName:   assetDomainTestPtr("nginx"),
+			IsAlive:       true,
+		},
+		{
+			IPAddress:     host,
+			PortCreatedAt: now,
+			PortProtocol:  "udp",
+			PortNumber:    80,
+			ServiceName:   assetDomainTestPtr("dns"),
+			IsAlive:       true,
+		},
+		{
+			IPAddress:     host,
 			Region:        &region,
 			LastAliveAt:   &now,
 			PortCreatedAt: now,

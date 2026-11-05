@@ -98,8 +98,12 @@ func TestDashboardRepositoryVulnerabilityCountsAndHighRiskPorts(t *testing.T) {
 		{Status: "fixed", Severity: "low"}, {Status: "false_positive", Severity: "info"}, {Status: "ignored", Severity: "unknown"},
 	})
 	createDashboardRows(t, db, &[]entity.AssetHostPort{
-		{IsAlive: true, IsHighRiskPort: assetDomainTestPtr(true)}, {IsAlive: true, IsHighRiskPort: assetDomainTestPtr(true)},
-		{IsAlive: true, IsHighRiskPort: assetDomainTestPtr(false)}, {IsAlive: false, IsHighRiskPort: assetDomainTestPtr(true)},
+		{IPAddress: "10.0.0.1", PortProtocol: "tcp", PortNumber: 80, ServiceName: dashboardString("http"), IsAlive: true, IsHighRiskPort: assetDomainTestPtr(true)},
+		{IPAddress: "10.0.0.1", PortProtocol: "tcp", PortNumber: 80, ServiceName: dashboardString("nginx"), IsAlive: true, IsHighRiskPort: assetDomainTestPtr(true)},
+		{IPAddress: "10.0.0.1", PortProtocol: "udp", PortNumber: 80, ServiceName: dashboardString("other"), IsAlive: true, IsHighRiskPort: assetDomainTestPtr(true)},
+		{IPAddress: "10.0.0.2", PortProtocol: "tcp", PortNumber: 80, IsAlive: true, IsHighRiskPort: assetDomainTestPtr(true)},
+		{IPAddress: "10.0.0.1", PortNumber: 443, IsAlive: true, IsHighRiskPort: assetDomainTestPtr(false)},
+		{IPAddress: "10.0.0.1", PortNumber: 22, IsAlive: false, IsHighRiskPort: assetDomainTestPtr(true)},
 	})
 	repo := NewDashboardRepository(db)
 	counts, err := repo.ListVulnerabilityCounts(context.Background())
@@ -163,7 +167,8 @@ func TestDashboardRepositoryRankingsLimitAndFilters(t *testing.T) {
 		})
 	}
 	createDashboardRows(t, db, &entity.Vulnerability{AssetHost: dashboardString("10.0.0.12")})
-	createDashboardRows(t, db, &entity.AssetHostPort{IPAddress: "10.0.0.12", IsAlive: true, ServiceName: dashboardString("service12")})
+	createDashboardRows(t, db, &entity.AssetHostPort{IPAddress: "10.0.0.12", PortNumber: 443, IsAlive: true, ServiceName: dashboardString("service12")})
+	createDashboardRows(t, db, &entity.AssetHostPort{IPAddress: "10.0.0.12", PortProtocol: "udp", PortNumber: 443, IsAlive: true, ServiceName: dashboardString("other")})
 	createDashboardRows(t, db, &entity.AssetDomainServiceAsset{Domain: "second:443", AppName: "app12", IsAlive: true})
 	for _, query := range []func(context.Context) ([]entity.DashboardHostCount, error){repo.ListTopHostVulnerabilities, repo.ListTopHostPorts} {
 		counts, err := query(context.Background())
