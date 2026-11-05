@@ -86,7 +86,7 @@ func (r *assetHostPortRepository) SyncObservations(ctx context.Context, observat
 			end = len(observations)
 		}
 		batch := observations[start:end]
-		items := make([]map[string]interface{}, 0, end-start)
+		itemsByVersion := [2][]map[string]interface{}{}
 		for _, observation := range batch {
 			item := map[string]interface{}{
 				"ip_address":      observation.IPAddress,
@@ -109,27 +109,34 @@ func (r *assetHostPortRepository) SyncObservations(ctx context.Context, observat
 			if observation.AppVersion != "" {
 				item["app_version"] = observation.AppVersion
 			}
-			items = append(items, item)
+			versionIndex := 0
+			if observation.AppVersion != "" {
+				versionIndex = 1
+			}
+			itemsByVersion[versionIndex] = append(itemsByVersion[versionIndex], item)
 		}
-		if err := r.db.WithContext(ctx).
-			Table("manscan_asset_host_port").
-			Clauses(clause.OnConflict{
-				Columns: []clause.Column{
-					{Name: "ip_address"},
-					{Name: "port_protocol"},
-					{Name: "port_number"},
-					{Name: "service_name"},
-				},
-				DoUpdates: clause.AssignmentColumns([]string{
-					"region",
-					"last_alive_at",
-					"app_name",
-					"app_version",
-					"is_alive",
-				}),
-			}).
-			Create(&items).Error; err != nil {
-			return err
+		for versionIndex, items := range itemsByVersion {
+			if len(items) == 0 {
+				continue
+			}
+			updateColumns := []string{"region", "last_alive_at", "app_name", "is_alive"}
+			if versionIndex == 1 {
+				updateColumns = append(updateColumns, "app_version")
+			}
+			if err := r.db.WithContext(ctx).
+				Table("manscan_asset_host_port").
+				Clauses(clause.OnConflict{
+					Columns: []clause.Column{
+						{Name: "ip_address"},
+						{Name: "port_protocol"},
+						{Name: "port_number"},
+						{Name: "service_name"},
+					},
+					DoUpdates: clause.AssignmentColumns(updateColumns),
+				}).
+				Create(&items).Error; err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -137,7 +144,7 @@ func (r *assetHostPortRepository) SyncObservations(ctx context.Context, observat
 
 func uniqueAssetHostPortObservations(values []AssetHostPortObservation) []AssetHostPortObservation {
 	result := make([]AssetHostPortObservation, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	seen := make(map[string]int, len(values))
 	for _, value := range values {
 		value.IPAddress = strings.TrimSpace(value.IPAddress)
 		value.Region = strings.TrimSpace(value.Region)
@@ -149,10 +156,13 @@ func uniqueAssetHostPortObservations(values []AssetHostPortObservation) []AssetH
 			continue
 		}
 		key := value.IPAddress + "\x00" + value.PortProtocol + "\x00" + strconv.FormatUint(uint64(value.PortNumber), 10) + "\x00" + value.ServiceName
-		if _, ok := seen[key]; ok {
+		if index, ok := seen[key]; ok {
+			if result[index].AppVersion == "" && value.AppVersion != "" {
+				result[index].AppVersion = value.AppVersion
+			}
 			continue
 		}
-		seen[key] = struct{}{}
+		seen[key] = len(result)
 		result = append(result, value)
 	}
 	return result

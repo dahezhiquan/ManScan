@@ -128,6 +128,45 @@ func TestAssetHostPortRepositorySyncObservationsKeepsServicesOnSamePort(t *testi
 	}
 }
 
+func TestAssetHostPortRepositorySyncObservationsKeepsKnownVersion(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&entity.AssetHostPort{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_ip_protocol_port ON manscan_asset_host_port(ip_address, port_protocol, port_number, service_name)").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewAssetHostPortRepository(db)
+	first := time.Date(2026, 11, 5, 20, 23, 11, 0, time.UTC)
+	base := AssetHostPortObservation{IPAddress: "10.107.71.95", PortProtocol: "tcp", PortNumber: 8022, ServiceName: "ssh", AppName: "ssh", IsAlive: true}
+	withVersion := base
+	withVersion.AppVersion = "OpenSSH 7.4"
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{base, withVersion}, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{base}, first.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	var port entity.AssetHostPort
+	if err := db.Where("ip_address = ? AND port_protocol = ? AND port_number = ? AND service_name = ?", base.IPAddress, base.PortProtocol, base.PortNumber, base.ServiceName).First(&port).Error; err != nil {
+		t.Fatal(err)
+	}
+	if port.AppVersion == nil || *port.AppVersion != "OpenSSH 7.4" {
+		t.Fatalf("AppVersion = %v, want OpenSSH 7.4", port.AppVersion)
+	}
+	if port.LastAliveAt == nil || !port.LastAliveAt.Equal(first.Add(time.Second)) {
+		t.Fatalf("LastAliveAt = %v, want latest observation", port.LastAliveAt)
+	}
+}
+
 func TestAssetHostPortRepositoryMarkHTTPPortsInactiveUpdatesExistingHTTPOnly(t *testing.T) {
 	t.Parallel()
 

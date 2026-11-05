@@ -414,6 +414,14 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayloadWithResolver(c
 			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, matchedAt, domain, componentName),
 		})
 	}
+	if software, version, ok := strings.Cut(versionsByName["ssh"], " "); ok && strings.EqualFold(software, "openssh") {
+		components = append(components, repository.AssetDomainServiceAssetObservation{
+			Domain:       domain,
+			AppName:      "openssh",
+			AppVersion:   version,
+			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, matchedAt, domain, "openssh"),
+		})
+	}
 	return uniqueAssetDomainServiceAssetObservations(components), nil
 }
 

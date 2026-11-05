@@ -911,7 +911,7 @@ func recordAssetDomainFingerprintObservations(state *scanruntime.State, values [
 			continue
 		}
 		state.AppendResult(
-			fmt.Sprintf("[域名组件指纹识别][info][%s] 命中 %s", value.AppName, value.Domain),
+			fmt.Sprintf("[域名&服务指纹识别][info][%s] 命中 %s", value.AppName, value.Domain),
 			[]string{"tech"},
 			scanruntime.ResultLogMetadata{ResultKey: key, TemplateID: "asset-domain-fingerprint", Severity: "info"},
 		)

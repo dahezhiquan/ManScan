@@ -1315,12 +1315,24 @@ func TestAssetDomainFingerprintSSHVersionKeepsSoftwareName(t *testing.T) {
 			if err != nil {
 				t.Fatalf("buildAssetDomainServiceAssetsFromPayload() error = %v", err)
 			}
-			if len(observations) != 1 || observations[0].AppName != "ssh" || observations[0].AppVersion != tc.want {
-				t.Fatalf("observations = %+v, want ssh version %q", observations, tc.want)
+			wantCount := 1
+			if strings.HasPrefix(tc.want, "OpenSSH ") {
+				wantCount = 2
+			}
+			if len(observations) != wantCount || observations[0].AppName != "ssh" || observations[0].AppVersion != tc.want {
+				t.Fatalf("observations = %+v, want %d components with ssh version %q", observations, wantCount, tc.want)
+			}
+			if wantCount == 2 {
+				if observations[1].AppName != "openssh" || observations[1].AppVersion != strings.TrimPrefix(tc.want, "OpenSSH ") {
+					t.Fatalf("observations = %+v, want openssh software version", observations)
+				}
 			}
 			_, hostPorts := splitAssetServiceAssetObservations(context.Background(), observations, nil, nil)
-			if len(hostPorts) != 1 || hostPorts[0].AppVersion != tc.want {
+			if len(hostPorts) != wantCount || hostPorts[0].AppVersion != tc.want {
 				t.Fatalf("host ports = %+v, want version %q", hostPorts, tc.want)
+			}
+			if wantCount == 2 && hostPorts[1].AppVersion != strings.TrimPrefix(tc.want, "OpenSSH ") {
+				t.Fatalf("host ports = %+v, want openssh version", hostPorts)
 			}
 		})
 	}
