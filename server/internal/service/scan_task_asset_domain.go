@@ -1298,6 +1298,17 @@ func doAssetDomainWappalyzerRequest(ctx context.Context, client *retryablehttp.C
 	if err != nil {
 		return nil, err
 	}
+	// Omit explicit default ports from Host so redirects match ordinary browser requests.
+	switch req.URL.Scheme {
+	case "http":
+		if req.URL.Port() == "80" {
+			req.Host = strings.TrimSuffix(req.URL.Host, ":80")
+		}
+	case "https":
+		if req.URL.Port() == "443" {
+			req.Host = strings.TrimSuffix(req.URL.Host, ":443")
+		}
+	}
 	userAgent := useragent.PickRandom()
 	req.Header.Set("User-Agent", userAgent.Raw)
 

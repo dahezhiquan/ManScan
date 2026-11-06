@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,7 +17,67 @@ import (
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/scanruntime"
 	"ManScan/server/internal/repository"
+
+	"github.com/projectdiscovery/retryablehttp-go"
 )
+
+type assetDomainProbeRoundTripper func(*http.Request) (*http.Response, error)
+
+func (roundTrip assetDomainProbeRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return roundTrip(req)
+}
+
+func TestAssetDomainProbeDefaultPortHostAllowsRedirect(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		targetURL      string
+		wantHost       string
+		redirectScheme string
+	}{
+		{name: "https 443", targetURL: "https://example.test:443/start", wantHost: "example.test", redirectScheme: "http"},
+		{name: "http 80", targetURL: "http://example.test:80/start", wantHost: "example.test", redirectScheme: "https"},
+		{name: "https ipv6 443", targetURL: "https://[::1]:443/start", wantHost: "[::1]", redirectScheme: "http"},
+		{name: "https custom port", targetURL: "https://example.test:8443/start", wantHost: "example.test:8443", redirectScheme: "https"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			options := retryablehttp.DefaultOptionsSingle
+			options.RetryMax = 0
+			client := retryablehttp.NewClient(options)
+			client.HTTPClient.Transport = assetDomainProbeStatusTransport{base: assetDomainProbeRoundTripper(func(req *http.Request) (*http.Response, error) {
+				if req.URL.Path == "/final" {
+					if req.URL.Host != tc.wantHost {
+						return nil, fmt.Errorf("redirect host = %q, want %q", req.URL.Host, tc.wantHost)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: http.NoBody, Request: req}, nil
+				}
+				if req.Host != tc.wantHost {
+					return nil, fmt.Errorf("request Host = %q, want %q", req.Host, tc.wantHost)
+				}
+				return &http.Response{
+					StatusCode: http.StatusFound,
+					Status:     "302 Found",
+					Header:     http.Header{"Location": {tc.redirectScheme + "://" + req.Host + "/final"}},
+					Body:       http.NoBody,
+					Request:    req,
+				}, nil
+			})}
+
+			response, err := doAssetDomainWappalyzerRequest(context.Background(), client, nil, tc.targetURL, nil)
+			if err != nil {
+				t.Fatalf("doAssetDomainWappalyzerRequest() error = %v", err)
+			}
+			if response.StatusCode != http.StatusOK || response.FirstStatusCode != http.StatusFound {
+				t.Fatalf("response status = %d, first status = %d; want 200 after 302", response.StatusCode, response.FirstStatusCode)
+			}
+		})
+	}
+}
 
 func TestCanonicalAssetDomainFromURL(t *testing.T) {
 	t.Parallel()
