@@ -1,6 +1,9 @@
 package api
 
 import (
+	"io"
+	"net/http"
+
 	"ManScan/server/internal/handler"
 	"ManScan/server/internal/middleware"
 	"ManScan/server/internal/pkg/logx"
@@ -26,7 +29,12 @@ func NewRouter(
 	scheduledJobHandlers ...handler.ScheduledJobHandler,
 ) *gin.Engine {
 	router := gin.New()
-	router.Use(gin.Recovery())
+	router.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, _ any) {
+		if logger != nil {
+			logger.Error("http panic recovered", "method", c.Request.Method, "path", c.FullPath())
+		}
+		c.AbortWithStatus(http.StatusInternalServerError)
+	}))
 	router.Use(middleware.Logger(logger))
 
 	v1 := router.Group("/api/v1")

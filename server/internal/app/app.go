@@ -19,6 +19,7 @@ import (
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 )
 
 func Run() error {
@@ -29,7 +30,9 @@ func Run() error {
 
 	logger := logx.New()
 
-	db, err := gorm.Open(mysql.Open(cfg.MySQL.DSN()), &gorm.Config{})
+	db, err := gorm.Open(mysql.Open(cfg.MySQL.DSN()), &gorm.Config{
+		Logger: gormlogger.Default.LogMode(gormlogger.Silent),
+	})
 	if err != nil {
 		return fmt.Errorf("连接数据库失败: %w", err)
 	}

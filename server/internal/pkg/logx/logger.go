@@ -1,6 +1,8 @@
 package logx
 
 import (
+	"strings"
+
 	"go.uber.org/zap"
 )
 
@@ -33,6 +35,10 @@ func toZapFields(fields ...interface{}) []zap.Field {
 	for i := 0; i+1 < len(fields); i += 2 {
 		key, ok := fields[i].(string)
 		if !ok || key == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(key), "error") {
+			result = append(result, zap.String(key, "details hidden"))
 			continue
 		}
 		result = append(result, zap.Any(key, fields[i+1]))
