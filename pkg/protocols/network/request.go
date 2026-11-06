@@ -52,6 +52,26 @@ func (request *Request) getOpenPorts(target *contextargs.Context) ([]string, err
 		// no need to check if port is open or not
 		return request.ports, nil
 	}
+	if len(request.ports) > 1 && target.Port() != "" {
+		var effectiveAddress string
+		allPortsUseTarget := true
+		for _, port := range request.ports {
+			cloned := target.Clone()
+			if err := cloned.UseNetworkPort(port, request.ExcludePorts); err != nil {
+				allPortsUseTarget = false
+				break
+			}
+			address, err := getAddress(cloned.MetaInput.Input)
+			if err != nil || (effectiveAddress != "" && address != effectiveAddress) {
+				allPortsUseTarget = false
+				break
+			}
+			effectiveAddress = address
+		}
+		if allPortsUseTarget {
+			return request.ports[:1], nil
+		}
+	}
 	errs := []error{}
 	// if more than 1 port is provided, check if port is open or not
 	openPorts := make([]string, 0)

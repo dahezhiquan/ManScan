@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -158,6 +159,45 @@ func TestNetworkCountsHostErrorSkipsAsCompleted(t *testing.T) {
 	err := request.ExecuteWithResults(contextargs.NewWithInput(context.Background(), "example.com"), nil, nil, func(*output.InternalWrappedEvent) {})
 	require.NoError(t, err)
 	require.Equal(t, int64(2), progress.skipped)
+}
+
+func TestNetworkMultiPortSkipsPrecheckForFixedTargetPort(t *testing.T) {
+	request := &Request{ports: []string{"6379", "6380"}}
+	for _, input := range []string{"127.0.0.1:1", "http://127.0.0.1:12345"} {
+		t.Run(input, func(t *testing.T) {
+			ports, err := request.getOpenPorts(contextargs.NewWithInput(context.Background(), input))
+			require.NoError(t, err)
+			require.Equal(t, []string{"6379"}, ports)
+		})
+	}
+}
+
+func TestNetworkMultiPortPrechecksWhenTemplateChangesTargetPort(t *testing.T) {
+	options := testutils.DefaultOptions
+	testutils.Init(options)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+	openPort := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	request := &Request{
+		ID:      "network-multi-port-precheck",
+		Address: []string{"{{Hostname}}"},
+		Port:    openPort + ",1",
+	}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{
+		ID:   request.ID,
+		Info: model.Info{SeverityHolder: severity.Holder{Severity: severity.Low}, Name: "test"},
+	})
+	require.NoError(t, request.Compile(executerOpts))
+
+	for _, input := range []string{"127.0.0.1", "http://127.0.0.1:80"} {
+		t.Run(input, func(t *testing.T) {
+			ports, err := request.getOpenPorts(contextargs.NewWithInput(context.Background(), input))
+			require.NoError(t, err)
+			require.Equal(t, []string{openPort}, ports)
+		})
+	}
 }
 
 func TestNetworkStopAtFirstMatchCompletesRemainingAddresses(t *testing.T) {
