@@ -156,8 +156,8 @@ func (r *scanTaskRepository) Stats(ctx context.Context) (*dto.ScanTaskStats, err
 			SUM(CASE WHEN t.status = 'running' THEN 1 ELSE 0 END) AS running,
 			COALESCE(SUM(CASE
 				WHEN t.status = 'success'
-					AND COALESCE(NULLIF(r.pre_cluster_total_requests, 0), r.total_requests, 0) > COALESCE(r.real_requests, 0)
-					THEN COALESCE(NULLIF(r.pre_cluster_total_requests, 0), r.total_requests, 0) - COALESCE(r.real_requests, 0)
+					AND COALESCE(NULLIF(CAST(r.pre_cluster_total_requests AS UNSIGNED), 0), CAST(r.total_requests AS UNSIGNED), 0) > COALESCE(CAST(r.real_requests AS UNSIGNED), 0)
+					THEN COALESCE(NULLIF(CAST(r.pre_cluster_total_requests AS UNSIGNED), 0), CAST(r.total_requests AS UNSIGNED), 0) - COALESCE(CAST(r.real_requests AS UNSIGNED), 0)
 				ELSE 0
 			END), 0) AS saved_requests
 		`).

@@ -148,3 +148,58 @@ func TestScanTaskRepositoryStatsUsesPreClusterRequestTotal(t *testing.T) {
 		t.Fatalf("SavedRequests = %d, want 70", stats.SavedRequests)
 	}
 }
+
+func TestScanTaskRepositoryStatsComparesTextRequestCountsNumerically(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "text_stats.db")), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&entity.ScanTask{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`CREATE TABLE manscan_task_results (
+		task_id INTEGER PRIMARY KEY,
+		total_requests TEXT,
+		pre_cluster_total_requests TEXT,
+		real_requests TEXT
+	)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []entity.ScanTask{
+		{ID: 463, TaskNo: "task-463", Name: "text-counts", Status: "success", CreatedBy: "tester"},
+		{ID: 464, TaskNo: "task-464", Name: "legacy", Status: "success", CreatedBy: "tester"},
+		{ID: 465, TaskNo: "task-465", Name: "failed", Status: "failed", CreatedBy: "tester"},
+	} {
+		if err := db.Create(&task).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, values := range []struct {
+		taskID int64
+		total  string
+		pre    any
+		real   string
+	}{
+		{463, "1774", "1774", "824"},
+		{464, "20", nil, "5"},
+		{465, "120", "120", "1"},
+	} {
+		if err := db.Exec(`INSERT INTO manscan_task_results
+			(task_id, total_requests, pre_cluster_total_requests, real_requests) VALUES (?, ?, ?, ?)`,
+			values.taskID, values.total, values.pre, values.real).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	stats, err := NewScanTaskRepository(db).Stats(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.SavedRequests != 965 {
+		t.Fatalf("SavedRequests = %d, want 965", stats.SavedRequests)
+	}
+}
