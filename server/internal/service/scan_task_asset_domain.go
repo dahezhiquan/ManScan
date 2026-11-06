@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -32,10 +33,12 @@ import (
 	"ManScan/server/internal/pkg/scanruntime"
 	"ManScan/server/internal/repository"
 
+	"github.com/projectdiscovery/ratelimit"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/projectdiscovery/useragent"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
 	"golang.org/x/net/html/charset"
+	"golang.org/x/net/http/httpguts"
 )
 
 var errScanTaskPausedBeforeProcess = errors.New("scan task paused before scanner process started")
@@ -977,7 +980,9 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 		}
 		globalMatchers = nil
 	}
-	httpClient := newAssetDomainWappalyzerHTTPClient(request)
+	limiter := utils.GetRateLimiter(ctx, assetDomainProbeRateLimit(request.RateLimit), assetDomainProbeRateLimitDuration(request.RateLimitDuration))
+	defer limiter.Stop()
+	httpClient := newAssetDomainWappalyzerHTTPClient(request, limiter)
 	projectCache := newAssetDomainProjectCache(request)
 	if projectCache != nil {
 		defer projectCache.Close()
@@ -1076,6 +1081,27 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 	return probeResult, nil
 }
 
+func assetDomainProbeRateLimit(rateLimit int) int {
+	if rateLimit <= 0 {
+		return 150
+	}
+	if uint64(rateLimit) > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	return rateLimit
+}
+
+func assetDomainProbeRateLimitDuration(durationMS int64) time.Duration {
+	if durationMS <= 0 {
+		durationMS = 1000
+	}
+	maxDurationMS := int64(math.MaxInt64 / int64(time.Millisecond))
+	if durationMS > maxDurationMS {
+		durationMS = maxDurationMS
+	}
+	return time.Duration(durationMS) * time.Millisecond
+}
+
 type assetDomainProbeTargetResult struct {
 	Target                         string
 	Observations                   []repository.AssetDomainObservation
@@ -1119,7 +1145,9 @@ type assetDomainProbeStatusRecorderKey struct{}
 type assetDomainProbeStatsStateKey struct{}
 
 type assetDomainProbeStatusTransport struct {
-	base http.RoundTripper
+	base      http.RoundTripper
+	limiter   *ratelimit.Limiter
+	userAgent string
 }
 
 type assetDomainProjectCache struct {
@@ -1170,6 +1198,15 @@ func (c *assetDomainProjectCache) Close() {
 }
 
 func (t assetDomainProbeStatusTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.limiter != nil {
+		t.limiter.Take()
+		if err := req.Context().Err(); err != nil {
+			return nil, err
+		}
+	}
+	if t.userAgent != "" {
+		req.Header.Set("User-Agent", t.userAgent)
+	}
 	if state, ok := req.Context().Value(assetDomainProbeStatsStateKey{}).(*scanruntime.State); ok && state != nil {
 		state.AddDeferredTotalRequestStats(1, 1, 1, "扫描前域名资产存活 & 指纹探测进度更新")
 	}
@@ -1251,7 +1288,22 @@ func assetDomainFingerprintDomainFromTarget(target string) string {
 	return host
 }
 
-func newAssetDomainWappalyzerHTTPClient(request dto.CreateScanTaskRequest) *retryablehttp.Client {
+func assetDomainProbeUserAgent(headers []string) string {
+	userAgent := ""
+	for _, header := range headers {
+		name, value, ok := strings.Cut(header, ":")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "User-Agent") {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value != "" && httpguts.ValidHeaderFieldValue(value) {
+			userAgent = value
+		}
+	}
+	return userAgent
+}
+
+func newAssetDomainWappalyzerHTTPClient(request dto.CreateScanTaskRequest, limiter *ratelimit.Limiter) *retryablehttp.Client {
 	options := retryablehttp.DefaultOptionsSingle
 	options.RetryMax = defaultInt(request.Retries, 1)
 	options.Timeout = time.Duration(defaultInt(request.Timeout, 10)) * time.Second
@@ -1270,7 +1322,7 @@ func newAssetDomainWappalyzerHTTPClient(request dto.CreateScanTaskRequest) *retr
 				transport = cloned
 			}
 		}
-		return assetDomainProbeStatusTransport{base: transport}
+		return assetDomainProbeStatusTransport{base: transport, limiter: limiter, userAgent: assetDomainProbeUserAgent(request.CustomHeaders)}
 	}
 	client := retryablehttp.NewClient(options)
 	maxRedirects := defaultInt(request.MaxRedirects, 10)

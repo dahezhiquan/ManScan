@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,9 +19,86 @@ import (
 	"ManScan/server/internal/pkg/scanruntime"
 	"ManScan/server/internal/repository"
 
+	"github.com/projectdiscovery/ratelimit"
 	"github.com/projectdiscovery/retryablehttp-go"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
+
+func TestAssetDomainProbeTransportAppliesRateLimitAndUserAgent(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	limiter := ratelimit.New(ctx, 1, 100*time.Millisecond)
+	defer limiter.Stop()
+	var sentAt []time.Time
+	transport := assetDomainProbeStatusTransport{
+		base: assetDomainProbeRoundTripper(func(req *http.Request) (*http.Response, error) {
+			if got := req.Header.Get("User-Agent"); got != "Task-Agent/1.0" {
+				t.Errorf("User-Agent = %q", got)
+			}
+			sentAt = append(sentAt, time.Now())
+			return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+		}),
+		limiter:   limiter,
+		userAgent: "Task-Agent/1.0",
+	}
+	for range 2 {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://example.test", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("User-Agent", "Random-Agent/1.0")
+		if _, err := transport.RoundTrip(req); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(sentAt) != 2 || sentAt[1].Sub(sentAt[0]) < 60*time.Millisecond {
+		t.Fatalf("request times = %v, expected rate-limited second request", sentAt)
+	}
+	cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://example.test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.RoundTrip(req); !errors.Is(err, context.Canceled) || len(sentAt) != 2 {
+		t.Fatalf("cancelled request error = %v, sent count = %d", err, len(sentAt))
+	}
+}
+
+func TestAssetDomainProbeUsesTaskUserAgent(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if got := req.Header.Get("User-Agent"); got != "Task-Agent/2.0" {
+			t.Errorf("User-Agent = %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	request := dto.CreateScanTaskRequest{CustomHeaders: []string{"X-Test: one", "user-agent: Task-Agent/1.0", "User-Agent: Task-Agent/2.0"}}
+	client := newAssetDomainWappalyzerHTTPClient(request, nil)
+	if _, err := doAssetDomainWappalyzerRequest(context.Background(), client, nil, server.URL, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := assetDomainProbeUserAgent([]string{"User-Agent: good", "User-Agent: bad\r\nX-Test: injected"}); got != "good" {
+		t.Fatalf("selected User-Agent = %q", got)
+	}
+}
+
+func TestAssetDomainProbeRateLimitDefaultsAndBounds(t *testing.T) {
+	t.Parallel()
+	if got := assetDomainProbeRateLimit(0); got != 150 {
+		t.Fatalf("default rate limit = %d", got)
+	}
+	if got := assetDomainProbeRateLimit(int(^uint32(0)) + 1); uint64(got) != uint64(^uint32(0)) {
+		t.Fatalf("bounded rate limit = %d", got)
+	}
+	if got := assetDomainProbeRateLimitDuration(0); got != time.Second {
+		t.Fatalf("default rate limit duration = %s", got)
+	}
+	if got := assetDomainProbeRateLimitDuration(int64(^uint64(0) >> 1)); got != time.Duration(1<<63-1).Truncate(time.Millisecond) {
+		t.Fatalf("bounded rate limit duration = %s", got)
+	}
+}
 
 func TestAssetDomainResponseTitleDecodesLegacyCharsets(t *testing.T) {
 	t.Parallel()
