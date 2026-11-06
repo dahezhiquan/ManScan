@@ -19,7 +19,55 @@ import (
 	"ManScan/server/internal/repository"
 
 	"github.com/projectdiscovery/retryablehttp-go"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
+
+func TestAssetDomainResponseTitleDecodesLegacyCharsets(t *testing.T) {
+	t.Parallel()
+
+	gbkTitle := "404 - 找不到文件或目录。"
+	gbkBytes, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte(gbkTitle))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name        string
+		contentType string
+		body        []byte
+		want        string
+	}{
+		{
+			name:        "gb2312 meta declaration",
+			contentType: "text/html",
+			body:        []byte(fmt.Sprintf(`<html><head><meta http-equiv="Content-Type" content="text/html; charset=gb2312"><title>%s</title></head></html>`, gbkBytes)),
+			want:        gbkTitle,
+		},
+		{
+			name:        "gbk response header",
+			contentType: "text/html; charset=gbk",
+			body:        []byte(fmt.Sprintf(`<title>%s</title>`, gbkBytes)),
+			want:        gbkTitle,
+		},
+		{
+			name:        "valid utf8 with incorrect charset declaration",
+			contentType: "text/html; charset=gb2312",
+			body:        []byte(`<title>正常标题 &amp; 服务</title>`),
+			want:        "正常标题 & 服务",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			response := &assetDomainProbeHTTPResponse{
+				Headers: http.Header{"Content-Type": {test.contentType}},
+				Data:    test.body,
+			}
+			if got := assetDomainResponseTitle(response); got != test.want {
+				t.Fatalf("title = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
 
 type assetDomainProbeRoundTripper func(*http.Request) (*http.Response, error)
 

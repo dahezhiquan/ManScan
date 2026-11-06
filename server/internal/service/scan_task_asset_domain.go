@@ -23,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"ManScan/pkg/catalog/config"
 	"ManScan/pkg/projectfile"
@@ -34,6 +35,7 @@ import (
 	"github.com/projectdiscovery/retryablehttp-go"
 	"github.com/projectdiscovery/useragent"
 	wappalyzer "github.com/projectdiscovery/wappalyzergo"
+	"golang.org/x/net/html/charset"
 )
 
 var errScanTaskPausedBeforeProcess = errors.New("scan task paused before scanner process started")
@@ -2019,7 +2021,15 @@ func assetDomainResponseTitle(resp *assetDomainProbeHTTPResponse) string {
 	if len(matches) < 2 {
 		return ""
 	}
-	title := html.UnescapeString(string(bytes.TrimSpace(matches[1])))
+	titleBytes := bytes.TrimSpace(matches[1])
+	if !utf8.Valid(titleBytes) {
+		contentType := http.Header(resp.Headers).Get("Content-Type")
+		encoding, _, _ := charset.DetermineEncoding(resp.Data, contentType)
+		if decoded, err := encoding.NewDecoder().Bytes(titleBytes); err == nil {
+			titleBytes = decoded
+		}
+	}
+	title := html.UnescapeString(string(titleBytes))
 	return strings.Join(strings.Fields(title), " ")
 }
 
