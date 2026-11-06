@@ -1,3 +1,25 @@
+## 2026-11-07 01:06 网络模板命中普通 TCP 后跳过同端点 TLS 候选
+
+- 变动目录：`pkg/protocols/network/`，并同步更新根目录变更记录。
+- 变动文件：
+  - `pkg/protocols/network/request.go`：同一网络请求中，单载荷普通 TCP 候选已产生检测命中时，跳过同一地址的后续 TLS 候选，并将其计入已跳过请求；未命中、连接失败或多载荷场景仍继续执行 TLS。
+  - `pkg/protocols/network/request_test.go`：验证普通 TCP 命中只发起一次实际连接，未命中仍尝试 TLS，并检查跳过请求计数。
+- 修改目的或影响：减少 Redis 等双传输方式识别模板在普通 TCP 已识别服务时的不必要 TLS 握手；静态请求预估继续表示可能执行的候选总数，实际请求数会因命中后跳过而低于预估。
+
+## 2026-11-07 00:48 修复网络模板执行候选与请求预估不一致
+
+- 变动目录：`pkg/protocols/network/`、`pkg/templates/`、`pkg/core/`、`pkg/protocols/common/automaticscan/`，并同步更新根目录变更记录。
+- 变动文件：
+  - `pkg/protocols/network/network.go`：逐个地址解析 TLS 标志，避免 TLS 配置串到后续普通 TCP 地址。
+  - `pkg/protocols/network/request.go`：按地址与 TLS 模式区分候选；前一地址连接失败后继续尝试后续地址，并避免同一请求的不可达缓存提前拦住回退候选；按目标实际端口合并规则估算网络请求数。
+  - `pkg/protocols/network/request_test.go`：覆盖固定目标端口、多端口预检、关闭聚类、普通 TCP 与 TLS 候选、连接失败及不可达缓存后的 TLS 回退。
+  - `pkg/templates/request_count.go`：新增模板按目标调整网络请求数的计算入口。
+  - `pkg/core/execute_options.go`、`pkg/core/executors.go`：普通扫描的聚类前后总请求数及跳过请求数使用按目标端口计算的结果。
+  - `pkg/core/executors_test.go`：验证显式目标端口下的网络模板请求预估。
+  - `pkg/protocols/common/automaticscan/util.go`、`automaticscan.go`：自动映射在聚类前和最终模板阶段均按目标端口统计请求数。
+  - `pkg/protocols/common/automaticscan/automaticscan_test.go`：验证自动映射的总请求数和聚类前请求数口径。
+- 修改目的或影响：显式端口目标不再按模板中合并掉的端口重复预估；同一地址的普通 TCP 与 TLS 会分别尝试，首个候选失败也不再遗漏后续候选。`pre_cluster_total_requests` 与最终预估同步采用新口径，历史任务统计不自动重算。
+
 ## 2026-11-06 19:22 多端口网络模板避免对固定端口目标重复预检
 
 - 变动目录：`pkg/protocols/network/`，并同步更新根目录变更记录。

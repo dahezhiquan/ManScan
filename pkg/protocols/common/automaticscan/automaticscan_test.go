@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"ManScan/internal/tests/testutils"
+	"ManScan/pkg/input/provider"
+	"ManScan/pkg/protocols"
 	"ManScan/pkg/protocols/common/assetdomainfingerprint"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/dns"
@@ -14,6 +17,17 @@ import (
 	"ManScan/pkg/templates"
 	"github.com/stretchr/testify/require"
 )
+
+type requestEstimateProgress struct {
+	testutils.MockProgressClient
+	total      int64
+	preCluster int64
+}
+
+func (p *requestEstimateProgress) SetTotal(total int64) { p.total = total }
+func (p *requestEstimateProgress) SetPreClusterTotal(total int64) {
+	p.preCluster = total
+}
 
 func TestNormalizeAppName(t *testing.T) {
 	appName := normalizeAppName("JBoss")
@@ -76,6 +90,33 @@ func TestMappedTemplateCountDeduplicatesAcrossTargets(t *testing.T) {
 	}
 
 	require.EqualValues(t, 3, mappedTemplateCount(targets))
+}
+
+func TestMappedRequestTotalsUseEffectiveNetworkTargets(t *testing.T) {
+	options := testutils.DefaultOptions.Copy()
+	testutils.Init(options)
+	t.Cleanup(func() { testutils.Cleanup(options) })
+	request := &network.Request{Address: []string{"{{Hostname}}", "tls://{{Hostname}}"}, Port: "6379,6380"}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{ID: "redis-detect"})
+	require.NoError(t, request.Compile(executerOpts))
+	template := &templates.Template{ID: "redis-detect", TotalRequests: request.Requests(), RequestsNetwork: []*network.Request{request}}
+	target := &contextargs.MetaInput{Input: "127.0.0.1:8379"}
+	progress := &requestEstimateProgress{}
+	service := &Service{
+		opts:              &protocols.ExecutorOptions{Progress: progress},
+		target:            provider.NewSimpleInputProviderWithUrls("", target.Input),
+		techTemplates:     []*templates.Template{template},
+		techTemplateStats: templateLoadStats{PreClusterTemplates: []*templates.Template{template}},
+		totalGate:         newTotalGate(progress),
+	}
+	service.setMappedRequestTotal([]mappedTarget{{
+		input:                target,
+		finalTemplates:       []*templates.Template{template},
+		preClusterRequests:   getRequestCountForInput([]*templates.Template{template}, target.Input),
+		usedCachedWappalyzer: true,
+	}})
+	require.EqualValues(t, 4, progress.total)
+	require.EqualValues(t, 4, progress.preCluster)
 }
 
 func TestLoadAssetDomainFingerprintCache(t *testing.T) {

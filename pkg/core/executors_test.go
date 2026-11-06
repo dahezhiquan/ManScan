@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"ManScan/internal/tests/testutils"
 	inputtypes "ManScan/pkg/input/types"
 	"ManScan/pkg/output"
 	"ManScan/pkg/protocols"
@@ -429,7 +430,7 @@ func TestExecuteProgressCountsOnlyExecutableTemplates(t *testing.T) {
 		{ID: "network-template", TotalRequests: 2, RequestsNetwork: []*network.Request{{}}},
 	}
 	targets := &fakeTargetProvider{values: []*contextargs.MetaInput{{Input: "mysql.example.com:3306"}}}
-	targetStats := engine.targetExecutionStats(targets)
+	targetStats := engine.targetExecutionStats(targets, true)
 
 	if got := countExecutableTemplates(templatesList, targetStats); got != 1 {
 		t.Fatalf("countExecutableTemplates() = %d, want 1", got)
@@ -497,6 +498,30 @@ func TestExecuteScanInitializesFilteredProgress(t *testing.T) {
 	}
 }
 
+func TestNetworkRequestEstimateUsesEffectiveTargetPorts(t *testing.T) {
+	options := testutils.DefaultOptions.Copy()
+	testutils.Init(options)
+	t.Cleanup(func() { testutils.Cleanup(options) })
+	request := &network.Request{
+		Address: []string{"{{Hostname}}", "tls://{{Hostname}}"},
+		Port:    "6379,6380",
+	}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{ID: "redis-detect"})
+	if err := request.Compile(executerOpts); err != nil {
+		t.Fatal(err)
+	}
+	template := &templates.Template{ID: "redis-detect", TotalRequests: request.Requests(), RequestsNetwork: []*network.Request{request}}
+	targets := &fakeTargetProvider{values: []*contextargs.MetaInput{
+		{Input: "127.0.0.1:8379"},
+		{Input: "127.0.0.1:6380"},
+	}}
+	engine := New(options)
+	stats := engine.targetExecutionStats(targets, true)
+	if got := getRequestCountForTargets([]*templates.Template{template}, stats); got != 4 {
+		t.Fatalf("target-aware request count = %d, want 4 instead of static 8", got)
+	}
+}
+
 func TestExecuteProgressKeepsHTTPTemplatesForMixedTargets(t *testing.T) {
 	httpAlive := false
 	engine := New(&types.Options{})
@@ -514,7 +539,7 @@ func TestExecuteProgressKeepsHTTPTemplatesForMixedTargets(t *testing.T) {
 		{ID: "http-template", TotalRequests: 3, RequestsHTTP: []*httpprotocol.Request{{}}},
 		{ID: "network-template", TotalRequests: 2, RequestsNetwork: []*network.Request{{}}},
 	}
-	targetStats := engine.targetExecutionStats(targets)
+	targetStats := engine.targetExecutionStats(targets, true)
 
 	if got := countExecutableTemplates(templatesList, targetStats); got != 2 {
 		t.Fatalf("countExecutableTemplates() = %d, want 2", got)

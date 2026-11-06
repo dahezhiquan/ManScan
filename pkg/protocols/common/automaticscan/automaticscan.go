@@ -355,14 +355,14 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 	}
 	s.opts.Logger.Info().Msgf("%s 已加载漏洞模版数量：%d", input.Input, len(finalTemplates))
-	preClusterRequests := loadStats.PreClusterRequests
+	preClusterTemplates := loadStats.PreClusterTemplates
 	if skipHTTPDetectionTemplates {
-		preClusterRequests = loadStats.PreClusterNonHTTPRequests
+		preClusterTemplates = loadStats.PreClusterNonHTTPTemplates
 	}
 	return mappedTarget{
 		input:                      input,
 		finalTemplates:             finalTemplates,
-		preClusterRequests:         preClusterRequests,
+		preClusterRequests:         getRequestCountForInput(preClusterTemplates, input.Input),
 		usedCachedWappalyzer:       usedCachedWappalyzer,
 		skipHTTPDetectionTemplates: skipHTTPDetectionTemplates,
 	}
@@ -388,17 +388,17 @@ func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
 			if target.skipHTTPDetectionTemplates && isHTTPFingerprintTemplate(template) {
 				continue
 			}
-			total += int64(template.TotalRequests)
+			total += int64(template.EstimatedRequestsForTarget(target.input.Input))
 		}
 		if target.skipHTTPDetectionTemplates {
-			preClusterTotal += s.techTemplateStats.PreClusterNonHTTPRequests
+			preClusterTotal += getRequestCountForInput(s.techTemplateStats.PreClusterNonHTTPTemplates, target.input.Input)
 		} else {
-			preClusterTotal += s.techTemplateStats.PreClusterRequests
+			preClusterTotal += getRequestCountForInput(s.techTemplateStats.PreClusterTemplates, target.input.Input)
 		}
 	}
 	for _, target := range targets {
 		for _, template := range target.finalTemplates {
-			total += int64(template.TotalRequests)
+			total += int64(template.EstimatedRequestsForTarget(target.input.Input))
 		}
 		preClusterTotal += target.preClusterRequests
 	}

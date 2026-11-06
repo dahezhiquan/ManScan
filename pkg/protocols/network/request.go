@@ -1,6 +1,7 @@
 package network
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"maps"
@@ -104,9 +105,78 @@ func (request *Request) getOpenPorts(target *contextargs.Context) ([]string, err
 	return openPorts, nil
 }
 
+// EstimatedRequestsForTarget counts distinct network candidates for a target with a fixed port.
+func (request *Request) EstimatedRequestsForTarget(input string) int {
+	baseline := request.Requests()
+	if request.SelfContained || input == "" || len(request.Address) == 0 || (request.Port != "" && len(request.ports) == 0) {
+		return baseline
+	}
+	target := contextargs.NewWithInput(context.Background(), input)
+	if target.Port() == "" {
+		return baseline
+	}
+	ports := request.ports
+	if len(ports) == 0 {
+		ports = []string{""}
+	}
+	addresses := request.addresses
+	if len(addresses) == 0 {
+		for _, address := range request.Address {
+			addresses = append(addresses, addressKV{address: strings.TrimPrefix(address, "tls://"), tls: strings.HasPrefix(address, "tls://")})
+		}
+	}
+	resolvedHosts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		candidate := target.Clone()
+		if err := candidate.UseNetworkPort(port, request.ExcludePorts); err != nil {
+			return baseline
+		}
+		hostname, err := getAddress(candidate.MetaInput.Input)
+		if err != nil {
+			return baseline
+		}
+		resolvedHosts = append(resolvedHosts, hostname)
+	}
+	if len(resolvedHosts) > 1 {
+		allPortsUseTarget := true
+		for _, hostname := range resolvedHosts[1:] {
+			if hostname != resolvedHosts[0] {
+				allPortsUseTarget = false
+				break
+			}
+		}
+		if allPortsUseTarget {
+			resolvedHosts = resolvedHosts[:1]
+		}
+	}
+	seen := make(map[networkAddressKey]struct{}, baseline)
+	count := 0
+	disableClustering := request.options != nil && request.options.Options != nil && request.options.Options.DisableClustering
+	for _, hostname := range resolvedHosts {
+		for _, address := range addresses {
+			resolved := strings.ReplaceAll(address.address, "{{Hostname}}", hostname)
+			if strings.Contains(resolved, "{{") {
+				return baseline
+			}
+			if disableClustering {
+				count++
+				continue
+			}
+			seen[networkAddressKey{address: resolved, tls: address.tls}] = struct{}{}
+		}
+	}
+	if disableClustering {
+		return count * request.payloadRequestCount()
+	}
+	if len(seen) == 0 {
+		return baseline
+	}
+	return len(seen) * request.payloadRequestCount()
+}
+
 // ExecuteWithResults executes the protocol requests and returns results instead of writing them.
 func (request *Request) ExecuteWithResults(target *contextargs.Context, metadata, previous output.InternalEvent, callback protocols.OutputEventCallback) error {
-	visitedAddresses := make(mapsutil.Map[string, struct{}])
+	visitedAddresses := make(mapsutil.Map[networkAddressKey, struct{}])
 
 	if request.Port == "" {
 		// backwords compatibility or for other use cases
@@ -169,7 +239,7 @@ func (request *Request) payloadRequestCount() int {
 	return 1
 }
 
-func (request *Request) executeOnTarget(input *contextargs.Context, visited mapsutil.Map[string, struct{}], metadata, previous output.InternalEvent, callback protocols.OutputEventCallback) error {
+func (request *Request) executeOnTarget(input *contextargs.Context, visited mapsutil.Map[networkAddressKey, struct{}], metadata, previous output.InternalEvent, callback protocols.OutputEventCallback) error {
 	var address string
 	var err error
 
@@ -210,13 +280,10 @@ func (request *Request) executeOnTarget(input *contextargs.Context, visited maps
 	// stop at first match if requested
 	atomicBool := &atomic.Bool{}
 	shouldStopAtFirstMatch := request.StopAtFirstMatch || request.options.StopAtFirstMatch || request.options.Options.StopAtFirstMatch
-	wrappedCallback := func(event *output.InternalWrappedEvent) {
-		if event != nil && event.HasOperatorResult() {
-			atomicBool.Store(true)
-		}
-		callback(event)
-	}
 
+	var addressErrors []error
+	var completedAddress bool
+	matchedPlainAddresses := make(map[string]struct{})
 	for addressIndex, kv := range request.addresses {
 		select {
 		case <-input.Context().Done():
@@ -225,18 +292,40 @@ func (request *Request) executeOnTarget(input *contextargs.Context, visited maps
 		}
 
 		actualAddress := replacer.Replace(kv.address, variables)
+		// Payload variants may match differently over TCP and TLS; only skip a single-payload fallback.
+		if kv.tls && request.generator == nil {
+			if _, matched := matchedPlainAddresses[actualAddress]; matched {
+				progress.IncrementSkippedRequests(request.options.Progress, int64(request.payloadRequestCount()))
+				continue
+			}
+		}
 
-		if visited.Has(actualAddress) && !request.options.Options.DisableClustering {
+		addressKey := networkAddressKey{address: actualAddress, tls: kv.tls}
+		if visited.Has(addressKey) && !request.options.Options.DisableClustering {
 			continue
 		}
 
-		visited.Set(actualAddress, struct{}{})
+		visited.Set(addressKey, struct{}{})
+		matchedCurrentAddress := &atomic.Bool{}
+		wrappedCallback := func(event *output.InternalWrappedEvent) {
+			if event != nil && event.HasOperatorResult() {
+				atomicBool.Store(true)
+				matchedCurrentAddress.Store(true)
+			}
+			callback(event)
+		}
 
-		if err = request.executeAddress(variables, actualAddress, address, input, kv.tls, previous, interactshURLs, wrappedCallback); err != nil {
+		if err = request.executeAddress(variables, actualAddress, address, input, kv.tls, len(addressErrors) > 0, previous, interactshURLs, wrappedCallback); err != nil {
+			addressErrors = append(addressErrors, err)
 			outputEvent := request.responseToDSLMap("", "", "", address, "")
 			gologger.Warning().Msgf("[%v] Could not make network request for (%s) : %s\n", request.options.TemplateID, actualAddress, err)
 
 			callback(&output.InternalWrappedEvent{InternalEvent: outputEvent})
+		} else {
+			completedAddress = true
+		}
+		if !kv.tls && request.generator == nil && matchedCurrentAddress.Load() {
+			matchedPlainAddresses[actualAddress] = struct{}{}
 		}
 
 		if shouldStopAtFirstMatch && atomicBool.Load() {
@@ -246,11 +335,14 @@ func (request *Request) executeOnTarget(input *contextargs.Context, visited maps
 		}
 	}
 
-	return err
+	if completedAddress {
+		return nil
+	}
+	return multierr.Combine(addressErrors...)
 }
 
 // executeAddress executes the request for an address
-func (request *Request) executeAddress(variables map[string]interface{}, actualAddress, address string, input *contextargs.Context, shouldUseTLS bool, previous output.InternalEvent, interactshURLs []string, callback protocols.OutputEventCallback) error {
+func (request *Request) executeAddress(variables map[string]interface{}, actualAddress, address string, input *contextargs.Context, shouldUseTLS, allowFallback bool, previous output.InternalEvent, interactshURLs []string, callback protocols.OutputEventCallback) error {
 	variables = generators.MergeMaps(variables, map[string]interface{}{"Hostname": address})
 	payloads := generators.BuildPayloadFromOptions(request.options.Options)
 
@@ -295,7 +387,7 @@ func (request *Request) executeAddress(variables map[string]interface{}, actualA
 					m.Unlock()
 				}
 			}
-			if request.isUnresponsiveAddress(updatedTarget) {
+			if !allowFallback && request.isUnresponsiveAddress(updatedTarget) {
 				// skip on unresponsive address no need to continue
 				progress.IncrementSkippedRequests(request.options.Progress, int64(iterator.Remaining()+1))
 				return nil
@@ -319,13 +411,13 @@ func (request *Request) executeAddress(variables map[string]interface{}, actualA
 			go func(vars map[string]interface{}, urls []string) {
 				defer swg.Done()
 
-				if request.isUnresponsiveAddress(updatedTarget) {
+				if !allowFallback && request.isUnresponsiveAddress(updatedTarget) {
 					// skip on unresponsive address no need to continue
 					progress.IncrementSkippedRequests(request.options.Progress, 1)
 					return
 				}
 
-				if err := request.executeRequestWithPayloads(variables, actualAddress, address, input, shouldUseTLS, vars, previous, urls, callback); err != nil {
+				if err := request.executeRequestWithPayloads(variables, actualAddress, address, input, shouldUseTLS, allowFallback, vars, previous, urls, callback); err != nil {
 					m.Lock()
 					multiErr = multierr.Append(multiErr, err)
 					m.Unlock()
@@ -340,7 +432,7 @@ func (request *Request) executeAddress(variables map[string]interface{}, actualA
 		}
 	} else {
 		value := maps.Clone(payloads)
-		if err := request.executeRequestWithPayloads(variables, actualAddress, address, input, shouldUseTLS, value, previous, interactshURLs, callback); err != nil {
+		if err := request.executeRequestWithPayloads(variables, actualAddress, address, input, shouldUseTLS, allowFallback, value, previous, interactshURLs, callback); err != nil {
 			return err
 		}
 	}
@@ -348,7 +440,7 @@ func (request *Request) executeAddress(variables map[string]interface{}, actualA
 	return nil
 }
 
-func (request *Request) executeRequestWithPayloads(variables map[string]interface{}, actualAddress, address string, input *contextargs.Context, shouldUseTLS bool, payloads map[string]interface{}, previous output.InternalEvent, interactshURLs []string, callback protocols.OutputEventCallback) error {
+func (request *Request) executeRequestWithPayloads(variables map[string]interface{}, actualAddress, address string, input *contextargs.Context, shouldUseTLS, allowFallback bool, payloads map[string]interface{}, previous output.InternalEvent, interactshURLs []string, callback protocols.OutputEventCallback) error {
 	var (
 		hostname string
 		conn     net.Conn
@@ -360,7 +452,7 @@ func (request *Request) executeRequestWithPayloads(variables map[string]interfac
 	updatedTarget := input.Clone()
 	updatedTarget.MetaInput.Input = actualAddress
 
-	if request.isUnresponsiveAddress(updatedTarget) {
+	if !allowFallback && request.isUnresponsiveAddress(updatedTarget) {
 		// skip on unresponsive address no need to continue
 		progress.IncrementSkippedRequests(request.options.Progress, 1)
 		return nil

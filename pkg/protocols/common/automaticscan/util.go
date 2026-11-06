@@ -12,8 +12,8 @@ import (
 )
 
 type templateLoadStats struct {
-	PreClusterRequests        int64
-	PreClusterNonHTTPRequests int64
+	PreClusterTemplates        []*templates.Template
+	PreClusterNonHTTPTemplates []*templates.Template
 }
 
 // getTemplateDirs returns template directories for given input
@@ -56,8 +56,8 @@ func loadTemplatesWithTagsWithStats(opts Options, templateDirs []string, tags []
 	}
 
 	loadStats := templateLoadStats{
-		PreClusterRequests:        int64(getRequestCount(finalTemplates)),
-		PreClusterNonHTTPRequests: int64(getRequestCount(filterHTTPBasedTemplates(finalTemplates))),
+		PreClusterTemplates:        append([]*templates.Template(nil), finalTemplates...),
+		PreClusterNonHTTPTemplates: filterHTTPBasedTemplates(finalTemplates),
 	}
 	if excludeHTTP {
 		finalTemplates = filterHTTPBasedTemplates(finalTemplates)
@@ -96,6 +96,17 @@ func getRequestCount(templates []*templates.Template) int {
 			continue
 		}
 		count += template.TotalRequests
+	}
+	return count
+}
+
+func getRequestCountForInput(templates []*templates.Template, input string) int64 {
+	var count int64
+	for _, template := range templates {
+		if template == nil || len(template.Workflows) > 0 {
+			continue
+		}
+		count += int64(template.EstimatedRequestsForTarget(input))
 	}
 	return count
 }

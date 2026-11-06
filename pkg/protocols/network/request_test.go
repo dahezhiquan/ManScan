@@ -23,6 +23,7 @@ import (
 	"ManScan/pkg/operators/extractors"
 	"ManScan/pkg/operators/matchers"
 	"ManScan/pkg/output"
+	"ManScan/pkg/protocols"
 	"ManScan/pkg/protocols/common/contextargs"
 	"ManScan/pkg/protocols/common/interactsh"
 )
@@ -30,10 +31,15 @@ import (
 type skippedProgress struct {
 	testutils.MockProgressClient
 	skipped int64
+	actual  int64
 }
 
 func (p *skippedProgress) IncrementSkippedRequests(count int64) {
 	p.skipped += count
+}
+
+func (p *skippedProgress) IncrementActualRequests() {
+	p.actual++
 }
 
 type alwaysSkipHostErrorsCache struct{}
@@ -48,6 +54,26 @@ func (c *alwaysSkipHostErrorsCache) MarkFailed(string, *contextargs.Context, err
 func (c *alwaysSkipHostErrorsCache) MarkFailedOrRemove(string, *contextargs.Context, error) {
 }
 func (c *alwaysSkipHostErrorsCache) IsPermanentErr(*contextargs.Context, error) bool {
+	return false
+}
+
+type failThenSkipHostErrorsCache struct {
+	failed bool
+}
+
+func (c *failThenSkipHostErrorsCache) SetVerbose(bool) {}
+func (c *failThenSkipHostErrorsCache) Close()          {}
+func (c *failThenSkipHostErrorsCache) Check(string, *contextargs.Context) bool {
+	return c.failed
+}
+func (c *failThenSkipHostErrorsCache) Remove(*contextargs.Context) { c.failed = false }
+func (c *failThenSkipHostErrorsCache) MarkFailed(string, *contextargs.Context, error) {
+	c.failed = true
+}
+func (c *failThenSkipHostErrorsCache) MarkFailedOrRemove(_ string, _ *contextargs.Context, err error) {
+	c.failed = err != nil
+}
+func (c *failThenSkipHostErrorsCache) IsPermanentErr(*contextargs.Context, error) bool {
 	return false
 }
 
@@ -196,6 +222,165 @@ func TestNetworkMultiPortPrechecksWhenTemplateChangesTargetPort(t *testing.T) {
 			ports, err := request.getOpenPorts(contextargs.NewWithInput(context.Background(), input))
 			require.NoError(t, err)
 			require.Equal(t, []string{openPort}, ports)
+		})
+	}
+}
+
+func TestNetworkEstimatedRequestsForFixedPort(t *testing.T) {
+	request := &Request{
+		Address:   []string{"{{Hostname}}", "tls://{{Hostname}}"},
+		addresses: []addressKV{{address: "{{Hostname}}"}, {address: "{{Hostname}}", tls: true}},
+		Port:      "6379,6380",
+		ports:     []string{"6379", "6380"},
+	}
+	for _, test := range []struct {
+		input string
+		want  int
+	}{
+		{input: "127.0.0.1:8379", want: 2},
+		{input: "http://127.0.0.1:12345", want: 2},
+		{input: "http://127.0.0.1:80", want: 4},
+		{input: "127.0.0.1", want: 4},
+	} {
+		t.Run(test.input, func(t *testing.T) {
+			require.Equal(t, test.want, request.EstimatedRequestsForTarget(test.input))
+		})
+	}
+}
+
+func TestNetworkEstimatedRequestsForFixedPortWithoutClustering(t *testing.T) {
+	request := &Request{
+		Address:   []string{"{{Hostname}}", "{{Hostname}}"},
+		addresses: []addressKV{{address: "{{Hostname}}"}, {address: "{{Hostname}}"}},
+		Port:      "6379,6380",
+		ports:     []string{"6379", "6380"},
+	}
+	require.Equal(t, 1, request.EstimatedRequestsForTarget("127.0.0.1:8379"))
+	options := testutils.DefaultOptions.Copy()
+	options.DisableClustering = true
+	request.options = &protocols.ExecutorOptions{Options: options}
+	require.Equal(t, 2, request.EstimatedRequestsForTarget("127.0.0.1:8379"))
+}
+
+func TestNetworkCompileDoesNotCarryTLSIntoLaterAddresses(t *testing.T) {
+	options := testutils.DefaultOptions.Copy()
+	testutils.Init(options)
+	t.Cleanup(func() { testutils.Cleanup(options) })
+	request := &Request{Address: []string{"tls://{{Hostname}}", "{{Hostname}}"}}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{ID: "network-tls-addresses"})
+	require.NoError(t, request.Compile(executerOpts))
+	require.Equal(t, []addressKV{{address: "{{Hostname}}", tls: true}, {address: "{{Hostname}}"}}, request.addresses)
+}
+
+func TestNetworkContinuesAfterAddressConnectionFailure(t *testing.T) {
+	options := testutils.DefaultOptions.Copy()
+	testutils.Init(options)
+	t.Cleanup(func() { testutils.Cleanup(options) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("fallback reached"))
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	require.NoError(t, err)
+
+	request := &Request{
+		ID:      "network-address-fallback",
+		Address: []string{"127.0.0.1:1", "{{Hostname}}"},
+		Inputs:  []*Input{{Data: "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"}},
+		Operators: operators.Operators{Matchers: []*matchers.Matcher{{
+			Part:  "data",
+			Type:  matchers.MatcherTypeHolder{MatcherType: matchers.WordsMatcher},
+			Words: []string{"fallback reached"},
+		}}},
+	}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{ID: request.ID})
+	require.NoError(t, request.Compile(executerOpts))
+	var matched bool
+	err = request.ExecuteWithResults(contextargs.NewWithInput(context.Background(), parsed.Host), nil, nil, func(event *output.InternalWrappedEvent) {
+		matched = matched || event != nil && len(event.Results) > 0
+	})
+	require.NoError(t, err)
+	require.True(t, matched)
+}
+
+func TestNetworkConnectionFailureStillTriesTLSAddress(t *testing.T) {
+	options := testutils.DefaultOptions.Copy()
+	testutils.Init(options)
+	t.Cleanup(func() { testutils.Cleanup(options) })
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("tls fallback reached"))
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	require.NoError(t, err)
+
+	request := &Request{
+		ID:      "network-tls-fallback",
+		Address: []string{"127.0.0.1:1", "{{Hostname}}", "tls://{{Hostname}}"},
+		Inputs:  []*Input{{Data: "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"}},
+		Operators: operators.Operators{Matchers: []*matchers.Matcher{{
+			Part:  "data",
+			Type:  matchers.MatcherTypeHolder{MatcherType: matchers.WordsMatcher},
+			Words: []string{"tls fallback reached"},
+		}}},
+	}
+	executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{ID: request.ID})
+	cache := &failThenSkipHostErrorsCache{}
+	executerOpts.HostErrorsCache = cache
+	require.NoError(t, request.Compile(executerOpts))
+	var matched bool
+	err = request.ExecuteWithResults(contextargs.NewWithInput(context.Background(), parsed.Host), nil, nil, func(event *output.InternalWrappedEvent) {
+		matched = matched || event != nil && len(event.Results) > 0
+	})
+	require.NoError(t, err)
+	require.True(t, matched)
+	require.False(t, cache.failed)
+}
+
+func TestNetworkPlainAddressOnlySkipsTLSAfterMatch(t *testing.T) {
+	options := testutils.DefaultOptions.Copy()
+	testutils.Init(options)
+	t.Cleanup(func() { testutils.Cleanup(options) })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("+PONG"))
+	}))
+	defer server.Close()
+	parsed, err := url.Parse(server.URL)
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name        string
+		word        string
+		wantMatch   bool
+		wantActual  int64
+		wantSkipped int64
+	}{
+		{name: "matched", word: "+PONG", wantMatch: true, wantActual: 1, wantSkipped: 1},
+		{name: "unmatched", word: "not present", wantActual: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := &Request{
+				ID:      "network-plain-tls-" + test.name,
+				Address: []string{"{{Hostname}}", "tls://{{Hostname}}"},
+				Inputs:  []*Input{{Data: "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"}},
+				Operators: operators.Operators{Matchers: []*matchers.Matcher{{
+					Part:  "data",
+					Type:  matchers.MatcherTypeHolder{MatcherType: matchers.WordsMatcher},
+					Words: []string{test.word},
+				}}},
+			}
+			executerOpts := testutils.NewMockExecuterOptions(options, &testutils.TemplateInfo{ID: request.ID})
+			progress := &skippedProgress{}
+			executerOpts.Progress = progress
+			require.NoError(t, request.Compile(executerOpts))
+			var matched bool
+			err := request.ExecuteWithResults(contextargs.NewWithInput(context.Background(), parsed.Host), nil, nil, func(event *output.InternalWrappedEvent) {
+				matched = matched || event != nil && len(event.Results) > 0
+			})
+			require.NoError(t, err)
+			require.Equal(t, test.wantMatch, matched)
+			require.Equal(t, test.wantActual, progress.actual)
+			require.Equal(t, test.wantSkipped, progress.skipped)
 		})
 	}
 }

@@ -36,7 +36,7 @@ func (e *Engine) ExecuteWithResults(ctx context.Context, templatesList []*templa
 func (e *Engine) ExecuteScanWithOpts(ctx context.Context, templatesList []*templates.Template, target provider.InputProvider, noCluster bool) *atomic.Bool {
 	results := &atomic.Bool{}
 	selfcontainedWg := &sync.WaitGroup{}
-	targetStats := e.targetExecutionStats(target)
+	targetStats := e.targetExecutionStats(target, hasTargetAwareNetworkRequests(templatesList))
 
 	totalReqBeforeCluster := getRequestCountForTargets(templatesList, targetStats)
 
@@ -213,9 +213,24 @@ func (e *Engine) emitFingerprintTargetCompleted(target string) {
 type targetExecutionStats struct {
 	totalTargets       int64
 	httpCapableTargets int64
+	inputs             []targetCountInput
 }
 
-func (e *Engine) targetExecutionStats(target provider.InputProvider) targetExecutionStats {
+type targetCountInput struct {
+	input       string
+	httpCapable bool
+}
+
+func hasTargetAwareNetworkRequests(templateList []*templates.Template) bool {
+	for _, template := range templateList {
+		if template != nil && !template.SelfContained && template.Flow == "" && len(template.RequestsNetwork) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *Engine) targetExecutionStats(target provider.InputProvider, trackNetworkTargets bool) targetExecutionStats {
 	if target == nil {
 		return targetExecutionStats{}
 	}
@@ -229,16 +244,20 @@ func (e *Engine) targetExecutionStats(target provider.InputProvider) targetExecu
 		totalTargets:       totalTargets,
 		httpCapableTargets: totalTargets,
 	}
-	if e == nil || e.executerOpts == nil || e.executerOpts.AssetDomainFingerprintCache == nil {
+	hasFingerprintCache := e != nil && e.executerOpts != nil && e.executerOpts.AssetDomainFingerprintCache != nil
+	if !hasFingerprintCache && !trackNetworkTargets {
 		return stats
 	}
-
 	stats.httpCapableTargets = 0
 	iteratedTargets := int64(0)
 	target.Iterate(func(value *contextargs.MetaInput) bool {
 		iteratedTargets++
-		if value == nil || !e.executerOpts.AssetDomainFingerprintCache.HTTPProbeFailed(value.Input) {
+		httpCapable := value == nil || !hasFingerprintCache || !e.executerOpts.AssetDomainFingerprintCache.HTTPProbeFailed(value.Input)
+		if httpCapable {
 			stats.httpCapableTargets++
+		}
+		if trackNetworkTargets && value != nil && value.Port() != "" {
+			stats.inputs = append(stats.inputs, targetCountInput{input: value.Input, httpCapable: httpCapable})
 		}
 		return true
 	})
@@ -304,10 +323,19 @@ func getRequestCountForTargets(templateList []*templates.Template, targetStats t
 			continue
 		}
 		targetCount := targetStats.totalTargets
-		if !template.SelfContained && isHTTPBasedTemplate(template) {
+		httpBased := !template.SelfContained && isHTTPBasedTemplate(template)
+		if httpBased {
 			targetCount = targetStats.httpCapableTargets
 		}
 		count += int64(template.TotalRequests) * targetCount
+		if !template.SelfContained && len(template.RequestsNetwork) > 0 {
+			for _, input := range targetStats.inputs {
+				if httpBased && !input.httpCapable {
+					continue
+				}
+				count += int64(template.EstimatedRequestsForTarget(input.input) - template.TotalRequests)
+			}
+		}
 	}
 	return count
 }

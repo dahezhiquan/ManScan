@@ -313,7 +313,7 @@ func (e *Engine) skippedTemplateRequestCount(template *templates.Template, targe
 	if template.TotalRequests <= 0 {
 		return 0
 	}
-	return int64(template.TotalRequests)
+	return int64(template.EstimatedRequestsForTarget(target.Input))
 }
 
 func (e *Engine) remainingSkippedRequestCount(templateList []*templates.Template, target *contextargs.MetaInput) int64 {

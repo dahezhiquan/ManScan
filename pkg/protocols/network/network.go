@@ -126,6 +126,11 @@ type addressKV struct {
 	tls     bool
 }
 
+type networkAddressKey struct {
+	address string
+	tls     bool
+}
+
 // Input is the input to send on the network
 type Input struct {
 	// description: |
@@ -169,12 +174,12 @@ func (request *Request) GetID() string {
 
 // Compile compiles the protocol request for further execution.
 func (request *Request) Compile(options *protocols.ExecutorOptions) error {
-	var shouldUseTLS bool
 	var err error
 
 	request.options = options
 	for _, address := range request.Address {
 		// check if the connection should be encrypted
+		shouldUseTLS := false
 		if strings.HasPrefix(address, "tls://") {
 			shouldUseTLS = true
 			address = strings.TrimPrefix(address, "tls://")
