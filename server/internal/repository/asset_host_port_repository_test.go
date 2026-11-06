@@ -167,6 +167,137 @@ func TestAssetHostPortRepositorySyncObservationsKeepsKnownVersion(t *testing.T) 
 	}
 }
 
+func TestAssetHostPortRepositorySyncObservationsPromotesUnknownProtocol(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&entity.AssetHostPort{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_ip_protocol_port ON manscan_asset_host_port(ip_address, port_protocol, port_number, service_name)").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewAssetHostPortRepository(db)
+	first := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	later := first.Add(time.Hour)
+	unknown := AssetHostPortObservation{IPAddress: "10.107.71.95", PortNumber: 8022, ServiceName: "openssh", AppName: "openssh", AppVersion: "7.4", IsAlive: true}
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{unknown}, first); err != nil {
+		t.Fatal(err)
+	}
+	known := unknown
+	known.PortProtocol = "tcp"
+	known.AppVersion = ""
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{known}, later); err != nil {
+		t.Fatal(err)
+	}
+
+	var ports []entity.AssetHostPort
+	if err := db.Find(&ports).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 1 || ports[0].PortProtocol != "tcp" || ports[0].AppVersion == nil || *ports[0].AppVersion != "7.4" || !ports[0].PortCreatedAt.Equal(first) || ports[0].LastAliveAt == nil || !ports[0].LastAliveAt.Equal(later) {
+		t.Fatalf("ports = %+v, want one TCP record with original time and version", ports)
+	}
+}
+
+func TestAssetHostPortRepositorySyncObservationsMergesExistingKnownAndUnknownProtocol(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&entity.AssetHostPort{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_ip_protocol_port ON manscan_asset_host_port(ip_address, port_protocol, port_number, service_name)").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewAssetHostPortRepository(db)
+	first := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	later := first.Add(time.Hour)
+	unknown := AssetHostPortObservation{IPAddress: "10.107.71.95", PortNumber: 8022, ServiceName: "openssh", AppName: "openssh", AppVersion: "7.4", IsAlive: true}
+	known := unknown
+	known.PortProtocol = "tcp"
+	known.AppVersion = ""
+	other := unknown
+	other.ServiceName = "ssh"
+	other.AppName = "ssh"
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{other}, first); err != nil {
+		t.Fatal(err)
+	}
+	serviceName := unknown.ServiceName
+	appName := unknown.AppName
+	version := unknown.AppVersion
+	if err := db.Create(&[]entity.AssetHostPort{
+		{IPAddress: unknown.IPAddress, PortProtocol: "", PortNumber: unknown.PortNumber, ServiceName: &serviceName, AppName: &appName, AppVersion: &version, PortCreatedAt: first, LastAliveAt: &first, IsAlive: true},
+		{IPAddress: known.IPAddress, PortProtocol: "tcp", PortNumber: known.PortNumber, ServiceName: &serviceName, AppName: &appName, PortCreatedAt: later, LastAliveAt: &later, IsAlive: true},
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{known}, later); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{unknown}, later.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	var ports []entity.AssetHostPort
+	if err := db.Order("service_name ASC").Find(&ports).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 2 || ports[0].PortProtocol != "tcp" || ports[0].AppVersion == nil || *ports[0].AppVersion != "7.4" || !ports[0].PortCreatedAt.Equal(first) || ports[0].LastAliveAt == nil || !ports[0].LastAliveAt.Equal(later.Add(time.Minute)) {
+		t.Fatalf("ports = %+v, want merged TCP openssh record", ports)
+	}
+	if ports[1].PortProtocol != "" || ports[1].ServiceName == nil || *ports[1].ServiceName != "ssh" {
+		t.Fatalf("unrelated service changed: %+v", ports[1])
+	}
+}
+
+func TestAssetHostPortRepositorySyncObservationsKeepsAmbiguousUnknownProtocol(t *testing.T) {
+	t.Parallel()
+
+	dsn := "file:" + strings.ReplaceAll(t.Name(), "/", "_") + "?mode=memory&cache=shared"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&entity.AssetHostPort{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec("CREATE UNIQUE INDEX uk_ip_protocol_port ON manscan_asset_host_port(ip_address, port_protocol, port_number, service_name)").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewAssetHostPortRepository(db)
+	now := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	unknown := AssetHostPortObservation{IPAddress: "10.107.71.95", PortNumber: 53, ServiceName: "dns", IsAlive: true}
+	tcp := unknown
+	tcp.PortProtocol = "tcp"
+	udp := unknown
+	udp.PortProtocol = "udp"
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{unknown, tcp, udp}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SyncObservations(context.Background(), []AssetHostPortObservation{tcp}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	var ports []entity.AssetHostPort
+	if err := db.Find(&ports).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 3 {
+		t.Fatalf("ports = %+v, want separate unknown, TCP and UDP records", ports)
+	}
+}
+
 func TestAssetHostPortRepositoryMarkHTTPPortsInactiveUpdatesExistingHTTPOnly(t *testing.T) {
 	t.Parallel()
 

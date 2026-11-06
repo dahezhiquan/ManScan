@@ -2666,7 +2666,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o host-assets.xlsx "http://12
 
 - 说明：
   - `ports` 来自 `manscan_asset_host_port`，按当前主机精确匹配 `ip_address` 字段；同一 IP、协议、端口可按不同 `service_name` 返回多条记录。
-  - `ports[].port_created_at` 仅在首次写入该 IP、协议、端口数字和服务名的组合时设置；`ports[].last_alive_at` 在该组合实际被 HTTP 探测或指纹结果再次确认时更新。任务成功结束不再对端口表执行二次同步；关闭结果队列时尚未落库的实际指纹结果仍会按结果观察时间写入，不使用任务结束时间重写存活时间。
+  - `ports[].port_created_at` 保留该 IP、端口和服务名首次写入的时间；当后续指纹确定此前空缺的 TCP/UDP 协议时，会将空协议记录合并到已确认协议记录，并保留较早的首次发现时间和已知版本。同一服务同时存在 TCP 与 UDP 时不推断空协议记录的归属。`ports[].last_alive_at` 在该组合实际被 HTTP 探测或指纹结果再次确认时更新。任务成功结束不再对端口表执行二次同步；关闭结果队列时尚未落库的实际指纹结果仍会按结果观察时间写入，不使用任务结束时间重写存活时间。
   - 扫描前 HTTP 探测完成后，已检查但未取得响应的 IP 端口，其已有 HTTP 服务记录立即设为 `is_alive=false`。启用前置指纹识别或自动模板映射时，单个目标的指纹识别完成后，立即把该 IP 端口本次未识别到的旧服务设为 `is_alive=false`；已取得 HTTP 响应的端口保留 HTTP 服务存活。失活操作不改写两个时间字段，未启用这两类识别时不执行旧服务指纹失活检查。
   - SSH 指纹的 `ports[].app_version` 包含软件名称和版本，例如 `OpenSSH 7.4`、`WeOnlyDo 2.4.3`。
   - `ports[].is_high_risk_port` 为可空布尔值；数据库值为 `NULL` 时接口返回 `null`，`false` 表示已确认非高危端口。
