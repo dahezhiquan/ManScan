@@ -40,6 +40,7 @@ var errScanTaskPausedBeforeProcess = errors.New("scan task paused before scanner
 
 const (
 	assetDomainFingerprintCacheEnv = "MANSCAN_ASSET_DOMAIN_FINGERPRINT_CACHE"
+	assetDomainPreflightCacheEnv   = "MANSCAN_ASSET_DOMAIN_PREFLIGHT_CACHE"
 	assetDomainWappalyzerMaxBody   = 4 * 1024 * 1024
 )
 

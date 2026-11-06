@@ -863,6 +863,11 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	cmd := exec.CommandContext(cmdCtx, executable, args...)
 	cmd.Dir = s.rootDir
 	cmd.Env = append(os.Environ(), assetDomainFingerprintCacheEnv+"="+fingerprintCachePath)
+	mainPreflightCachePath := ""
+	if !plan.Raw.OfflineHTTP && !plan.Raw.DisableHTTPProbe && s.assetDomainRepository != nil {
+		mainPreflightCachePath = preflightCachePath
+	}
+	cmd.Env = append(cmd.Env, assetDomainPreflightCacheEnv+"="+mainPreflightCachePath)
 	if plan.Raw.AutomaticScan {
 		cmd.Env = append(cmd.Env, "MANSCAN_ASSET_DOMAIN_FINGERPRINT_TARGET_EVENTS=automatic")
 	}

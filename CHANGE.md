@@ -1,3 +1,12 @@
+## 2026-11-06 16:46 主扫描复用扫描前 HTTP 存活探测结果
+
+- 变动目录：`internal/runner/`、`server/internal/service/`，并同步更新根目录变更记录。
+- 变动文件：
+  - `server/internal/service/scan_task_asset_domain.go`、`scan_task_service.go`：将本任务的扫描前探测缓存路径传给主扫描子进程；仅在实际执行前置 HTTP 探测的任务中传递。
+  - `internal/runner/inputs.go`：主扫描器从前置缓存读取各原始目标选出的 HTTP/HTTPS URL；已探测且无响应的目标不再重复发起 httpx 请求，缺少有效缓存的目标仍按原逻辑探测。
+  - `internal/runner/inputs_test.go`：验证存活与无响应目标均跳过第二轮 httpx，且未完成或无效缓存仍允许回退探测。
+- 修改目的或影响：避免服务端前置 GET 探测后，主扫描器再对同一批裸域名/IP 执行耗时的 HEAD 探测；复用前置阶段选定的协议，缩短主扫描启动到首次进度更新的等待时间。
+
 ## 2026-11-05 19:13 域名组件按目标完成指纹识别后同步存活状态
 
 - 变动目录：`pkg/core/`、`pkg/output/`、`pkg/protocols/common/automaticscan/`、`server/internal/`，并同步更新根目录变更记录。
