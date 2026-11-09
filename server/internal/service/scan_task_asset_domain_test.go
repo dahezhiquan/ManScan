@@ -1400,6 +1400,69 @@ func TestAssetDomainFingerprintResultInfersPortProtocolFromNetworkType(t *testin
 	}
 }
 
+func TestAssetDomainFingerprintResultInfersPortProtocolFromTags(t *testing.T) {
+	t.Parallel()
+
+	svc := &scanTaskService{
+		templateRepository: &templateRepositoryStub{
+			details: map[string]*dto.TemplateDetail{
+				"dcerpc-detect": {
+					ID:        "dcerpc-detect",
+					Name:      "DCE/RPC protocol detection",
+					Protocols: []string{"javascript"},
+					Tags:      []string{"network", "dcerpc", "detect", "tcp", "discovery"},
+					Severity:  "info",
+				},
+			},
+		},
+	}
+
+	observations, err := svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), map[string]interface{}{
+		"template-id": "dcerpc-detect",
+		"matched-at":  "172.30.19.92:135",
+		"type":        "javascript",
+		"info": map[string]interface{}{
+			"name": "DCE/RPC protocol detection",
+			"tags": []interface{}{"network", "dcerpc", "detect", "tcp", "discovery"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("buildAssetDomainServiceAssetsFromPayload() error = %v", err)
+	}
+	if len(observations) != 1 || observations[0].AppName != "dcerpc" || observations[0].PortProtocol != "tcp" {
+		t.Fatalf("observations = %+v, want dcerpc over tcp", observations)
+	}
+
+	_, ports := splitAssetServiceAssetObservations(context.Background(), observations, nil, nil)
+	if len(ports) != 1 || ports[0].PortProtocol != "tcp" || ports[0].ServiceName != "dcerpc" {
+		t.Fatalf("host port observations = %+v, want dcerpc over tcp", ports)
+	}
+}
+
+func TestAssetDomainFingerprintPortProtocolTagPriority(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		payload map[string]interface{}
+		tags    []string
+		want    string
+	}{
+		{name: "udp tag", payload: map[string]interface{}{"type": "javascript"}, tags: []string{"udp"}, want: "udp"},
+		{name: "explicit transport", payload: map[string]interface{}{"type": "javascript", "transport": "tcp"}, tags: []string{"udp"}, want: "tcp"},
+		{name: "conflicting tags", payload: map[string]interface{}{"type": "javascript"}, tags: []string{"tcp", "udp"}, want: ""},
+		{name: "no transport evidence", payload: map[string]interface{}{"type": "javascript"}, tags: []string{"network"}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := assetDomainFingerprintPortProtocol(tc.payload, nil, tc.tags, "192.0.2.1:135", "192.0.2.1:135", "dcerpc")
+			if got != tc.want {
+				t.Fatalf("port protocol = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAssetDomainFingerprintVersionIgnoresProductNameFallback(t *testing.T) {
 	t.Parallel()
 

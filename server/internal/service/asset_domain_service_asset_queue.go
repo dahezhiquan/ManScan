@@ -411,7 +411,7 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayloadWithResolver(c
 			Domain:       domain,
 			AppName:      componentName,
 			AppVersion:   versionsByName[componentName],
-			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, matchedAt, domain, componentName),
+			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, tags, matchedAt, domain, componentName),
 		})
 	}
 	if software, version, ok := strings.Cut(versionsByName["ssh"], " "); ok && strings.EqualFold(software, "openssh") {
@@ -419,13 +419,13 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayloadWithResolver(c
 			Domain:       domain,
 			AppName:      "openssh",
 			AppVersion:   version,
-			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, matchedAt, domain, "openssh"),
+			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, tags, matchedAt, domain, "openssh"),
 		})
 	}
 	return uniqueAssetDomainServiceAssetObservations(components), nil
 }
 
-func assetDomainFingerprintPortProtocol(payload map[string]interface{}, templateDetail *dto.TemplateDetail, matchedAt, domain, componentName string) string {
+func assetDomainFingerprintPortProtocol(payload map[string]interface{}, templateDetail *dto.TemplateDetail, tags []string, matchedAt, domain, componentName string) string {
 	for _, values := range []map[string]interface{}{
 		payload,
 		payloadInfo(payload),
@@ -459,6 +459,20 @@ func assetDomainFingerprintPortProtocol(payload map[string]interface{}, template
 				return protocol
 			}
 		}
+	}
+	protocol := ""
+	for _, tag := range tags {
+		candidate := normalizeAssetHostPortProtocol(tag)
+		if candidate == "" {
+			continue
+		}
+		if protocol != "" && protocol != candidate {
+			return ""
+		}
+		protocol = candidate
+	}
+	if protocol != "" {
+		return protocol
 	}
 	return assetHostPortProtocolFromServiceName(componentName)
 }
