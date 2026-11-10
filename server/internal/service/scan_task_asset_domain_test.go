@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -23,6 +24,48 @@ import (
 	"github.com/projectdiscovery/retryablehttp-go"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
+
+func TestInterleaveAssetDomainProbeTargetsByHost(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{
+			name:     "round robins repeated hosts and preserves per-host order",
+			input:    []string{"10.0.0.1:22", "10.0.0.1:80", "10.0.0.2:22", "10.0.0.2:443", "10.0.0.1:443"},
+			expected: []string{"10.0.0.1:22", "10.0.0.2:22", "10.0.0.1:80", "10.0.0.2:443", "10.0.0.1:443"},
+		},
+		{
+			name:     "normalizes URL host and host casing",
+			input:    []string{"https://Example.com:443/a", "example.com:22", "other.example:80"},
+			expected: []string{"https://Example.com:443/a", "other.example:80", "example.com:22"},
+		},
+		{
+			name:     "keeps unique hosts in input order",
+			input:    []string{"one.example:80", "two.example:80", "three.example:80"},
+			expected: []string{"one.example:80", "two.example:80", "three.example:80"},
+		},
+		{
+			name:     "groups IPv6 endpoints by address",
+			input:    []string{"[2001:db8::1]:22", "[2001:db8::1]:443", "[2001:db8::2]:80"},
+			expected: []string{"[2001:db8::1]:22", "[2001:db8::2]:80", "[2001:db8::1]:443"},
+		},
+		{
+			name:     "empty input",
+			input:    nil,
+			expected: []string{},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := interleaveAssetDomainProbeTargets(test.input); !reflect.DeepEqual(got, test.expected) {
+				t.Fatalf("interleaveAssetDomainProbeTargets() = %v, want %v", got, test.expected)
+			}
+		})
+	}
+}
 
 func TestAssetDomainProbeTransportAppliesRateLimitAndUserAgent(t *testing.T) {
 	t.Parallel()

@@ -1016,7 +1016,7 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 		}
 	}
 
-	for _, target := range targets {
+	for _, target := range interleaveAssetDomainProbeTargets(targets) {
 		target = strings.TrimSpace(target)
 		if target == "" {
 			continue
@@ -1079,6 +1079,49 @@ func probeAssetDomainLiveness(ctx context.Context, request dto.CreateScanTaskReq
 	}
 	probeResult.normalize()
 	return probeResult, nil
+}
+
+func interleaveAssetDomainProbeTargets(targets []string) []string {
+	groups := make([][]string, 0, len(targets))
+	groupByHost := make(map[string]int, len(targets))
+	for _, target := range targets {
+		target = strings.TrimSpace(target)
+		if target == "" {
+			continue
+		}
+		host := target
+		if strings.Contains(target, "://") {
+			if parsed, err := url.Parse(target); err == nil && parsed.Hostname() != "" {
+				host = parsed.Hostname()
+			}
+		} else if parsedHost, _, err := net.SplitHostPort(target); err == nil {
+			host = parsedHost
+		}
+		host = strings.ToLower(host)
+		index, exists := groupByHost[host]
+		if !exists {
+			index = len(groups)
+			groupByHost[host] = index
+			groups = append(groups, nil)
+		}
+		groups[index] = append(groups[index], target)
+	}
+
+	ordered := make([]string, 0, len(targets))
+	queue := make([]int, len(groups))
+	positions := make([]int, len(groups))
+	for index := range groups {
+		queue[index] = index
+	}
+	for head := 0; head < len(queue); head++ {
+		index := queue[head]
+		ordered = append(ordered, groups[index][positions[index]])
+		positions[index]++
+		if positions[index] < len(groups[index]) {
+			queue = append(queue, index)
+		}
+	}
+	return ordered
 }
 
 func assetDomainProbeRateLimit(rateLimit int) int {
