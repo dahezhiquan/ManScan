@@ -54,6 +54,10 @@ func TestScheduledJobRepositoryUpdateNextRunAt(t *testing.T) {
 	if err := repo.Create(ctx, &other); err != nil {
 		t.Fatal(err)
 	}
+	byType, err := repo.FindByType(ctx, "test.sync")
+	if err != nil || byType.ID != job.ID {
+		t.Fatalf("FindByType() = %+v, %v, want first task ID %d", byType, err, job.ID)
+	}
 	next := time.Now().Add(time.Hour).Truncate(time.Second)
 	if err := repo.UpdateNextRunAt(ctx, job.ID, &next); err != nil {
 		t.Fatal(err)

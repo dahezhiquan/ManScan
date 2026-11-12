@@ -320,12 +320,8 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 
 	// create combined final tags
 	finalTags := []string{}
-	for _, tags := range append(tagsFromWappalyzer, tagsFromDetectTemplates...) {
-		if stringsutil.EqualFoldAny(tags, "tech", "waf", "favicon") {
-			continue
-		}
-		finalTags = append(finalTags, tags)
-	}
+	finalTags = append(finalTags, tagsFromWappalyzer...)
+	finalTags = append(finalTags, tagsFromDetectTemplates...)
 	finalTags = sliceutil.Dedupe(finalTags)
 
 	gologger.Info().Msgf("Found %d tags and %d matches on detection templates on %v [wappalyzer: %d, detection: %d]\n", len(finalTags), matched, input.Input, len(tagsFromWappalyzer), len(tagsFromDetectTemplates))
@@ -443,7 +439,7 @@ func (s *Service) executeMappedTemplates(target mappedTarget) {
 func filterAutomaticScanExecutionTags(tags []string) []string {
 	filtered := make([]string, 0, len(tags))
 	for _, tag := range tags {
-		if strings.EqualFold(tag, "detect") {
+		if stringsutil.EqualFoldAny(tag, "tech", "favicon", "detect", "dns") {
 			continue
 		}
 		filtered = append(filtered, tag)

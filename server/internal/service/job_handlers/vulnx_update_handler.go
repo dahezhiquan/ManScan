@@ -2,7 +2,6 @@ package job_handlers
 
 import (
 	"archive/zip"
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -22,19 +22,21 @@ const VulnxVulnerabilityUpdateJobType = "vulnx_vulnerability.sync"
 const vulnxRequestMaxAttempts = 3
 const vulnxRequestConcurrency = 8
 
-// VulnxVulnerabilityUpdateHandler 从 cves.txt 全量同步 VulnX 漏洞情报。
+// VulnxVulnerabilityUpdateHandler 从最新 CVE 列表同步数据库缺失的 VulnX 漏洞情报。
 type VulnxVulnerabilityUpdateHandler struct {
-	rootDir     string
-	apiKeys     service.ThirdPartyAPIKeyService
-	rateLimiter service.APIKeyRateLimiter
-	repository  repository.VulnerabilityIntelligenceRepository
-	clientFn    func(string) *VulnxClient
-	fetchFn     func(context.Context, string) (*repository.VulnerabilityIntelligenceBundle, error)
+	rootDir        string
+	apiKeys        service.ThirdPartyAPIKeyService
+	rateLimiter    service.APIKeyRateLimiter
+	repository     repository.VulnerabilityIntelligenceRepository
+	clientFn       func(string) *VulnxClient
+	githubClientFn func(string) *GitHubTreeClient
+	fetchFn        func(context.Context, string) (*repository.VulnerabilityIntelligenceBundle, error)
+	listFn         func(context.Context) ([]string, error)
 }
 
-// NewVulnxVulnerabilityUpdateHandler 创建 VulnX 全量更新任务处理器。
+// NewVulnxVulnerabilityUpdateHandler 创建 VulnX 新增漏洞更新任务处理器。
 func NewVulnxVulnerabilityUpdateHandler(rootDir string, apiKeys service.ThirdPartyAPIKeyService, rateLimiter service.APIKeyRateLimiter, repo repository.VulnerabilityIntelligenceRepository) *VulnxVulnerabilityUpdateHandler {
-	return &VulnxVulnerabilityUpdateHandler{rootDir: rootDir, apiKeys: apiKeys, rateLimiter: rateLimiter, repository: repo, clientFn: NewVulnxClient}
+	return &VulnxVulnerabilityUpdateHandler{rootDir: rootDir, apiKeys: apiKeys, rateLimiter: rateLimiter, repository: repo, clientFn: NewVulnxClient, githubClientFn: NewGitHubTreeClient}
 }
 
 func (h *VulnxVulnerabilityUpdateHandler) Type() string { return VulnxVulnerabilityUpdateJobType }
@@ -53,13 +55,73 @@ func (h *VulnxVulnerabilityUpdateHandler) Validate(config json.RawMessage) error
 	return nil
 }
 
-func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entity.ScheduledJob, _ entity.ScheduledJobRun, progress service.ProgressReporter) error {
+func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entity.ScheduledJob, run entity.ScheduledJobRun, progress service.ProgressReporter) error {
+	return h.ExecuteWithGitHubKey(ctx, job, run, progress, nil)
+}
+
+// ExecuteWithGitHubKey uses the CVE-list job credential for GitHub and the job credential for VulnX.
+func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Context, job entity.ScheduledJob, _ entity.ScheduledJobRun, progress service.ProgressReporter, githubKeyID *int64) error {
+	if err := h.Validate(json.RawMessage(job.ConfigJSON)); err != nil {
+		return err
+	}
 	if h.repository == nil {
 		return errors.New("VulnX 漏洞更新仓储不可用")
 	}
-	path := filepath.Join(h.rootDir, "data", "tmp", "cve_data", "cves.txt")
-	ids, err := readCVEIDs(path)
+	if err := reportProgress(ctx, progress, 0, 0, "listing", "正在获取最新完整 CVE 列表"); err != nil {
+		return err
+	}
+	list := h.listFn
+	if list == nil {
+		githubKey, keyErr := h.githubToken(ctx, githubKeyID)
+		if keyErr != nil {
+			return keyErr
+		}
+		githubClient := h.githubClientFn(githubKey)
+		if githubKeyID != nil {
+			if h.rateLimiter == nil {
+				return errors.New("CVE 任务已配置 API Key，但限流服务不可用")
+			}
+			keyID := *githubKeyID
+			githubClient.beforeRequest = func(ctx context.Context) error { return h.rateLimiter.Wait(ctx, keyID) }
+		}
+		list = func(ctx context.Context) ([]string, error) {
+			return githubClient.ListCVEFileNames(ctx, "main")
+		}
+	}
+	names, err := list(ctx)
 	if err != nil {
+		return fmt.Errorf("获取最新完整 CVE 列表失败: %w", err)
+	}
+	ids := normalizeCVEIDs(names)
+	path := filepath.Join(h.rootDir, "data", "tmp", "cve_data", "cves.txt")
+	if err := writeCVEFileNames(path, ids, progress, ctx); err != nil {
+		return err
+	}
+	if err := reportProgress(ctx, progress, 0, int64(len(ids)), "checking", "正在与数据库核对已有 CVE"); err != nil {
+		return err
+	}
+	existing := make(map[string]struct{})
+	for start := 0; start < len(ids); start += 1000 {
+		end := min(start+1000, len(ids))
+		found, findErr := h.repository.FindExistingIDs(ctx, "vulnx", ids[start:end])
+		if findErr != nil {
+			return fmt.Errorf("查询数据库已有 CVE 失败: %w", findErr)
+		}
+		for id := range found {
+			existing[id] = struct{}{}
+		}
+		if err := reportProgress(ctx, progress, int64(end), int64(len(ids)), "checking", fmt.Sprintf("已核对 %d/%d 个 CVE 编号", end, len(ids))); err != nil {
+			return err
+		}
+	}
+	missing := make([]string, 0, len(ids)-len(existing))
+	for _, id := range ids {
+		if _, ok := existing[id]; !ok {
+			missing = append(missing, id)
+		}
+	}
+	ids = missing
+	if err := reportProgress(ctx, progress, int64(len(ids)), int64(len(ids)), "checking", fmt.Sprintf("最新 CVE 共 %d 个，数据库缺失 %d 个", len(names), len(ids))); err != nil {
 		return err
 	}
 	errorPath := filepath.Join(h.rootDir, "data", "tmp", "cve_data", "vulnXerror.txt")
@@ -200,6 +262,38 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 	return reportProgress(ctx, progress, int64(len(ids)), int64(len(ids)), "finished", "VulnX 漏洞情报已更新")
 }
 
+func (h *VulnxVulnerabilityUpdateHandler) githubToken(ctx context.Context, apiKeyID *int64) (string, error) {
+	if apiKeyID == nil {
+		return os.Getenv("GITHUB_TOKEN"), nil
+	}
+	if h.apiKeys == nil {
+		return "", errors.New("CVE 任务已配置 API Key，但 API Key 服务不可用")
+	}
+	item, err := h.apiKeys.GetPlaintext(ctx, *apiKeyID)
+	if err != nil {
+		return "", fmt.Errorf("读取 GitHub API Key 失败: %w", err)
+	}
+	return item.Key, nil
+}
+
+func normalizeCVEIDs(names []string) []string {
+	seen := make(map[string]struct{}, len(names))
+	ids := make([]string, 0, len(names))
+	for _, name := range names {
+		id := strings.ToUpper(strings.TrimSpace(strings.TrimSuffix(name, ".json")))
+		if !cveIDPattern.MatchString(id) {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 func writeVulnxErrorArchive(rootDir, errorPath, errorDetailPath string) (string, error) {
 	archiveRelativePath := filepath.ToSlash(filepath.Join("data", "tmp", "cve_data", "vulnXerror.zip"))
 	archivePath := filepath.Join(rootDir, filepath.FromSlash(archiveRelativePath))
@@ -261,36 +355,6 @@ func (h *VulnxVulnerabilityUpdateHandler) apiKey(ctx context.Context, apiKeyID *
 		return item.Key, nil
 	}
 	return strings.TrimSpace(os.Getenv("PDCP_API_KEY")), nil
-}
-
-func readCVEIDs(path string) ([]string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("打开 CVE 列表失败: %w", err)
-	}
-	defer file.Close()
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64<<10), 1<<20)
-	seen := make(map[string]struct{})
-	ids := make([]string, 0)
-	for scanner.Scan() {
-		id := strings.ToUpper(strings.TrimSpace(scanner.Text()))
-		if id == "" {
-			continue
-		}
-		if !cveIDPattern.MatchString(id) {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("读取 CVE 列表失败: %w", err)
-	}
-	return ids, nil
 }
 
 var _ service.JobHandler = (*VulnxVulnerabilityUpdateHandler)(nil)

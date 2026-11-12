@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,9 +23,14 @@ import (
 )
 
 type vulnxRepositoryStub struct {
-	mu      sync.Mutex
-	bundles []*repository.VulnerabilityIntelligenceBundle
-	err     error
+	mu       sync.Mutex
+	bundles  []*repository.VulnerabilityIntelligenceBundle
+	err      error
+	existing map[string]struct{}
+}
+
+func (s *vulnxRepositoryStub) Stats(context.Context, time.Time) (*repository.VulnerabilityIntelligenceStatsData, error) {
+	return &repository.VulnerabilityIntelligenceStatsData{}, nil
 }
 
 func (s *vulnxRepositoryStub) List(context.Context, dto.ListVulnerabilityIntelligenceRecordsQuery) (*dto.PageResult[entity.VulnerabilityIntelligenceRecord], error) {
@@ -52,6 +59,16 @@ func (s *vulnxRepositoryStub) UpsertChaitin(_ context.Context, _ *repository.Vul
 	return nil
 }
 
+func (s *vulnxRepositoryStub) FindExistingIDs(_ context.Context, _ string, ids []string) (map[string]struct{}, error) {
+	found := make(map[string]struct{})
+	for _, id := range ids {
+		if _, ok := s.existing[id]; ok {
+			found[id] = struct{}{}
+		}
+	}
+	return found, nil
+}
+
 type vulnxClientStub struct {
 	mu       sync.Mutex
 	ids      []string
@@ -71,9 +88,72 @@ func (c *vulnxClientStub) Fetch(_ context.Context, id string) (*repository.Vulne
 
 type vulnxProgressStub struct{ current, total int64 }
 
+type sourceAPIKeysStub struct {
+	service.ThirdPartyAPIKeyService
+	keys map[int64]string
+}
+
+func (s sourceAPIKeysStub) GetPlaintext(_ context.Context, id int64) (*dto.ThirdPartyAPIKeyPlaintextResponse, error) {
+	return &dto.ThirdPartyAPIKeyPlaintextResponse{Key: s.keys[id]}, nil
+}
+
 func (p *vulnxProgressStub) Report(_ context.Context, current, total int64, _, _ string) error {
 	p.current, p.total = current, total
 	return nil
+}
+
+func TestVulnxUpdateHandlerUsesSeparateSourceKeys(t *testing.T) {
+	githubID, vulnxID := int64(11), int64(22)
+	keys := sourceAPIKeysStub{keys: map[int64]string{githubID: "github-token", vulnxID: "vulnx-token"}}
+	repo := &vulnxRepositoryStub{}
+	var waited []int64
+	handler := NewVulnxVulnerabilityUpdateHandler(t.TempDir(), keys, requestLimiterFunc(func(_ context.Context, id int64) error {
+		waited = append(waited, id)
+		return nil
+	}), repo)
+	handler.githubClientFn = func(token string) *GitHubTreeClient {
+		if token != "github-token" {
+			t.Errorf("GitHub token = %q", token)
+		}
+		client := NewGitHubTreeClient(token)
+		client.HTTPClient.Transport = rateLimitRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Header.Get("Authorization") != "Bearer github-token" {
+				t.Errorf("GitHub authorization = %q", request.Header.Get("Authorization"))
+			}
+			return githubTestTreeResponse(request)
+		})
+		return client
+	}
+	handler.clientFn = func(key string) *VulnxClient {
+		if key != "vulnx-token" {
+			t.Errorf("VulnX token = %q", key)
+		}
+		client := NewVulnxClient(key)
+		client.HTTPClient.Transport = rateLimitRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Header.Get("X-Api-Key") != "vulnx-token" {
+				t.Errorf("VulnX authorization = %q", request.Header.Get("X-Api-Key"))
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":{"cve_id":"CVE-2026-0001"}}`)), Request: request}, nil
+		})
+		return client
+	}
+	if err := handler.ExecuteWithGitHubKey(context.Background(), entity.ScheduledJob{ConfigJSON: "{}", APIKeyID: &vulnxID}, entity.ScheduledJobRun{}, nil, &githubID); err != nil {
+		t.Fatal(err)
+	}
+	if len(waited) < 2 {
+		t.Fatalf("source requests did not use the shared API Key limiter: %v", waited)
+	}
+	seenVulnxLimit := false
+	for _, id := range waited {
+		if id == vulnxID {
+			seenVulnxLimit = true
+		} else if id != githubID {
+			t.Fatalf("unexpected limiter key ID = %d", id)
+		}
+	}
+	if !seenVulnxLimit {
+		t.Fatalf("VulnX requests did not use key ID %d: %v", vulnxID, waited)
+	}
 }
 
 func TestVulnxUpdateHandlerReadsDeduplicatedCVEList(t *testing.T) {
@@ -85,9 +165,12 @@ func TestVulnxUpdateHandlerReadsDeduplicatedCVEList(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(path, "cves.txt"), []byte("CVE-2024-3094\nnot-a-cve\nCVE-2024-3094\nCVE-2021-44228\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	repo := &vulnxRepositoryStub{}
+	repo := &vulnxRepositoryStub{existing: map[string]struct{}{"CVE-2021-44228": {}}}
 	client := &vulnxClientStub{}
 	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, repo)
+	handler.listFn = func(context.Context) ([]string, error) {
+		return []string{"CVE-2024-3094", "not-a-cve", "CVE-2024-3094", "CVE-2021-44228"}, nil
+	}
 	handler.clientFn = func(string) *VulnxClient { return nil }
 	handler.fetchFn = client.Fetch
 	progress := &vulnxProgressStub{}
@@ -96,10 +179,10 @@ func TestVulnxUpdateHandlerReadsDeduplicatedCVEList(t *testing.T) {
 	}
 	gotIDs := append([]string(nil), client.ids...)
 	sort.Strings(gotIDs)
-	if len(gotIDs) != 2 || gotIDs[0] != "CVE-2021-44228" || gotIDs[1] != "CVE-2024-3094" {
+	if len(gotIDs) != 1 || gotIDs[0] != "CVE-2024-3094" {
 		t.Fatalf("fetched IDs = %v", gotIDs)
 	}
-	if progress.current != 2 || progress.total != 2 || len(repo.bundles) != 2 {
+	if progress.current != 1 || progress.total != 1 || len(repo.bundles) != 1 {
 		t.Fatalf("progress = %d/%d, bundles = %d", progress.current, progress.total, len(repo.bundles))
 	}
 	if got, err := os.ReadFile(filepath.Join(path, "vulnXerror.txt")); err != nil || len(got) != 0 {
@@ -125,6 +208,7 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	client := &vulnxClientStub{failures: map[string]int{"CVE-2024-0001": 2, "CVE-2024-0002": vulnxRequestMaxAttempts}}
 	repo := &vulnxRepositoryStub{}
 	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, repo)
+	handler.listFn = func(context.Context) ([]string, error) { return []string{"CVE-2024-0001", "CVE-2024-0002"}, nil }
 	handler.clientFn = func(string) *VulnxClient { return nil }
 	handler.fetchFn = client.Fetch
 	progress := &vulnxProgressStub{}
@@ -172,6 +256,11 @@ func TestVulnxUpdateHandlerProcessesCVEsConcurrently(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
 	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, &vulnxRepositoryStub{})
+	var names []string
+	for i := range vulnxRequestConcurrency {
+		names = append(names, fmt.Sprintf("CVE-2024-%04d", i+1))
+	}
+	handler.listFn = func(context.Context) ([]string, error) { return names, nil }
 	handler.clientFn = func(string) *VulnxClient { return nil }
 	handler.fetchFn = func(_ context.Context, id string) (*repository.VulnerabilityIntelligenceBundle, error) {
 		current := active.Add(1)
@@ -230,6 +319,7 @@ func TestVulnxUpdateHandlerStopsOnContextCancellation(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, &vulnxRepositoryStub{})
+	handler.listFn = func(context.Context) ([]string, error) { return []string{"CVE-2024-3094"}, nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if err := handler.Execute(ctx, entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, nil); !errors.Is(err, context.Canceled) {

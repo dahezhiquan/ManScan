@@ -14,6 +14,7 @@ import (
 type ScheduledJobRepository interface {
 	Create(ctx context.Context, item *entity.ScheduledJob) error
 	FindByID(ctx context.Context, id int64) (*entity.ScheduledJob, error)
+	FindByType(ctx context.Context, jobType string) (*entity.ScheduledJob, error)
 	List(ctx context.Context, query dto.ListScheduledJobsQuery) (*dto.PageResult[entity.ScheduledJob], error)
 	ListEnabled(ctx context.Context) ([]entity.ScheduledJob, error)
 	Update(ctx context.Context, item *entity.ScheduledJob) error
@@ -36,6 +37,15 @@ func (r *scheduledJobRepository) Create(ctx context.Context, item *entity.Schedu
 func (r *scheduledJobRepository) FindByID(ctx context.Context, id int64) (*entity.ScheduledJob, error) {
 	var item entity.ScheduledJob
 	if err := r.db.WithContext(ctx).First(&item, id).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+// FindByType returns the first configured job of a type for credential reuse.
+func (r *scheduledJobRepository) FindByType(ctx context.Context, jobType string) (*entity.ScheduledJob, error) {
+	var item entity.ScheduledJob
+	if err := r.db.WithContext(ctx).Where("job_type = ?", jobType).Order("id ASC").First(&item).Error; err != nil {
 		return nil, err
 	}
 	return &item, nil

@@ -1,3 +1,12 @@
+## 2026-11-10 18:36 自动映射过滤 DNS 元标签
+
+- 变动目录：`pkg/protocols/common/automaticscan/`、`docs/`，并同步更新根目录变更记录。
+- 变动文件：
+  - `pkg/protocols/common/automaticscan/automaticscan.go`：自动映射模板筛选前新增对 `dns` 标签的大小写不敏感过滤，停止过滤 `waf`；`tech`、`favicon`、`detect`、`dns` 由最终标签过滤函数统一处理。
+  - `pkg/protocols/common/automaticscan/automaticscan_test.go`：扩展定向测试，覆盖四种标签及大小写变体被过滤，并验证 `waf` 和普通技术标签保留。
+  - `docs/指纹识别模版标签输出清单.md`：说明 `dns` 会过滤、`waf` 会保留，并解释模板命中阶段与自动映射阶段的标签区别。
+- 修改目的或影响：避免 DNS 协议分类标签参与漏洞模板映射，同时允许 WAF 类型标签继续映射；DNS 指纹模板命中厂商 matcher 后，其厂商标签与 `waf` 均可参与映射。
+
 ## 2026-11-07 01:06 网络模板命中普通 TCP 后跳过同端点 TLS 候选
 
 - 变动目录：`pkg/protocols/network/`，并同步更新根目录变更记录。

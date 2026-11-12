@@ -84,14 +84,20 @@ func Run() error {
 	if err := jobHandlerRegistry.Register(jobhandlers.NewCVEFileNamesHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter)); err != nil {
 		return fmt.Errorf("注册 CVE 文件名定时任务处理器失败: %w", err)
 	}
-	if err := jobHandlerRegistry.Register(jobhandlers.NewVulnxVulnerabilityUpdateHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter, vulnerabilityIntelligenceRepository)); err != nil {
+	vulnxUpdateHandler := jobhandlers.NewVulnxVulnerabilityUpdateHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter, vulnerabilityIntelligenceRepository)
+	if err := jobHandlerRegistry.Register(vulnxUpdateHandler); err != nil {
 		return fmt.Errorf("注册 VulnX 漏洞更新定时任务处理器失败: %w", err)
 	}
-	if err := jobHandlerRegistry.Register(jobhandlers.NewAliyunAVDUpdateHandler(cfg.RootDir, vulnerabilityIntelligenceRepository)); err != nil {
+	aliyunUpdateHandler := jobhandlers.NewAliyunAVDUpdateHandler(cfg.RootDir, vulnerabilityIntelligenceRepository)
+	if err := jobHandlerRegistry.Register(aliyunUpdateHandler); err != nil {
 		return fmt.Errorf("注册阿里云 AVD 定时任务处理器失败: %w", err)
 	}
-	if err := jobHandlerRegistry.Register(jobhandlers.NewChaitinVulnerabilityUpdateHandler(vulnerabilityIntelligenceRepository)); err != nil {
+	chaitinUpdateHandler := jobhandlers.NewChaitinVulnerabilityUpdateHandler(vulnerabilityIntelligenceRepository)
+	if err := jobHandlerRegistry.Register(chaitinUpdateHandler); err != nil {
 		return fmt.Errorf("注册长亭漏洞定时任务处理器失败: %w", err)
+	}
+	if err := jobHandlerRegistry.Register(jobhandlers.NewVulnerabilityIncrementalHandler(cfg.RootDir, scheduledJobRepository, chaitinUpdateHandler, aliyunUpdateHandler, vulnxUpdateHandler)); err != nil {
+		return fmt.Errorf("注册漏洞情报增量更新定时任务处理器失败: %w", err)
 	}
 	schedulerManager := service.NewSchedulerManager(scheduledJobRepository, scheduledJobRunRepository, jobHandlerRegistry, logger)
 	scheduledJobService := service.NewScheduledJobService(scheduledJobRepository, scheduledJobRunRepository, schedulerManager, jobHandlerRegistry, cfg.RootDir)

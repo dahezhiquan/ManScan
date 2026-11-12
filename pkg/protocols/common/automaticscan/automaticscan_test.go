@@ -62,8 +62,10 @@ func TestNormalizeWappalyzerTagsPreservesCompleteTechnologyNames(t *testing.T) {
 }
 
 func TestFilterAutomaticScanExecutionTags(t *testing.T) {
-	tags := filterAutomaticScanExecutionTags([]string{"python", "detect", "DETECT", "uvicorn"})
-	require.Equal(t, []string{"python", "uvicorn"}, tags)
+	tags := filterAutomaticScanExecutionTags([]string{
+		"python", "tech", "TECH", "waf", "favicon", "detect", "DETECT", "dns", "DNS", "uvicorn",
+	})
+	require.Equal(t, []string{"python", "waf", "uvicorn"}, tags)
 }
 
 func TestAutomaticFingerprintTagsMessage(t *testing.T) {
