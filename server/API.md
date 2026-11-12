@@ -3081,7 +3081,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/third-party-api-keys/1" \
 
 - 请求方法和路径：`GET /api/v1/vulnerability-intelligence-records`，需要登录。
 - 请求参数：`page` 为可选正整数，默认 `1`；`page_size` 为可选整数，范围 `1-100`，默认 `10`。`source`、`vulnerability_id`、`vul_name` 为可选字符串模糊查询；`severity` 为可选字符串或字符串数组，支持逗号分隔（如 `severity=critical,high`）及重复参数（如 `severity=critical&severity=high`），多个等级按“或”匹配，每个值仍执行模糊查询，并与其他筛选条件按“且”组合。`is_poc`、`is_kev` 为可选布尔值（支持 `true`/`false`、`1`/`0`、`yes`/`no`、`y`/`n`）。`is_kev=true` 匹配数据库 `is_kev` 或 `is_vkev` 任一为 true 的记录；`is_kev=false` 匹配两者均不为 true 的记录。
-- 响应格式：统一响应 envelope 中的 `data` 为分页对象，包含 `page`、`pageSize`、`total`、`totalPages`、`items`。每条记录仅返回 `source`、`vulnerability_id`、`created_at`、`updated_at`、`cvss_score`、`vul_name`、`is_kev`、`is_poc`、`severity`；`is_kev` 在数据库 `is_kev` 或 `is_vkev` 任一为 true 时为 true，否则为 false。其他数据库可空字段保持 `null`。按 `created_at DESC, id DESC` 排序。
+- 响应格式：统一响应 envelope 中的 `data` 为分页对象，包含 `page`、`pageSize`、`total`、`totalPages`、`items`。状态 `rejected`（大小写不敏感）的漏洞记录不会出现在列表中，也不计入分页总数；空状态记录仍保留。每条记录仅返回 `source`、`vulnerability_id`、`created_at`、`updated_at`、`cvss_score`、`vul_name`、`is_kev`、`is_poc`、`severity`；`is_kev` 在数据库 `is_kev` 或 `is_vkev` 任一为 true 时为 true，否则为 false。其他数据库可空字段保持 `null`。按 `created_at DESC, id DESC` 排序。
 - 错误码：`40001` 分页参数或布尔筛选参数非法，`40101` 未登录或令牌无效，`50001` 数据库查询失败。
 - 使用示例：
 
@@ -3118,7 +3118,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 
 - 请求方法和路径：`GET /api/v1/vulnerability-intelligence-records/stats`，需要登录。
 - 请求参数：无。
-- 响应格式：统一响应 envelope 中的 `data.last_7_days` 和 `data.last_30_days` 均为整数，分别表示对应时间窗口内 `critical` 与 `high` 等级合并后的记录数量；无匹配记录时返回 `0`。按 `manscan_vulnerability_intelligence_records` 的记录行数统计，不按漏洞编号去重；`created_at` 从请求时刻向前滚动 7×24 小时或 30×24 小时，起止时刻均包含，未来时间和空时间不计入。严重等级大小写不敏感；近 7 天计数包含在近 30 天计数中。
+- 响应格式：统一响应 envelope 中的 `data.last_7_days` 和 `data.last_30_days` 均为整数，分别表示对应时间窗口内 `critical` 与 `high` 等级合并后的记录数量；无匹配记录时返回 `0`。状态 `rejected`（大小写不敏感）的记录不计入，空状态记录仍计入。按 `manscan_vulnerability_intelligence_records` 的记录行数统计，不按漏洞编号去重；`created_at` 从请求时刻向前滚动 7×24 小时或 30×24 小时，起止时刻均包含，未来时间和空时间不计入。严重等级大小写不敏感；近 7 天计数包含在近 30 天计数中。
 - 错误码：`40101` 未登录或令牌无效，`50001` 数据库查询失败。
 - 使用示例：
 
@@ -3142,7 +3142,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 
 - 请求方法和路径：`GET /api/v1/vulnerability-intelligence-records/:vulnerability_id`，需要登录。
 - 请求参数：路径参数 `vulnerability_id`，必填字符串，按完整编号精确查询，去除首尾空白后长度为 1-128 字节，不允许 NUL、回车、换行或制表符。编号应按 URL 路径规则编码。
-- 响应格式：统一响应 envelope 中的 `data` 包含 `records`、`articles`、`components`、`pocs`、`shodan_exposures` 五个数组，对应五张 `manscan_vulnerability_intelligence_*` 表的全部字段，字段名为数据库小写下划线命名。`records` 返回同一编号来自不同来源的全部记录；其余数组按相同编号查询，无关联行时返回 `[]`。各数组按 `id ASC` 排序，可空字段返回 `null`。
+- 响应格式：统一响应 envelope 中的 `data` 包含 `records`、`articles`、`components`、`pocs`、`shodan_exposures` 五个数组，对应五张 `manscan_vulnerability_intelligence_*` 表的全部字段，字段名为数据库小写下划线命名。`records` 返回同一编号来自不同来源、状态不为 `rejected`（大小写不敏感）的记录，空状态记录仍保留；若该编号只有 `rejected` 记录，则返回 `40401`。其余数组按相同编号查询，无关联行时返回 `[]`。各数组按 `id ASC` 排序，可空字段返回 `null`。
 - 错误码：`40001` 编号非法，`40101` 未登录或令牌无效，`40401` 主记录不存在，`50001` 数据库查询失败。
 - 使用示例：
 
