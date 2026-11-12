@@ -52,6 +52,15 @@ func (h *AliyunAVDUpdateHandler) Validate(raw json.RawMessage) error {
 }
 
 func (h *AliyunAVDUpdateHandler) Execute(ctx context.Context, job entity.ScheduledJob, _ entity.ScheduledJobRun, progress service.ProgressReporter) error {
+	return h.execute(ctx, job, progress, false)
+}
+
+// ExecuteIncremental stops after page one when all no-CVE identifiers are already stored.
+func (h *AliyunAVDUpdateHandler) ExecuteIncremental(ctx context.Context, job entity.ScheduledJob, _ entity.ScheduledJobRun, progress service.ProgressReporter) error {
+	return h.execute(ctx, job, progress, true)
+}
+
+func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.ScheduledJob, progress service.ProgressReporter, stopOnExistingFirstPage bool) error {
 	var config avdJobConfig
 	if err := json.Unmarshal([]byte(job.ConfigJSON), &config); err != nil {
 		return fmt.Errorf("解析阿里云 AVD 任务配置失败: %w", err)
@@ -71,12 +80,42 @@ func (h *AliyunAVDUpdateHandler) Execute(ctx context.Context, job entity.Schedul
 	client.progress = func(ctx context.Context, current, total int64, phase, message string) error {
 		return reportProgress(ctx, progress, current, total, phase, message)
 	}
-	collection, err := client.CollectNoCVE(ctx)
-	if err != nil {
-		return err
-	}
 	if h.repository == nil {
 		return errors.New("阿里云 AVD 漏洞情报仓储不可用")
+	}
+	var collection *AVDCollection
+	var err error
+	if stopOnExistingFirstPage {
+		collection, err = client.CollectNoCVEWithFirstPageStop(ctx, func(ctx context.Context, items []AVDListItem) (bool, error) {
+			ids := make([]string, 0, len(items))
+			seen := make(map[string]struct{}, len(items))
+			for _, item := range items {
+				if !isNoCVEItem(item) {
+					continue
+				}
+				id := strings.TrimSpace(item.VulnerabilityID)
+				if id == "" {
+					return false, nil
+				}
+				if _, ok := seen[id]; !ok {
+					seen[id] = struct{}{}
+					ids = append(ids, id)
+				}
+			}
+			if len(ids) == 0 {
+				return false, nil
+			}
+			existing, findErr := h.repository.FindExistingIDs(ctx, "avd", ids)
+			if findErr != nil {
+				return false, fmt.Errorf("查询阿里云第一页已有漏洞编号失败: %w", findErr)
+			}
+			return len(existing) == len(ids), nil
+		})
+	} else {
+		collection, err = client.CollectNoCVE(ctx)
+	}
+	if err != nil {
+		return err
 	}
 	if err := reportProgress(ctx, progress, 0, int64(len(collection.Vulnerabilities)), "syncing", fmt.Sprintf("正在同步 %d 条无 CVE 漏洞详情", len(collection.Vulnerabilities))); err != nil {
 		return err

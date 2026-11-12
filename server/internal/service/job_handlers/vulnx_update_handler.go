@@ -22,9 +22,23 @@ const VulnxVulnerabilityUpdateJobType = "vulnx_vulnerability.sync"
 const vulnxRequestMaxAttempts = 3
 const vulnxRequestConcurrency = 8
 
+type vulnxPartialFailureError struct {
+	count int
+	first error
+}
+
+func (e *vulnxPartialFailureError) Error() string {
+	return fmt.Sprintf("%d 个 CVE 更新失败，首条错误：%v", e.count, e.first)
+}
+
+func (e *vulnxPartialFailureError) Unwrap() error { return e.first }
+
 // VulnxVulnerabilityUpdateHandler 从最新 CVE 列表同步数据库缺失的 VulnX 漏洞情报。
 type VulnxVulnerabilityUpdateHandler struct {
-	rootDir        string
+	rootDir string
+	jobs    interface {
+		FindByType(context.Context, string) (*entity.ScheduledJob, error)
+	}
 	apiKeys        service.ThirdPartyAPIKeyService
 	rateLimiter    service.APIKeyRateLimiter
 	repository     repository.VulnerabilityIntelligenceRepository
@@ -35,8 +49,10 @@ type VulnxVulnerabilityUpdateHandler struct {
 }
 
 // NewVulnxVulnerabilityUpdateHandler 创建 VulnX 新增漏洞更新任务处理器。
-func NewVulnxVulnerabilityUpdateHandler(rootDir string, apiKeys service.ThirdPartyAPIKeyService, rateLimiter service.APIKeyRateLimiter, repo repository.VulnerabilityIntelligenceRepository) *VulnxVulnerabilityUpdateHandler {
-	return &VulnxVulnerabilityUpdateHandler{rootDir: rootDir, apiKeys: apiKeys, rateLimiter: rateLimiter, repository: repo, clientFn: NewVulnxClient, githubClientFn: NewGitHubTreeClient}
+func NewVulnxVulnerabilityUpdateHandler(rootDir string, jobs interface {
+	FindByType(context.Context, string) (*entity.ScheduledJob, error)
+}, apiKeys service.ThirdPartyAPIKeyService, rateLimiter service.APIKeyRateLimiter, repo repository.VulnerabilityIntelligenceRepository) *VulnxVulnerabilityUpdateHandler {
+	return &VulnxVulnerabilityUpdateHandler{rootDir: rootDir, jobs: jobs, apiKeys: apiKeys, rateLimiter: rateLimiter, repository: repo, clientFn: NewVulnxClient, githubClientFn: NewGitHubTreeClient}
 }
 
 func (h *VulnxVulnerabilityUpdateHandler) Type() string { return VulnxVulnerabilityUpdateJobType }
@@ -56,7 +72,14 @@ func (h *VulnxVulnerabilityUpdateHandler) Validate(config json.RawMessage) error
 }
 
 func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entity.ScheduledJob, run entity.ScheduledJobRun, progress service.ProgressReporter) error {
-	return h.ExecuteWithGitHubKey(ctx, job, run, progress, nil)
+	if h.jobs == nil {
+		return errors.New("CVE 列表任务配置仓储不可用")
+	}
+	githubJob, err := h.jobs.FindByType(ctx, CVEFileNamesJobType)
+	if err != nil {
+		return fmt.Errorf("读取 CVE 列表任务 API Key 配置失败: %w", err)
+	}
+	return h.ExecuteWithGitHubKey(ctx, job, run, progress, githubJob.APIKeyID)
 }
 
 // ExecuteWithGitHubKey uses the CVE-list job credential for GitHub and the job credential for VulnX.
@@ -207,7 +230,6 @@ func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Conte
 		workers.Wait()
 		close(results)
 	}()
-	var firstErr error
 	completed := 0
 	var progressErr error
 	for result := range results {
@@ -225,9 +247,6 @@ func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Conte
 			if err := errorDetailFile.Sync(); err != nil {
 				return fmt.Errorf("刷新 VulnX 失败详情日志失败: %w", err)
 			}
-			if firstErr == nil {
-				firstErr = fmt.Errorf("更新 %s 失败（已尝试 %d 次）: %w", result.id, vulnxRequestMaxAttempts, result.err)
-			}
 		}
 		if progressErr == nil && ctx.Err() == nil {
 			if err := reportProgress(ctx, progress, int64(completed), int64(len(ids)), "updating", fmt.Sprintf("已处理 %d/%d 个 CVE", completed, len(ids))); err != nil {
@@ -244,6 +263,10 @@ func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Conte
 	if err := errorDetailFile.Close(); err != nil {
 		return fmt.Errorf("关闭 VulnX 失败详情日志失败: %w", err)
 	}
+	remaining, err := h.retryFailedCVEs(ctx, errorPath, errorDetailPath, fetch, progress)
+	if err != nil {
+		return err
+	}
 	archivePath, err := writeVulnxErrorArchive(h.rootDir, errorPath, errorDetailPath)
 	if err != nil {
 		return err
@@ -256,10 +279,108 @@ func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Conte
 	if progressErr != nil {
 		return progressErr
 	}
-	if firstErr != nil {
-		return firstErr
+	if len(remaining) > 0 {
+		return &vulnxPartialFailureError{count: len(remaining), first: fmt.Errorf("更新 %s 失败（补偿重试后仍未成功）", remaining[0])}
 	}
 	return reportProgress(ctx, progress, int64(len(ids)), int64(len(ids)), "finished", "VulnX 漏洞情报已更新")
+}
+
+func (h *VulnxVulnerabilityUpdateHandler) retryFailedCVEs(ctx context.Context, errorPath, errorDetailPath string, fetch func(context.Context, string) (*repository.VulnerabilityIntelligenceBundle, error), progress service.ProgressReporter) ([]string, error) {
+	data, err := os.ReadFile(errorPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取 VulnX 失败列表以执行补偿重试失败: %w", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil, nil
+	}
+	if err := reportProgress(ctx, progress, 0, int64(len(lines)), "retrying", fmt.Sprintf("正在补偿重试 %d 个失败 CVE", len(lines))); err != nil {
+		return nil, err
+	}
+	detailData, err := os.ReadFile(errorDetailPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取 VulnX 失败详情以执行补偿重试失败: %w", err)
+	}
+	detailByID := make(map[string]string, len(lines))
+	for _, line := range strings.Split(strings.TrimSuffix(string(detailData), "\n"), "\n") {
+		if separator := strings.Index(line, ": "); separator > 0 {
+			detailByID[line[:separator]] = line
+		}
+	}
+	remaining := make([]string, 0, len(lines))
+	remainingDetails := make([]string, 0, len(lines))
+	for index, id := range lines {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var itemErr error
+		for attempt := 0; attempt < vulnxRequestMaxAttempts; attempt++ {
+			bundle, fetchErr := fetch(ctx, id)
+			if fetchErr == nil {
+				fetchErr = h.repository.Replace(ctx, bundle)
+			}
+			if fetchErr == nil {
+				itemErr = nil
+				break
+			}
+			itemErr = fetchErr
+		}
+		if itemErr != nil {
+			remaining = append(remaining, id)
+			if detail, ok := detailByID[id]; ok {
+				remainingDetails = append(remainingDetails, detail)
+			}
+		}
+		if err := reportProgress(ctx, progress, int64(index+1), int64(len(lines)), "retrying", fmt.Sprintf("已补偿重试 %d/%d 个失败 CVE", index+1, len(lines))); err != nil {
+			return nil, err
+		}
+	}
+	if err := writeFileAtomic(errorPath, joinLinesWithNewline(remaining), 0o640); err != nil {
+		return nil, fmt.Errorf("更新 VulnX 失败列表失败: %w", err)
+	}
+	if err := writeFileAtomic(errorDetailPath, joinLinesWithNewline(remainingDetails), 0o640); err != nil {
+		return nil, fmt.Errorf("更新 VulnX 失败详情日志失败: %w", err)
+	}
+	return remaining, nil
+}
+
+func joinLinesWithNewline(lines []string) []byte {
+	if len(lines) == 0 {
+		return nil
+	}
+	return []byte(strings.Join(lines, "\n") + "\n")
+}
+
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".vulnx-failures-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	removeTemporary := true
+	defer func() {
+		_ = temporary.Close()
+		if removeTemporary {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if _, err := temporary.Write(data); err != nil {
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(temporaryPath, mode); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	removeTemporary = false
+	return nil
 }
 
 func (h *VulnxVulnerabilityUpdateHandler) githubToken(ctx context.Context, apiKeyID *int64) (string, error) {

@@ -1,6 +1,7 @@
 package job_handlers
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,10 +24,11 @@ import (
 )
 
 type vulnxRepositoryStub struct {
-	mu       sync.Mutex
-	bundles  []*repository.VulnerabilityIntelligenceBundle
-	err      error
-	existing map[string]struct{}
+	mu             sync.Mutex
+	bundles        []*repository.VulnerabilityIntelligenceBundle
+	chaitinUpserts int
+	err            error
+	existing       map[string]struct{}
 }
 
 func (s *vulnxRepositoryStub) Stats(context.Context, time.Time) (*repository.VulnerabilityIntelligenceStatsData, error) {
@@ -56,6 +58,9 @@ func (s *vulnxRepositoryStub) UpsertAVD(_ context.Context, _ *repository.Vulnera
 }
 
 func (s *vulnxRepositoryStub) UpsertChaitin(_ context.Context, _ *repository.VulnerabilityIntelligenceBundle) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.chaitinUpserts++
 	return nil
 }
 
@@ -93,6 +98,12 @@ type sourceAPIKeysStub struct {
 	keys map[int64]string
 }
 
+func vulnxTestJobs(githubKeyID *int64) incrementalJobRepositoryStub {
+	return incrementalJobRepositoryStub{items: map[string]entity.ScheduledJob{
+		CVEFileNamesJobType: {APIKeyID: githubKeyID},
+	}}
+}
+
 func (s sourceAPIKeysStub) GetPlaintext(_ context.Context, id int64) (*dto.ThirdPartyAPIKeyPlaintextResponse, error) {
 	return &dto.ThirdPartyAPIKeyPlaintextResponse{Key: s.keys[id]}, nil
 }
@@ -107,7 +118,7 @@ func TestVulnxUpdateHandlerUsesSeparateSourceKeys(t *testing.T) {
 	keys := sourceAPIKeysStub{keys: map[int64]string{githubID: "github-token", vulnxID: "vulnx-token"}}
 	repo := &vulnxRepositoryStub{}
 	var waited []int64
-	handler := NewVulnxVulnerabilityUpdateHandler(t.TempDir(), keys, requestLimiterFunc(func(_ context.Context, id int64) error {
+	handler := NewVulnxVulnerabilityUpdateHandler(t.TempDir(), vulnxTestJobs(&githubID), keys, requestLimiterFunc(func(_ context.Context, id int64) error {
 		waited = append(waited, id)
 		return nil
 	}), repo)
@@ -137,7 +148,7 @@ func TestVulnxUpdateHandlerUsesSeparateSourceKeys(t *testing.T) {
 		})
 		return client
 	}
-	if err := handler.ExecuteWithGitHubKey(context.Background(), entity.ScheduledJob{ConfigJSON: "{}", APIKeyID: &vulnxID}, entity.ScheduledJobRun{}, nil, &githubID); err != nil {
+	if err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}", APIKeyID: &vulnxID}, entity.ScheduledJobRun{}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(waited) < 2 {
@@ -156,6 +167,14 @@ func TestVulnxUpdateHandlerUsesSeparateSourceKeys(t *testing.T) {
 	}
 }
 
+func TestVulnxUpdateHandlerRequiresCVEListJob(t *testing.T) {
+	handler := NewVulnxVulnerabilityUpdateHandler(t.TempDir(), incrementalJobRepositoryStub{}, nil, nil, &vulnxRepositoryStub{})
+	err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "读取 CVE 列表任务 API Key 配置失败") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+}
+
 func TestVulnxUpdateHandlerReadsDeduplicatedCVEList(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "data", "tmp", "cve_data")
@@ -167,7 +186,7 @@ func TestVulnxUpdateHandlerReadsDeduplicatedCVEList(t *testing.T) {
 	}
 	repo := &vulnxRepositoryStub{existing: map[string]struct{}{"CVE-2021-44228": {}}}
 	client := &vulnxClientStub{}
-	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, repo)
+	handler := NewVulnxVulnerabilityUpdateHandler(root, vulnxTestJobs(nil), nil, nil, repo)
 	handler.listFn = func(context.Context) ([]string, error) {
 		return []string{"CVE-2024-3094", "not-a-cve", "CVE-2024-3094", "CVE-2021-44228"}, nil
 	}
@@ -205,9 +224,9 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "vulnXerrorDetail.log"), []byte("stale detail\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	client := &vulnxClientStub{failures: map[string]int{"CVE-2024-0001": 2, "CVE-2024-0002": vulnxRequestMaxAttempts}}
+	client := &vulnxClientStub{failures: map[string]int{"CVE-2024-0001": vulnxRequestMaxAttempts, "CVE-2024-0002": 2 * vulnxRequestMaxAttempts}}
 	repo := &vulnxRepositoryStub{}
-	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, repo)
+	handler := NewVulnxVulnerabilityUpdateHandler(root, vulnxTestJobs(nil), nil, nil, repo)
 	handler.listFn = func(context.Context) ([]string, error) { return []string{"CVE-2024-0001", "CVE-2024-0002"}, nil }
 	handler.clientFn = func(string) *VulnxClient { return nil }
 	handler.fetchFn = client.Fetch
@@ -216,7 +235,11 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "CVE-2024-0002") {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	if got, want := len(client.ids), (2+1)+vulnxRequestMaxAttempts; got != want {
+	var partial *vulnxPartialFailureError
+	if !errors.As(err, &partial) || partial.count != 1 {
+		t.Fatalf("Execute() partial failure = %v, want 1 failed CVE", err)
+	}
+	if got, want := len(client.ids), vulnxRequestMaxAttempts+1+2*vulnxRequestMaxAttempts; got != want {
 		t.Fatalf("fetch calls = %d, want %d", got, want)
 	}
 	if progress.current != 2 || progress.total != 2 || len(repo.bundles) != 1 {
@@ -238,6 +261,47 @@ func TestVulnxUpdateHandlerRetriesAndWritesFinalFailures(t *testing.T) {
 	}
 }
 
+func TestVulnxUpdateHandlerRemovesRecoveredFailuresAfterRetry(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "data", "tmp", "cve_data")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	client := &vulnxClientStub{failures: map[string]int{"CVE-2024-0001": vulnxRequestMaxAttempts}}
+	handler := NewVulnxVulnerabilityUpdateHandler(root, vulnxTestJobs(nil), nil, nil, &vulnxRepositoryStub{})
+	handler.listFn = func(context.Context) ([]string, error) { return []string{"CVE-2024-0001"}, nil }
+	handler.clientFn = func(string) *VulnxClient { return nil }
+	handler.fetchFn = client.Fetch
+	if err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, &vulnxProgressStub{}); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got, want := len(client.ids), vulnxRequestMaxAttempts+1; got != want {
+		t.Fatalf("fetch calls = %d, want %d", got, want)
+	}
+	for _, name := range []string{"vulnXerror.txt", "vulnXerrorDetail.log"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil || len(data) != 0 {
+			t.Fatalf("%s = %q, err = %v", name, data, err)
+		}
+	}
+	archive, err := zip.OpenReader(filepath.Join(dir, "vulnXerror.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer archive.Close()
+	for _, file := range archive.File {
+		content, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, readErr := io.ReadAll(content)
+		closeErr := content.Close()
+		if readErr != nil || closeErr != nil || len(data) != 0 {
+			t.Fatalf("archive %s = %q, read err %v, close err %v", file.Name, data, readErr, closeErr)
+		}
+	}
+}
+
 func TestVulnxUpdateHandlerProcessesCVEsConcurrently(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "data", "tmp", "cve_data")
@@ -255,7 +319,7 @@ func TestVulnxUpdateHandlerProcessesCVEsConcurrently(t *testing.T) {
 	allStarted := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
-	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, &vulnxRepositoryStub{})
+	handler := NewVulnxVulnerabilityUpdateHandler(root, vulnxTestJobs(nil), nil, nil, &vulnxRepositoryStub{})
 	var names []string
 	for i := range vulnxRequestConcurrency {
 		names = append(names, fmt.Sprintf("CVE-2024-%04d", i+1))
@@ -297,7 +361,7 @@ func TestVulnxUpdateHandlerProcessesCVEsConcurrently(t *testing.T) {
 }
 
 func TestVulnxUpdateHandlerValidatesEmptyConfig(t *testing.T) {
-	handler := NewVulnxVulnerabilityUpdateHandler("", nil, nil, &vulnxRepositoryStub{})
+	handler := NewVulnxVulnerabilityUpdateHandler("", vulnxTestJobs(nil), nil, nil, &vulnxRepositoryStub{})
 	if err := handler.Validate(json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +382,7 @@ func TestVulnxUpdateHandlerStopsOnContextCancellation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(path, "cves.txt"), []byte("CVE-2024-3094\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	handler := NewVulnxVulnerabilityUpdateHandler(root, nil, nil, &vulnxRepositoryStub{})
+	handler := NewVulnxVulnerabilityUpdateHandler(root, vulnxTestJobs(nil), nil, nil, &vulnxRepositoryStub{})
 	handler.listFn = func(context.Context) ([]string, error) { return []string{"CVE-2024-3094"}, nil }
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

@@ -2946,8 +2946,8 @@ curl -L -OJ \
 - `job_type`：`vulnx_vulnerability.sync`
 - 默认计划建议：`0 30 * * *`，时区 `Asia/Shanghai`，每天凌晨 00:30 执行；该任务会自行刷新 CVE 列表。
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_vulnx_vulnerability_sync.sql`，默认启用并使用环境变量 API Key；可在定时任务管理中关联 `api_key_id` 以启用按 Key 限流。脚本按 `job_type` 判断，可重复执行。
-- `config_json`：使用 `{}`；每次执行都从 GitHub `CVEProject/cvelistV5` 获取完整 CVE 列表（使用 `GITHUB_TOKEN` 环境变量），并原子更新服务根目录下 `data/tmp/cve_data/cves.txt`。列表完成后分批检查数据库中 `source=vulnx` 的现有编号，只对数据库缺失的 CVE 调用详情 API。已有 CVE 不重复请求或覆盖。
-- API Key：配置 `api_key_id` 时从第三方 API Key 服务读取并解密，按每次请求发送 `X-Api-Key`；未配置 `api_key_id` 时读取环境变量 `PDCP_API_KEY`。建议优先使用 `api_key_id`，以便配置每分钟限额。
+- `config_json`：使用 `{}`；每次执行都从 GitHub `CVEProject/cvelistV5` 获取完整 CVE 列表，并原子更新服务根目录下 `data/tmp/cve_data/cves.txt`。列表完成后分批检查数据库中 `source=vulnx` 的现有编号，只对数据库缺失的 CVE 调用详情 API。已有 CVE 不重复请求或覆盖。执行时需要存在 `cve_file_names.sync` 任务，以读取其 GitHub Key 配置。
+- API Key：VulnX 详情 API 使用本任务配置的 `api_key_id`，从第三方 API Key 服务读取并解密，按每次请求发送 `X-Api-Key`；未配置时读取环境变量 `PDCP_API_KEY`。GitHub 全量 CVE 列表请求使用“全量 CVE 列表获取”（`cve_file_names.sync`）任务配置的 `api_key_id`，并应用对应 Key 的共享限流；未配置时读取环境变量 `GITHUB_TOKEN`。
 - 并发与限流：每次最多并行处理 8 个 CVE；配置 `api_key_id` 后，每次 CVE 请求（包括重试）都复用服务启动时创建的共享限流器，按该 Key 的 `rate_limit_per_minute` 放行。同一 Key 的任务和并发执行共享额度，限流等待支持取消和超时。使用 `PDCP_API_KEY` 环境变量时没有服务端配置的限额，也不启用服务端限流，仍受 ProjectDiscovery API 自身限流约束。
 - 更新范围：每个 CVE 查询 `https://api.projectdiscovery.io/v2/vulnerability/{CVE}`，在一个数据库事务中按 CVE 替换以下五张表的完整快照：
   - `manscan_vulnerability_intelligence_records`：`data` 中漏洞画像、时间、CVSS、CWE、EPSS、暴露主机数、HackerOne、POC、产品、厂商、修复、严重性、状态、漏洞类型和影响字段。
@@ -2955,7 +2955,7 @@ curl -L -OJ \
   - `manscan_vulnerability_intelligence_articles`：`citations[]` 的添加时间、来源和 URL。
   - `manscan_vulnerability_intelligence_pocs`：`pocs[]` 的添加时间、来源和 URL。
   - `manscan_vulnerability_intelligence_shodan_exposures`：`exposure.values[]` 的产品 ID、暴露主机数和 Shodan 查询语句。
-- 失败策略：单个 CVE 查询、解析或写库失败后最多尝试 3 次（首次请求 + 2 次重试），然后继续处理剩余 CVE；最终仍失败的 CVE 的编号写入服务根目录下 `data/tmp/cve_data/vulnXerror.txt`，具体错误写入 `data/tmp/cve_data/vulnXerrorDetail.log`，两个文件每次运行开始时清空。任务结束时将这两个文件打包为 `data/tmp/cve_data/vulnXerror.zip`，可通过执行记录的产出下载接口下载。任务进度按每个 CVE 最终处理结果推进；只要存在失败项，最终执行状态为 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
+- 失败策略：单个 CVE 查询、解析或写库失败后最多尝试 3 次（首次请求 + 2 次重试），然后继续处理剩余 CVE；最终仍失败的 CVE 的编号写入服务根目录下 `data/tmp/cve_data/vulnXerror.txt`，具体错误写入 `data/tmp/cve_data/vulnXerrorDetail.log`，两个文件每次运行开始时清空。首轮全部处理后，再对失败清单中的 CVE 各补偿重试最多 3 次；成功写入数据库的编号会从失败清单和详情日志移除，仍失败的编号及原错误详情保持不变。最终清单打包为 `data/tmp/cve_data/vulnXerror.zip`，可通过执行记录的产出下载接口下载。任务进度按处理与补偿重试阶段推进；独立任务在补偿重试后仍有失败项时标记 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
 
 ### 内置任务：长亭无 CVE 漏洞情报同步
 
@@ -2984,11 +2984,12 @@ curl -L -OJ \
 
 - `job_type`：`vulnerability_intelligence.incremental`
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_vulnerability_incremental.sql`，默认每天 02:00 执行，按 `job_type` 判断后可重复执行。默认超时 21600 秒；任务顺序执行三个渠道。
-- 执行顺序：长亭无 CVE 全量列表、阿里云无 CVE 全量列表与详情、VulnX 最新完整 CVE 列表及缺失项详情。各来源任务分别报告阶段、当前值、总量和说明，综合任务进度按渠道阶段推进；每个数据源完成后继续下一个，发生错误则停止并标明失败渠道。
+- 执行顺序：长亭无 CVE 列表、阿里云无 CVE 列表与详情、VulnX 最新完整 CVE 列表及缺失项详情。综合任务中，长亭与阿里云各自获取第一页后，若该页所有无 CVE 漏洞编号均已存在于对应来源的数据库记录中，就停止请求后续列表页；阿里云还会跳过这些已有编号的详情请求。若第一页没有无 CVE 编号或仍有新编号，则继续分页。该提前停止逻辑仅用于综合任务，不影响独立的长亭、阿里云全量同步任务。各来源任务分别报告阶段、当前值、总量和说明，综合任务进度按渠道阶段推进；每个数据源完成后继续下一个，发生错误则停止并标明失败渠道。
 - 长亭与阿里云：按各自来源和漏洞编号匹配现有记录；新编号插入，字段有变化时更新映射字段，参考链接按来源同步差异。其他来源和关联表不受影响。
 - VulnX：先获取最新完整 CVE 列表，再按 1000 个编号一批检查 `source=vulnx`。只对不存在的编号请求详情并新增完整情报快照，已有 CVE 不进行重复 API 请求。
-- API Key：综合任务从数据库读取 `cve_file_names.sync`（“全量 CVE 列表获取”）和 `vulnx_vulnerability.sync`（“全量 VulnX 漏洞更新（长耗时）”）的 `api_key_id`。GitHub 列表请求使用前者的 Key 和共享限流，VulnX 详情请求使用后者的 Key 和共享限流；综合任务自身的 `api_key_id` 不参与这两种请求。任一来源任务不存在时任务失败；来源任务未绑定 Key 时，分别回退到 `GITHUB_TOKEN` 或 `PDCP_API_KEY` 环境变量。
+- API Key：综合任务和独立 VulnX 任务均从数据库读取 `cve_file_names.sync`（“全量 CVE 列表获取”）的 `api_key_id` 用于 GitHub 列表请求，从 `vulnx_vulnerability.sync`（“全量 VulnX 漏洞更新（长耗时）”）读取 `api_key_id` 用于 VulnX 详情请求。两种请求分别使用对应 Key 的共享限流；综合任务自身的 `api_key_id` 不参与这两种请求。CVE 列表任务不存在时任务失败；列表任务未绑定 Key 时 GitHub 请求回退到 `GITHUB_TOKEN`，VulnX 任务未绑定 Key 时详情请求回退到 `PDCP_API_KEY`。
 - 下载产出：综合任务成功后，将阿里云 `no_cve_vulnerabilities.json` 与 VulnX 的 `vulnXerror.zip` 放入按执行记录 ID 命名的 `data/tmp/vulnerability_intelligence/incremental_outputs_<run_id>.zip`，并登记为本次执行的 `output_path`。在执行记录的“下载产出”按钮或 `GET /api/v1/scheduled-job-runs/:run_id/output` 下载。VulnX 压缩包包含 `vulnXerror.txt` 和 `vulnXerrorDetail.log`，无失败时两个文件为空。长亭和 VulnX 正常同步结果写入数据库。旧执行记录不会补生成汇总 ZIP。
+- 部分失败状态：综合任务中单个 CVE 经重试后仍查询、解析或写库失败时，将编号和错误写入 VulnX 失败清单并继续处理其他 CVE；只要三个渠道整体流程及汇总产物生成成功，综合任务仍标记成功，进度消息会显示失败数量，可下载汇总 ZIP 查看详情。来源列表获取、数据库查询、任务取消/超时及产物生成等整体错误仍会使任务失败。独立 `vulnx_vulnerability.sync` 任务保持“存在单个失败 CVE 即标记失败”的行为。
 
 以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
 

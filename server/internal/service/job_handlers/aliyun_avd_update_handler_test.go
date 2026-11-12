@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ManScan/server/internal/model/entity"
 )
 
 type avdRoundTripperFunc func(*http.Request) (*http.Response, error)
@@ -53,6 +55,67 @@ func TestAVDClientReportsProcessedListPages(t *testing.T) {
 	}
 	if !strings.Contains(updates[1].message, "未发现更多条目") {
 		t.Errorf("terminal-page message = %q", updates[1].message)
+	}
+}
+
+func TestAVDClientIncrementalStopsAfterExistingFirstPage(t *testing.T) {
+	client := NewAVDClient(0, 3)
+	requests := 0
+	client.httpClient.Transport = avdRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		body := `<table><tbody><tr><td><a href="/detail?id=AVD-2026-2">AVD-2026-2</a></td><td>No CVE vuln</td><td>type</td><td>2026-02-01</td><td><button title="无CVE">CVE</button></td></tr></tbody></table>`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})
+	collection, err := client.CollectNoCVEWithFirstPageStop(context.Background(), func(_ context.Context, items []AVDListItem) (bool, error) {
+		return len(items) == 1 && items[0].VulnerabilityID == "AVD-2026-2", nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || collection.ListPages != 1 || collection.NoCVECandidateCount != 1 {
+		t.Fatalf("requests=%d collection=%+v; expected stop before details and later pages", requests, collection)
+	}
+}
+
+func TestAVDHandlerIncrementalStopsOnlyCompositeRun(t *testing.T) {
+	repo := &vulnxRepositoryStub{existing: map[string]struct{}{"AVD-2026-2": {}}}
+	handler := NewAliyunAVDUpdateHandler(t.TempDir(), repo)
+	requests := 0
+	handler.clientFn = func(delay time.Duration, maxPages int) *AVDClient {
+		client := NewAVDClient(delay, maxPages)
+		client.httpClient.Transport = avdRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+			requests++
+			body := `<table><tbody><tr><td><a href="/detail?id=AVD-2026-2">AVD-2026-2</a></td><td>No CVE vuln</td><td>type</td><td>2026-02-01</td><td><button title="无CVE">CVE</button></td></tr></tbody></table>`
+			if request.URL.Query().Get("page") == "2" {
+				body = `<html><body>阿里云漏洞库<table><tbody></tbody></table></body></html>`
+			} else if request.URL.Path == "/detail" {
+				body = `<h5 class="header__title"><span class="header__title__text">Example</span></h5>`
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+		})
+		return client
+	}
+	job := entity.ScheduledJob{ConfigJSON: "{}"}
+	if err := handler.ExecuteIncremental(context.Background(), job, entity.ScheduledJobRun{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("incremental requests = %d, want only first list page", requests)
+	}
+	requests = 0
+	if err := handler.Execute(context.Background(), job, entity.ScheduledJobRun{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 3 {
+		t.Fatalf("full sync requests = %d, want list, detail, and terminal page", requests)
+	}
+	delete(repo.existing, "AVD-2026-2")
+	requests = 0
+	if err := handler.ExecuteIncremental(context.Background(), job, entity.ScheduledJobRun{}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 3 {
+		t.Fatalf("incremental requests with a missing ID = %d, want list, detail, and terminal page", requests)
 	}
 }
 

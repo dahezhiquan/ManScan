@@ -84,7 +84,7 @@ func Run() error {
 	if err := jobHandlerRegistry.Register(jobhandlers.NewCVEFileNamesHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter)); err != nil {
 		return fmt.Errorf("注册 CVE 文件名定时任务处理器失败: %w", err)
 	}
-	vulnxUpdateHandler := jobhandlers.NewVulnxVulnerabilityUpdateHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter, vulnerabilityIntelligenceRepository)
+	vulnxUpdateHandler := jobhandlers.NewVulnxVulnerabilityUpdateHandler(cfg.RootDir, scheduledJobRepository, thirdPartyAPIKeyService, apiKeyRateLimiter, vulnerabilityIntelligenceRepository)
 	if err := jobHandlerRegistry.Register(vulnxUpdateHandler); err != nil {
 		return fmt.Errorf("注册 VulnX 漏洞更新定时任务处理器失败: %w", err)
 	}

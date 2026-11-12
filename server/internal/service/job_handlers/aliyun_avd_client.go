@@ -148,6 +148,15 @@ func NewAVDClient(requestDelay time.Duration, maxPages int) *AVDClient {
 }
 
 func (c *AVDClient) CollectNoCVE(ctx context.Context) (*AVDCollection, error) {
+	return c.collectNoCVE(ctx, nil)
+}
+
+// CollectNoCVEWithFirstPageStop allows the incremental job to stop after the first list page.
+func (c *AVDClient) CollectNoCVEWithFirstPageStop(ctx context.Context, shouldStop func(context.Context, []AVDListItem) (bool, error)) (*AVDCollection, error) {
+	return c.collectNoCVE(ctx, shouldStop)
+}
+
+func (c *AVDClient) collectNoCVE(ctx context.Context, shouldStop func(context.Context, []AVDListItem) (bool, error)) (*AVDCollection, error) {
 	result := &AVDCollection{FetchedAt: time.Now().UTC(), Vulnerabilities: make([]AVDVulnerability, 0)}
 	seen := make(map[string]struct{})
 	exhausted := false
@@ -175,6 +184,28 @@ func (c *AVDClient) CollectNoCVE(ctx context.Context) (*AVDCollection, error) {
 		}
 		result.ListPages = page
 		result.ListedCount += len(items)
+		if page == 1 && shouldStop != nil {
+			stop, checkErr := shouldStop(ctx, items)
+			if checkErr != nil {
+				return result, checkErr
+			}
+			if stop {
+				for _, item := range items {
+					if isNoCVEItem(item) {
+						if _, seenBefore := seen[item.VulnerabilityID]; !seenBefore {
+							seen[item.VulnerabilityID] = struct{}{}
+							result.NoCVECandidateCount++
+						}
+					}
+				}
+				if c.progress != nil {
+					if err := c.progress(ctx, 1, int64(c.maxPages), "fetching", "第一页无 CVE 漏洞均已存在，跳过后续查询"); err != nil {
+						return result, err
+					}
+				}
+				return result, nil
+			}
+		}
 		for _, item := range items {
 			if !isNoCVEItem(item) {
 				continue
