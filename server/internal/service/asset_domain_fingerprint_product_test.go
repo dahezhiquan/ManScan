@@ -189,3 +189,41 @@ func TestAssetDomainFingerprintProductVersionAttribution(t *testing.T) {
 		})
 	}
 }
+
+// TestFingerprintParenthesizedReleaseVersion keeps release numbers intact without
+// accepting arbitrary parenthesized descriptions as version tokens.
+func TestFingerprintParenthesizedReleaseVersion(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ input, want string }{
+		{"12.5(1)", "12.5(1)"},
+		{"15.2(4)M7", "15.2(4)M7"},
+		{"12.5(1)SU1", "12.5(1)SU1"},
+		{"12.5(1), built on 2024-01-01", "12.5(1)"},
+		{"8.0.36-0ubuntu0.22.04.1", "8.0.36-0ubuntu0.22.04.1"},
+		{"12.5(1", ""},
+		{"12.5(1))", ""},
+		{"12.5()", ""},
+		{"12.5(Linux)", ""},
+		{"12.5(1 2)", ""},
+		{"12.5(1) trailing description", ""},
+	} {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := normalizeAssetDomainComponentVersion(tc.input); got != tc.want {
+				t.Fatalf("normalize version %q = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+	payload := map[string]interface{}{
+		"info":              map[string]interface{}{"metadata": map[string]interface{}{"product": "finesse"}},
+		"extracted-results": []string{"12.5(1)"},
+	}
+	want := map[string]string{"finesse": "12.5(1)"}
+	got := assetDomainFingerprintExtractedVersions(payload, []string{"cisco", "finesse"}, nil)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parenthesized release attribution = %#v, want %#v", got, want)
+	}
+	name, version := splitAssetDomainComponentVersion("finesse:12.5(1)")
+	if name != "finesse" || version != "12.5(1)" {
+		t.Fatalf("explicit parenthesized release = %q:%q", name, version)
+	}
+}

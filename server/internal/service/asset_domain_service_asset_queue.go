@@ -21,8 +21,8 @@ const (
 )
 
 var (
-	assetDomainComponentVersionTokenPattern  = regexp.MustCompile(`(?i)^v?\d+(?:[._-]\d+)*(?:[-+._~]?[0-9a-z]+)*$`)
-	assetDomainComponentVersionPrefixPattern = regexp.MustCompile(`(?i)^(v?\d+(?:[._-]\d+)*(?:[-+._~]?[0-9a-z]+)*),\s*built on\b`)
+	assetDomainComponentVersionTokenPattern  = regexp.MustCompile(`(?i)^v?\d+(?:[._-]\d+)*(?:\([0-9]+[a-z]?\))?(?:[-+._~]?[0-9a-z]+)*$`)
+	assetDomainComponentVersionPrefixPattern = regexp.MustCompile(`(?i)^(v?\d+(?:[._-]\d+)*(?:\([0-9]+[a-z]?\))?(?:[-+._~]?[0-9a-z]+)*),\s*built on\b`)
 	assetSSHSoftwareVersionPattern           = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9.+_-]*)[ _/-]([0-9]+(?:[._-][0-9]+)*(?:p[0-9]+)?)$`)
 )
 
