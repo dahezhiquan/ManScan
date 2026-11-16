@@ -37,6 +37,7 @@ func NewRouter(
 		c.AbortWithStatus(http.StatusInternalServerError)
 	}))
 	router.Use(middleware.Logger(logger))
+	router.GET("/attack-path-filter", serveAttackPathFilterPage)
 
 	v1 := router.Group("/api/v1")
 

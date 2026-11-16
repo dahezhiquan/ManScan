@@ -1506,6 +1506,60 @@ func TestAssetDomainFingerprintPortProtocolTagPriority(t *testing.T) {
 	}
 }
 
+func TestAssetDomainRsyncFingerprintRetainsTCPThroughHostPortConversion(t *testing.T) {
+	t.Parallel()
+
+	for _, port := range []uint{873, 4043, 8730} {
+		t.Run(fmt.Sprint(port), func(t *testing.T) {
+			t.Parallel()
+			svc := &scanTaskService{}
+			endpoint := fmt.Sprintf("192.0.2.10:%d", port)
+			observations, err := svc.buildAssetDomainServiceAssetsFromPayload(context.Background(), map[string]interface{}{
+				"template-id": "rsync-version",
+				"matched-at":  endpoint,
+				"type":        "javascript",
+				"info": map[string]interface{}{
+					"name": "Rsync 版本识别（指纹识别）",
+					"tags": []interface{}{"js", "network", "rsync", "enum", "discovery", "detect"},
+				},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(observations) != 1 || observations[0].AppName != "rsync" || observations[0].PortProtocol != "tcp" {
+				t.Fatalf("fingerprint observations = %+v, want rsync over tcp", observations)
+			}
+			_, ports := splitAssetServiceAssetObservations(context.Background(), observations, nil, nil)
+			if len(ports) != 1 || ports[0].PortProtocol != "tcp" || ports[0].ServiceName != "rsync" || ports[0].PortNumber != port {
+				t.Fatalf("host port observations = %+v, want rsync over tcp on port %d", ports, port)
+			}
+		})
+	}
+}
+
+func TestAssetDomainRsyncProtocolFallbackPreservesTransportEvidence(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		component string
+		payload   map[string]interface{}
+		want      string
+	}{
+		{name: "case insensitive rsync", component: " Rsync ", payload: map[string]interface{}{"type": "javascript"}, want: "tcp"},
+		{name: "explicit transport wins", component: "rsync", payload: map[string]interface{}{"type": "javascript", "transport": "udp"}, want: "udp"},
+		{name: "unknown service on rsync port", component: "custom-service", payload: map[string]interface{}{"type": "javascript"}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := assetDomainFingerprintPortProtocol(tc.payload, nil, []string{"network"}, "192.0.2.10:873", "192.0.2.10:873", tc.component)
+			if got != tc.want {
+				t.Fatalf("port protocol = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestAssetDomainFingerprintVersionIgnoresProductNameFallback(t *testing.T) {
 	t.Parallel()
 

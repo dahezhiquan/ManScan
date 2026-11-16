@@ -2666,6 +2666,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o host-assets.xlsx "http://12
 
 - 说明：
   - `ports` 来自 `manscan_asset_host_port`，按当前主机精确匹配 `ip_address` 字段；同一 IP、协议、端口可按不同 `service_name` 返回多条记录。
+  - `ports[].port_protocol` 表示传输层协议（`tcp` / `udp`），不是模板执行类型。Rsync 指纹即使来自未声明传输协议的 `javascript` 模板，也会按已识别的 `rsync` 服务补充为 `tcp`，同样适用于非标准端口；明确提供的传输协议优先。更新服务后需再次扫描确认，已有空协议记录不会仅因代码更新自动改写。
   - `ports[].port_created_at` 保留该 IP、端口和服务名首次写入的时间；当后续指纹确定此前空缺的 TCP/UDP 协议时，会将空协议记录合并到已确认协议记录，并保留较早的首次发现时间和已知版本。同一服务同时存在 TCP 与 UDP 时不推断空协议记录的归属。`ports[].last_alive_at` 在该组合实际被 HTTP 探测或指纹结果再次确认时更新。任务成功结束不再对端口表执行二次同步；关闭结果队列时尚未落库的实际指纹结果仍会按结果观察时间写入，不使用任务结束时间重写存活时间。
   - 扫描前 HTTP 探测完成后，已检查但未取得响应的 IP 端口，其已有 HTTP 服务记录立即设为 `is_alive=false`。启用前置指纹识别或自动模板映射时，单个目标的指纹识别完成后，立即把该 IP 端口本次未识别到的旧服务设为 `is_alive=false`；已取得 HTTP 响应的端口保留 HTTP 服务存活。失活操作不改写两个时间字段，未启用这两类识别时不执行旧服务指纹失活检查。
   - SSH 指纹的 `ports[].app_version` 包含软件名称和版本，例如 `OpenSSH 7.4`、`WeOnlyDo 2.4.3`。
@@ -3168,6 +3169,21 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 示例仅展示部分字段；实际响应会返回每条记录的全部字段。
 
 ## 攻击路径识别与过滤
+
+### GET /attack-path-filter（操作页面）
+
+- 请求参数：无。
+- 响应格式：HTTP 200，`text/html; charset=utf-8`，返回内嵌的单文件操作页面。
+- 错误码：无业务错误码；实际任务接口仍按下文返回错误码。
+- 示例：浏览器打开 `http://localhost:8686/attack-path-filter`，填写 ManScan 登录 Token，选择 TXT 并点击“上传并开始过滤”。
+
+页面支持拖拽上传、上传进度、每 3 秒轮询任务、处理数量与过滤数量、取消任务、通过任务 ID 恢复查看，以及下载正常路径 TXT。排队和处理期间无需保持上传请求连接。网络中断后状态查询会逐步延长间隔重试；401/403/404 会停止自动查询，更新登录信息后可手动刷新。上传 POST 不自动重试，避免重复创建任务。
+
+HTML 源文件位于 `server/internal/api/assets/attack_path_filter.html`，请通过上面的同源地址使用，当前后端不额外开放跨域。直接双击 HTML（`file://`）时，页面禁用 Token 输入、上传和任务恢复；填写服务地址并点击“在服务端打开页面”，随后在新页面填写 Token、选择 TXT。此跳转不携带 Token 或文件内容。服务地址支持主机地址或带 `/api/v1` 后缀的地址。页面无需 AI Force 密钥，登录 Token 仅保存在当前页面内存中；浏览器仅记住最近一次任务的 ID 和服务地址。刷新后需重新填写 Token 并恢复查看任务。
+
+页面通过 Go embed 编入服务端程序，新增或修改此 HTML 后，需要重新编译并重启服务才能通过上述路由访问最新页面。
+
+下载时，支持文件保存 API 的浏览器在 HTTPS 或 localhost 环境下直接将结果写入用户选择的文件；其他浏览器使用普通下载，内存下载上限为 128 MiB。较大结果请使用支持直接保存文件的 Chrome / Edge。失败和取消的任务不可下载，所有路径被过滤时允许下载空 TXT。
 
 部署前执行 docs/SQL/create_manscan_attack_path_tasks.sql，并安装支持 HTTP MCP、--bare 与 --strict-mcp-config 的 Claude CLI。服务端读取私有 config.yaml 中 ai.base_url、ai.model、ai.uuap_id 及可选 ai.claude_binary。每次模型请求按 platform_url 精确查询 manscan_third_party_api_keys 中唯一的 https://ai-force.duxiaoman-int.com/ 记录，使用现有 auth.api_key_encryption_key 解密；无需配置记录 ID，密钥不会写入文件或 API 响应。
 

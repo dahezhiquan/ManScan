@@ -1837,7 +1837,7 @@ func normalizeAssetHostPortProtocol(value string) string {
 
 func assetHostPortProtocolFromServiceName(value string) string {
 	switch normalizeAssetDomainComponentName(value) {
-	case "ftp", "http", "https", "imap", "mysql", "pop3", "postgres", "postgresql", "rdp", "redis", "smtp", "smb", "ssh", "telnet":
+	case "ftp", "http", "https", "imap", "mysql", "pop3", "postgres", "postgresql", "rdp", "redis", "rsync", "smtp", "smb", "ssh", "telnet":
 		return "tcp"
 	case "snmp", "ntp", "tftp":
 		return "udp"

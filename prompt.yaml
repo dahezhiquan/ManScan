@@ -11,7 +11,7 @@ prompts:
     只有所有输入路径均处理完毕后，才能调用 finish。工具失败时应报告失败，不得声称任务已成功。
 
   attack_path_filter.task: >-
-    处理当前任务的完整本地 TXT 文件，共有 {{total}} 条去重后的路径。
+    处理当前任务的完整、本地 TXT 文件，共有 {{total}} 条去重后的路径。
     使用 read_paths 读取路径，逐条判断是否恶意，再调用 write_filtered_paths 更新本地结果 TXT。
     根据情况选择读取条数，上限为 {{read_max}}；文件工具会进一步限制单次读取的文本量。
     重复上述操作，直到所有路径处理完毕，再调用 finish。
