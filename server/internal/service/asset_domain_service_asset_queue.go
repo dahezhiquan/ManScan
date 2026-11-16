@@ -405,7 +405,7 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayloadWithResolver(c
 
 	componentNames := assetDomainFingerprintComponentNames(payload, templateID, info, tags)
 	components := make([]repository.AssetDomainServiceAssetObservation, 0, len(componentNames))
-	versionsByName := assetDomainFingerprintExtractedVersions(payload, componentNames)
+	versionsByName := assetDomainFingerprintExtractedVersions(payload, componentNames, templateDetail)
 	for _, componentName := range componentNames {
 		components = append(components, repository.AssetDomainServiceAssetObservation{
 			Domain:       domain,
@@ -621,7 +621,35 @@ func assetDomainFingerprintComponentNames(payload map[string]interface{}, templa
 	return uniqueComponentNames(names)
 }
 
-func assetDomainFingerprintExtractedVersions(payload map[string]interface{}, componentNames []string) map[string]string {
+// assetDomainFingerprintVersionProduct only resolves an existing component by
+// exact product name. Template metadata must not create components or infer aliases.
+func assetDomainFingerprintVersionProduct(payload map[string]interface{}, templateDetail *dto.TemplateDetail, componentNames []string) string {
+	metadata := interfaceMap(payloadInfo(payload)["metadata"])
+	value, present := metadata["product"]
+	product := ""
+	if present {
+		var ok bool
+		product, ok = value.(string)
+		if !ok {
+			return ""
+		}
+	}
+	if strings.TrimSpace(product) == "" && templateDetail != nil {
+		product = templateDetail.Product
+	}
+	product = normalizeAssetDomainComponentName(product)
+	if product == "" || strings.ContainsAny(product, ",;\r\n") {
+		return ""
+	}
+	for _, component := range componentNames {
+		if component == product {
+			return component
+		}
+	}
+	return ""
+}
+
+func assetDomainFingerprintExtractedVersions(payload map[string]interface{}, componentNames []string, templateDetail *dto.TemplateDetail) map[string]string {
 	versions := make(map[string]string)
 	extractedResults := interfaceStringSlice(payload["extracted-results"])
 	if len(extractedResults) == 0 {
@@ -640,28 +668,38 @@ func assetDomainFingerprintExtractedVersions(payload map[string]interface{}, com
 	for _, name := range componentNames {
 		componentSet[name] = struct{}{}
 	}
+	fallbackComponent := assetDomainFingerprintVersionProduct(payload, templateDetail, componentNames)
+	if len(componentNames) == 1 {
+		fallbackComponent = componentNames[0]
+	}
+	fallbackVersion := ""
+	conflictingVersions := false
 	for _, extracted := range extractedResults {
 		appName, appVersion := splitAssetDomainComponentVersion(extracted)
 		appName = normalizeAssetDomainComponentName(appName)
 		appVersion = normalizeAssetDomainComponentVersion(appVersion)
-		if isAssetDomainVersionFieldName(appName) {
-			if len(componentNames) == 1 && appVersion != "" {
-				versions[componentNames[0]] = appVersion
-			}
-			continue
-		}
-		if appName != "" && appVersion != "" {
+		genericVersionField := isAssetDomainVersionFieldName(appName)
+		if !genericVersionField && appName != "" && appVersion != "" {
 			if _, ok := componentSet[appName]; ok {
 				versions[appName] = appVersion
 			}
 			continue
 		}
-		if len(componentNames) == 1 {
-			version := normalizeAssetDomainComponentVersion(extracted)
-			if version != "" {
-				versions[componentNames[0]] = version
-			}
+		if !genericVersionField {
+			appVersion = normalizeAssetDomainComponentVersion(extracted)
 		}
+		if fallbackComponent != "" && appVersion != "" {
+			if fallbackVersion != "" && fallbackVersion != appVersion {
+				conflictingVersions = true
+			}
+			fallbackVersion = appVersion
+		}
+	}
+	// Explicit component versions always win, regardless of extraction order.
+	// Product identifies a component, but cannot choose between conflicting values.
+	if fallbackComponent != "" && fallbackVersion != "" && versions[fallbackComponent] == "" &&
+		(len(componentNames) == 1 || !conflictingVersions) {
+		versions[fallbackComponent] = fallbackVersion
 	}
 	return versions
 }
