@@ -2,7 +2,10 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"path/filepath"
 	"time"
@@ -115,6 +118,36 @@ func Run() error {
 		logger,
 		cfg.RootDir,
 	)
+	attackPathTaskRepository := repository.NewAttackPathTaskRepository(db)
+	var attackPathProcessor service.AttackPathFileProcessor
+	if cfg.AI.BaseURL != "" || cfg.AI.Model != "" || cfg.AI.UUAPID != "" {
+		var tokenBytes [32]byte
+		if _, err := rand.Read(tokenBytes[:]); err != nil {
+			return fmt.Errorf("生成本地模型网关凭据失败: %w", err)
+		}
+		localToken := hex.EncodeToString(tokenBytes[:])
+		gateway, err := service.NewAIForceClaudeGateway(cfg.AI.BaseURL, cfg.AI.Model, cfg.AI.UUAPID, localToken, thirdPartyAPIKeyRepository, apiKeyBox)
+		if err != nil {
+			return fmt.Errorf("初始化 AI Force 本地协议适配器失败: %w", err)
+		}
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return fmt.Errorf("启动 AI Force 本地协议适配器失败: %w", err)
+		}
+		defer listener.Close()
+		gatewayServer := &http.Server{Handler: gateway}
+		defer gatewayServer.Close()
+		go func() {
+			if serveErr := gatewayServer.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+				logger.Error("AI Force 本地协议适配器已停止", "error", serveErr)
+			}
+		}()
+		attackPathProcessor, err = service.NewClaudeAttackPathProcessor(cfg.AI.ClaudeBinary, "http://"+listener.Addr().String(), localToken, cfg.AI.Model, cfg.PromptFilePath())
+		if err != nil {
+			return fmt.Errorf("初始化 Claude 攻击路径处理器失败: %w", err)
+		}
+	}
+	attackPathTaskService := service.NewAttackPathTaskService(attackPathTaskRepository, attackPathProcessor, logger, cfg.RootDir)
 
 	router := api.NewRouter(
 		logger,
@@ -130,8 +163,12 @@ func Run() error {
 		handler.NewSettingHandler(settingService),
 		handler.NewDashboardHandler(dashboardService),
 		handler.NewVulnerabilityIntelligenceHandler(vulnerabilityIntelligenceService),
+		handler.NewAttackPathTaskHandler(attackPathTaskService),
 		handler.NewScheduledJobHandler(scheduledJobService),
 	)
+	workerContext, stopWorkers := context.WithCancel(context.Background())
+	defer stopWorkers()
+	go attackPathTaskService.Run(workerContext)
 	if err := schedulerManager.Start(context.Background()); err != nil {
 		return fmt.Errorf("启动定时任务调度器失败: %w", err)
 	}

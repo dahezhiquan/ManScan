@@ -26,6 +26,7 @@ func NewRouter(
 	settingHandler handler.SettingHandler,
 	dashboardHandler handler.DashboardHandler,
 	vulnerabilityIntelligenceHandler handler.VulnerabilityIntelligenceHandler,
+	attackPathTaskHandler handler.AttackPathTaskHandler,
 	scheduledJobHandlers ...handler.ScheduledJobHandler,
 ) *gin.Engine {
 	router := gin.New()
@@ -93,6 +94,12 @@ func NewRouter(
 	protected.POST("/third-party-api-keys", thirdPartyAPIKeyHandler.Create)
 	protected.PUT("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Update)
 	protected.DELETE("/third-party-api-keys/:id", thirdPartyAPIKeyHandler.Delete)
+	if attackPathTaskHandler != nil {
+		protected.POST("/attack-path-filter-tasks", attackPathTaskHandler.Create)
+		protected.GET("/attack-path-filter-tasks/:id", attackPathTaskHandler.Get)
+		protected.GET("/attack-path-filter-tasks/:id/download", attackPathTaskHandler.Download)
+		protected.POST("/attack-path-filter-tasks/:id/cancel", attackPathTaskHandler.Cancel)
+	}
 	if len(scheduledJobHandlers) > 0 && scheduledJobHandlers[0] != nil {
 		scheduledJobHandler := scheduledJobHandlers[0]
 		protected.GET("/scheduled-jobs", scheduledJobHandler.List)

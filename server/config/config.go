@@ -19,6 +19,7 @@ const defaultServerAddress = ":8686"
 type runtimeConfigFile struct {
 	MySQL MySQLConfig `yaml:"mysql"`
 	Auth  AuthConfig  `yaml:"auth"`
+	AI    AIConfig    `yaml:"ai"`
 }
 
 type Config struct {
@@ -28,6 +29,15 @@ type Config struct {
 	TemplateDir string
 	MySQL       MySQLConfig
 	Auth        AuthConfig
+	AI          AIConfig
+}
+
+// AIConfig configures the local Claude CLI adapter and its AI Force upstream.
+type AIConfig struct {
+	BaseURL      string `yaml:"base_url"`
+	Model        string `yaml:"model"`
+	UUAPID       string `yaml:"uuap_id"`
+	ClaudeBinary string `yaml:"claude_binary"`
 }
 
 type MySQLConfig struct {
@@ -99,6 +109,7 @@ func Load() (*Config, error) {
 		TemplateDir: templateDir,
 		MySQL:       fileConfig.MySQL,
 		Auth:        fileConfig.Auth,
+		AI:          fileConfig.AI,
 	}, nil
 }
 

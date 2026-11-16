@@ -3166,3 +3166,80 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 ```
 
 示例仅展示部分字段；实际响应会返回每条记录的全部字段。
+
+## 攻击路径识别与过滤
+
+部署前执行 docs/SQL/create_manscan_attack_path_tasks.sql，并安装支持 HTTP MCP、--bare 与 --strict-mcp-config 的 Claude CLI。服务端读取私有 config.yaml 中 ai.base_url、ai.model、ai.uuap_id 及可选 ai.claude_binary。每次模型请求按 platform_url 精确查询 manscan_third_party_api_keys 中唯一的 https://ai-force.duxiaoman-int.com/ 记录，使用现有 auth.api_key_encryption_key 解密；无需配置记录 ID，密钥不会写入文件或 API 响应。
+
+已有包含 `input_text`、`output_text` 的任务表时，停止任务服务并备份数据库后，一次性执行 `docs/SQL/alter_manscan_attack_path_tasks_file_storage.sql`，再部署当前服务；新建表只执行建表脚本。升级脚本保留已落盘结果的文件名并删除两个正文列，不迁移旧版正文；仅有数据库正文的任务需要重新上传 TXT。
+
+配置示例：
+
+    ai:
+      base_url: https://ai-force.duxiaoman-int.com/agent-api/openai
+      model: global.anthropic.claude-sonnet-5
+      uuap_id: <服务账户的UUAP-ID>
+      claude_binary: /usr/local/bin/claude
+
+### 提示词配置
+
+将仓库根目录的 `prompt.yaml` 与实际使用的 `config.yaml` 放在同一目录。若通过 `MANSCAN_CONFIG_FILE` 指定配置文件，提示词文件也从该配置文件所在目录读取，不受 Claude 临时工作目录影响。文件内 `prompts` 是标识到提示词正文的映射，当前攻击路径处理使用以下五个标识：
+
+| 标识 | 用途 |
+| --- | --- |
+| `attack_path_filter.system` | 恶意路径识别标准、输入可信边界和任务执行规则，作为 CLI 系统提示词 |
+| `attack_path_filter.task` | 当前任务的处理要求，作为 CLI 任务提示词 |
+| `attack_path_filter.tools.read_paths` | 读取路径工具的说明 |
+| `attack_path_filter.tools.write_filtered_paths` | 提交恶意路径编号并写入正常路径工具的说明 |
+| `attack_path_filter.tools.finish` | 完成确认工具的说明 |
+
+编辑对应标识下的正文即可调整提示词，支持中文及 YAML 多行文本；请保留标识名称。正文支持 `{{total}}`（去重后路径总数）、`{{read_default}}`（默认读取条数）、`{{read_max}}`（最大读取条数）、`{{read_max_bytes}}`（单次路径文本字节上限）四个占位符，由后端按实际参数替换，不执行模板表达式或命令。修改提示词不会改变文件工具的硬性限制、参数结构或权限。
+
+启用 AI 功能时，服务启动会校验提示词文件；每次任务开始执行时重新读取五段提示词，整个任务使用同一份快照。部署此版本后，修改 `prompt.yaml` 无需重新编译或重启，新开始执行的任务使用最新内容，已经运行的任务不受影响。建议先编辑临时文件，再整体替换 `prompt.yaml`，避免读取到保存过程中的不完整文件。
+
+缺失文件、缺少标识、空正文、重复标识、无效 YAML 或未知占位符会报错，不回退到代码内默认提示词。单段正文最多 32 KiB，文件最多 1 MiB。启动校验失败会阻止 AI 处理器初始化；运行期间文件被改坏时，下一次任务在调用模型前失败，详情写入服务端日志，前端通过原任务接口获得 `failed` 状态和现有失败提示。
+
+### 文件处理与工具编排
+
+1. 上传 UTF-8 TXT，每行一条路径，允许空行和 UTF-8 BOM；上限 1 GiB，去重后最多 500000 条，每条最多 2048 字节。上传流直接去重并写入 `data/attack-path-tasks/<任务ID>/input.txt`，保留首次出现顺序，不生成 multipart 临时副本。
+2. 后台每次任务执行只启动一个 Claude CLI 进程。CLI 通过专用 MCP 文件工具自行编排整份文件的读取、恶意路径判断、结果写入和完成确认；不再由服务端按固定 500 条反复启动 CLI。
+3. 工具 `read_paths` 从当前任务文件读取待处理路径；Claude 可选择每次读取数量（默认 1000，最大 2000），单次路径文本上限 96000 字节。未提交时重读返回相同片段，供重试或上下文压缩后继续处理。
+4. 工具 `write_filtered_paths` 接收片段 ID 与恶意路径编号，直接将原始正常路径按顺序写入本地结果 TXT，并更新数据库中的 `processed`、`kept`。重复提交相同片段与判断不会重复写入。前端继续轮询现有状态接口。
+5. 工具 `finish` 校验所有路径均已提交、无未处理片段，完成文件同步。CLI 成功退出且文件工具确认完成后，任务才标记 `completed`；仅返回“处理完成”等自然语言不能让任务成功。
+6. 下载接口直接流式读取 `data/attack-path-tasks/<任务ID>/output.<执行租约>.txt`。数据库不保存 TXT 正文，只在 `output_file_name` 列保存受校验的结果文件名。输入和结果均必须存在对应的本地文件，不再回退读取数据库正文。
+
+模型请求链路：`Claude CLI → 服务端本地 Messages 适配器 → https://ai-force.duxiaoman-int.com/agent-api/openai/v1/chat/completions`。适配器读取并解密数据库密钥，附加 Authorization、UUAP-ID 和随机 REQUEST-ID，并转换工具定义、tool_use/tool_result、tool_calls 及结束原因。上游完整返回后会转为 CLI 所需的 Messages JSON/SSE；此处不是上游逐 token 实时转发。
+
+文件工具链路：`Claude CLI → 仅回环监听、随机凭据鉴权的任务 MCP 服务 → 当前任务已打开的输入/结果文件`。CLI 只允许上述三个 MCP 工具，使用独立临时配置、严格 MCP 配置和非交互权限模式；内置通用 Shell/任意文件工具不开放。文件工具不接收任意路径、命令或替换文本，无法通过路径参数访问其他任务或服务器配置。上传路径仅作为模型判断数据，不会对这些路径发起 HTTP 请求。
+
+单次任务执行最长 24 小时；每次 AI Force 请求最长 5 分钟，取消和租约失效会终止执行。失败或取消的任务不提供半成品下载。结果目录应挂载持久化磁盘；多实例必须共享文件系统。反向代理需允许 1 GiB 文件及 multipart 开销，并设置合适的上传超时。模型分类仍可能误判，工具编排和大文件读取不会保证模型速度或准确率。
+
+所有接口要求 JWT 登录，提交者只能查询、取消、下载自己的任务。接口调用方式如下。
+
+### POST /api/v1/attack-path-filter-tasks
+
+- 请求参数：`multipart/form-data`，必填文件字段 `file`，文件名后缀 `.txt`。不支持 JSON、单路径或普通文本提交。
+- 响应格式：HTTP 202，统一 JSON 响应。`data` 包含 `id`（随机任务 ID）、`status`（初始为 `queued`）、`total`（去重后路径数）、`processed`、`kept`、`created_at`；完成后还可包含 `finished_at` 和失败时的 `error_message`。
+- 错误码：40001（文件缺失、超过 1 GiB 或内容不合法）、40101（未登录）、50301（AI Force 配置未设置）、50001（输入落盘或任务持久化失败）。
+- 示例：`curl -H 'Authorization: Bearer <token>' -F 'file=@paths.txt;type=text/plain' https://<server>/api/v1/attack-path-filter-tasks`
+
+### GET /api/v1/attack-path-filter-tasks/:id
+
+- 请求参数：路径参数 `id`，提交接口返回的任务 ID。
+- 响应格式：统一 JSON 响应，`data` 为任务状态和进度；`status` 取值 `queued`、`running`、`completed`、`failed`、`cancelled`。前端可定期轮询，直到状态不再是 `queued` 或 `running`。
+- 错误码：40101（未登录）、40401（任务不存在或不属于当前用户）、50001（查询失败）。
+- 示例：`curl -H 'Authorization: Bearer <token>' https://<server>/api/v1/attack-path-filter-tasks/<id>`
+
+### GET /api/v1/attack-path-filter-tasks/:id/download
+
+- 请求参数：路径参数 `id`。
+- 响应格式：任务 `completed` 时流式返回 `text/plain; charset=utf-8` 附件 `normal-api-paths.txt`，仅包含去重且删除恶意路径后的正常 API 路径，每行一条；没有正常路径时返回空文件。文件下载不使用 JSON 封装。
+- 错误码：40101（未登录）、40401（任务不存在或不属于当前用户）、50301（任务未完成或失败）、50001（结果文件名为空或不合法、结果文件缺失或读取失败）。错误响应使用统一 JSON 封装。
+- 示例：`curl -H 'Authorization: Bearer <token>' -OJ https://<server>/api/v1/attack-path-filter-tasks/<id>/download`
+
+### POST /api/v1/attack-path-filter-tasks/:id/cancel
+
+- 请求参数：路径参数 `id`。
+- 响应格式：统一 JSON 响应，`data` 为取消后的任务状态；已结束的任务保持原状态。
+- 错误码：40101（未登录）、40401（任务不存在或不属于当前用户）、50001（取消失败）。
+- 示例：`curl -X POST -H 'Authorization: Bearer <token>' https://<server>/api/v1/attack-path-filter-tasks/<id>/cancel`

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"ManScan/server/internal/handler"
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/logx"
 	"ManScan/server/internal/service"
@@ -16,7 +17,7 @@ import (
 func TestNewRouterRegistersVulnerabilityStatusRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
+	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{}, nil)
 	routes := router.Routes()
 	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/overview")
 	assertRouteRegistered(t, routes, "GET", "/api/v1/dashboard/asset-risks")
@@ -77,7 +78,7 @@ func assertRouteRegistered(t *testing.T, routes gin.RoutesInfo, method, path str
 
 func TestDashboardRoutesRequireAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{}, nil)
 	for _, path := range []string{"overview", "asset-risks", "host-rankings", "service-fingerprints"} {
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/dashboard/"+path, nil))
@@ -89,7 +90,7 @@ func TestDashboardRoutesRequireAuthentication(t *testing.T) {
 
 func TestThirdPartyAPIKeyRoutesRequireAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{}, nil)
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/api/v1/third-party-api-keys"},
 		{http.MethodGet, "/api/v1/third-party-api-keys/1"},
@@ -108,12 +109,29 @@ func TestThirdPartyAPIKeyRoutesRequireAuthentication(t *testing.T) {
 
 func TestVulnerabilityIntelligenceRouteRequiresAuthentication(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{})
+	router := NewRouter(logx.New(), noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{}, nil)
 	for _, path := range []string{"/api/v1/vulnerability-intelligence-records", "/api/v1/vulnerability-intelligence-records/stats", "/api/v1/vulnerability-intelligence-records/CVE-2026-1"} {
 		recorder := httptest.NewRecorder()
 		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusUnauthorized {
 			t.Fatalf("%s status = %d, want 401", path, recorder.Code)
+		}
+	}
+}
+
+func TestAttackPathFilterRoutesRequireAuthentication(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewRouter(nil, noopAuthHandler{}, noopAuthService{}, noopTemplateHandler{}, noopScanTaskHandler{}, noopVulnerabilityHandler{}, noopAssetDomainHandler{}, noopAssetHostHandler{}, noopAssetConfigCenterHandler{}, noopThirdPartyAPIKeyHandler{}, noopSettingHandler{}, noopDashboardHandler{}, noopVulnerabilityIntelligenceHandler{}, handler.NewAttackPathTaskHandler(nil))
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/api/v1/attack-path-filter-tasks"},
+		{http.MethodGet, "/api/v1/attack-path-filter-tasks/task-id"},
+		{http.MethodGet, "/api/v1/attack-path-filter-tasks/task-id/download"},
+		{http.MethodPost, "/api/v1/attack-path-filter-tasks/task-id/cancel"},
+	} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(route.method, route.path, nil))
+		if recorder.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s status = %d, want 401", route.method, route.path, recorder.Code)
 		}
 	}
 }

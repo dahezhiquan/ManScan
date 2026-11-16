@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"fmt"
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
@@ -13,6 +14,7 @@ type ThirdPartyAPIKeyRepository interface {
 	Create(ctx context.Context, item *entity.ThirdPartyAPIKey) error
 	List(ctx context.Context, query dto.ListThirdPartyAPIKeysQuery) (*dto.PageResult[entity.ThirdPartyAPIKey], error)
 	FindByID(ctx context.Context, itemID int64) (*entity.ThirdPartyAPIKey, error)
+	FindAIForce(ctx context.Context) (*entity.ThirdPartyAPIKey, error)
 	Update(ctx context.Context, item *entity.ThirdPartyAPIKey, replaceKey bool) error
 	Delete(ctx context.Context, itemID int64) (int64, error)
 }
@@ -70,6 +72,32 @@ func (r *thirdPartyAPIKeyRepository) FindByID(ctx context.Context, itemID int64)
 		return nil, err
 	}
 	return &item, nil
+}
+
+// FindAIForce returns the unique key record belonging to the AI Force platform.
+func (r *thirdPartyAPIKeyRepository) FindAIForce(ctx context.Context) (*entity.ThirdPartyAPIKey, error) {
+	var items []entity.ThirdPartyAPIKey
+	err := r.db.WithContext(ctx).
+		Where("platform_url IN ?", []string{"https://ai-force.duxiaoman-int.com/", "https://ai-force.duxiaoman-int.com"}).
+		Find(&items).Error
+	if err != nil {
+		return nil, err
+	}
+	var matched *entity.ThirdPartyAPIKey
+	for index := range items {
+		platform := items[index].PlatformURL
+		if platform != "https://ai-force.duxiaoman-int.com/" && platform != "https://ai-force.duxiaoman-int.com" {
+			continue
+		}
+		if matched != nil {
+			return nil, fmt.Errorf("AI Force 平台存在多条密钥记录，请保留唯一记录")
+		}
+		matched = &items[index]
+	}
+	if matched == nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return matched, nil
 }
 
 // Update 更新平台元信息，并按需替换密文。
