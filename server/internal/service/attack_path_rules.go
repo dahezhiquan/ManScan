@@ -27,8 +27,8 @@ const (
 	attackPathMalicious
 )
 
-// Attack signatures and transformations come exclusively from the pinned CRS.
-// The local policy only decides whether that evidence is sufficient without AI.
+// CRS provides primary attack signatures. Bounded secondary parsers can
+// corroborate its argument-level evidence; no parser runs a payload.
 const attackPathCRSDirectives = `
 SecRuleEngine DetectionOnly
 SecRequestBodyAccess On
@@ -166,6 +166,15 @@ func (r *attackPathRules) inspect(ctx context.Context, raw string) (result attac
 		return result, nil
 	}
 	if result.detectionScore > 0 || len(result.ruleIDs) > 0 {
+		reason, err := corroborateAttackPath(ctx, u, tx.MatchedRules())
+		if err != nil {
+			return result, err
+		}
+		if reason != "" {
+			result.decision = attackPathMalicious
+			result.reason = reason
+			return result, nil
+		}
 		result.reason = "crs_review"
 		return result, nil
 	}
