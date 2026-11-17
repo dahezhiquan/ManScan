@@ -131,7 +131,19 @@ func Run() error {
 			return fmt.Errorf("初始化 AI Force 本地协议适配器失败: %w", err)
 		}
 		if cfg.AI.AttackPathMode != "cli" {
-			classifier := service.NewAIForceAttackPathClassifier(gateway, apiKeyRateLimiter, cfg.AI.AttackPathConcurrency)
+			modelCache, err := repository.NewAttackPathModelCacheRepository(context.Background(), filepath.Join(cfg.RootDir, "data", "attack-path-cache", "model-decisions.sqlite"))
+			if err != nil {
+				return fmt.Errorf("初始化攻击路径模型缓存失败: %w", err)
+			}
+			defer func() {
+				if err := modelCache.Close(); err != nil {
+					logger.Error("关闭攻击路径模型缓存失败", "error", err)
+				}
+			}()
+			classifier := service.NewCachedAttackPathClassifier(
+				service.NewAIForceAttackPathClassifier(gateway, apiKeyRateLimiter, cfg.AI.AttackPathConcurrency),
+				modelCache, cfg.AI.BaseURL, cfg.AI.Model,
+			)
 			if cfg.AI.AttackPathMode == "hybrid" {
 				attackPathProcessor, err = service.NewHybridAttackPathProcessor(classifier, cfg.PromptFilePath(), cfg.AI.AttackPathConcurrency, cfg.AI.AttackPathBatchSize)
 			} else {
