@@ -34,10 +34,13 @@ type Config struct {
 
 // AIConfig configures the local Claude CLI adapter and its AI Force upstream.
 type AIConfig struct {
-	BaseURL      string `yaml:"base_url"`
-	Model        string `yaml:"model"`
-	UUAPID       string `yaml:"uuap_id"`
-	ClaudeBinary string `yaml:"claude_binary"`
+	BaseURL               string `yaml:"base_url"`
+	Model                 string `yaml:"model"`
+	UUAPID                string `yaml:"uuap_id"`
+	ClaudeBinary          string `yaml:"claude_binary"`
+	AttackPathMode        string `yaml:"attack_path_mode"`
+	AttackPathConcurrency int    `yaml:"attack_path_concurrency"`
+	AttackPathBatchSize   int    `yaml:"attack_path_batch_size"`
 }
 
 type MySQLConfig struct {
@@ -89,6 +92,9 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 	if err := fileConfig.Auth.ValidateAPIKeyEncryptionKey(); err != nil {
+		return nil, err
+	}
+	if err := fileConfig.AI.ValidateAttackPath(); err != nil {
 		return nil, err
 	}
 

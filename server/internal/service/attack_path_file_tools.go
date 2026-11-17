@@ -17,7 +17,10 @@ import (
 
 const attackPathToolDefaultLines = 1000
 const attackPathToolMaxLines = 2000
-const attackPathToolMaxBytes = 96000
+
+// Bound encoded paths below the CLI's inline tool-result budget. Oversized
+// results are persisted to files that this scoped session cannot read.
+const attackPathToolMaxBytes = 16000
 
 // attackPathFileTools exposes only the open input/output files of one task attempt.
 // No model-provided path, command, or replacement text is accepted.
@@ -74,12 +77,20 @@ func (t *attackPathFileTools) readPaths(limit int) (interface{}, error) {
 				t.fatal = errors.New("invalid input path")
 				return nil, t.fatal
 			}
-			if len(t.pending) > 0 && size+len(path) > attackPathToolMaxBytes {
+			encoded, err := json.Marshal(path)
+			if err != nil {
+				t.fatal = err
+				return nil, errors.New("input path encoding failed")
+			}
+			// Include quotes, escaping and array separators, leaving room for
+			// progress metadata outside the path budget.
+			pathBytes := len(encoded) + 1
+			if len(t.pending) > 0 && size+pathBytes > attackPathToolMaxBytes {
 				t.carry = path
 				break
 			}
 			t.pending = append(t.pending, path)
-			size += len(path)
+			size += pathBytes
 		}
 		if err := t.scanner.Err(); err != nil {
 			t.fatal = err

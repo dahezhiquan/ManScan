@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,82 @@ import (
 	"strings"
 	"testing"
 )
+
+func TestAttackPathFileToolsInlineResults(t *testing.T) {
+	for _, item := range []struct {
+		name, suffix string
+	}{
+		{"long_paths", strings.Repeat("x", 80)},
+		{"json_escaping", strings.Repeat("<>&\\\"", 100)},
+		{"unicode", strings.Repeat("路径", 60)},
+		{"maximum_path", strings.Repeat("<", 2020)},
+	} {
+		t.Run(item.name, func(t *testing.T) {
+			var input strings.Builder
+			for i := 0; i < 1000; i++ {
+				if _, err := fmt.Fprintf(&input, "/api/%d/%s\n", i, item.suffix); err != nil {
+					t.Fatal(err)
+				}
+			}
+			file, err := os.CreateTemp(t.TempDir(), "output")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer file.Close()
+			commits, progress := 0, 0
+			tools := newAttackPathFileTools(context.Background(), "key", strings.NewReader(input.String()), file, 1000, func(_ context.Context, p, k int) error {
+				if p <= progress || p != k {
+					t.Fatalf("invalid progress: previous=%d processed=%d kept=%d", progress, p, k)
+				}
+				commits++
+				progress = p
+				return nil
+			}, testAttackPathPrompts(t))
+			for progress < 1000 {
+				value, err := tools.call("read_paths", json.RawMessage("{\"limit\":2000}"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(encoded) > 20000 {
+					t.Fatalf("tool result risks file persistence: %d bytes", len(encoded))
+				}
+				batch := value.(map[string]interface{})
+				if len(batch["paths"].([]string)) == 0 {
+					t.Fatal("empty batch before all paths were committed")
+				}
+				replay, err := tools.call("read_paths", json.RawMessage("{\"limit\":1}"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				replayed, err := json.Marshal(replay)
+				if err != nil || string(replayed) != string(encoded) {
+					t.Fatal("pending batch changed on reread")
+				}
+				args, err := json.Marshal(map[string]interface{}{"batch_id": batch["batch_id"], "malicious_indexes": []int{}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := tools.call("write_filtered_paths", args); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := tools.call("finish", json.RawMessage("{}")); err != nil {
+				t.Fatal(err)
+			}
+			actual, err := os.ReadFile(file.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if commits < 2 || string(actual) != input.String() {
+				t.Fatalf("incomplete ordered processing: commits=%d output_bytes=%d", commits, len(actual))
+			}
+		})
+	}
+}
 
 func TestAttackPathFileToolsCommitAndReplay(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), "output")

@@ -3148,6 +3148,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 - 请求方法和路径：`GET /api/v1/vulnerability-intelligence-records/:vulnerability_id`，需要登录。
 - 请求参数：路径参数 `vulnerability_id`，必填字符串，按完整编号精确查询，去除首尾空白后长度为 1-128 字节，不允许 NUL、回车、换行或制表符。编号应按 URL 路径规则编码。
 - 响应格式：统一响应 envelope 中的 `data` 包含 `records`、`articles`、`components`、`pocs`、`shodan_exposures` 五个数组，对应五张 `manscan_vulnerability_intelligence_*` 表的全部字段，字段名为数据库小写下划线命名。`records` 返回同一编号来自不同来源、状态不为 `rejected`（大小写不敏感）的记录，空状态记录仍保留；若该编号只有 `rejected` 记录，则返回 `40401`。其余数组按相同编号查询，无关联行时返回 `[]`。各数组按 `id ASC` 排序，可空字段返回 `null`。
+- 字段与空值约定：每条记录始终返回该表的全部字段，数据库 `NULL` 显式输出为 JSON `null`，不省略字段，也不替换为 `""`、`0`、`false` 或 `[]`。JSON 数组列（`cwe`、`vulnerability_impact`、`cpe`、`search_queries`）为 `NULL` 时返回 `null`，存储空数组时返回 `[]`；无关联行时，表对应的顶层数组返回 `[]`。详情中的 `is_kev`、`is_vkev` 分别返回原始字段，不采用列表接口的合并值。
 - 错误码：`40001` 编号非法，`40101` 未登录或令牌无效，`40401` 主记录不存在，`50001` 数据库查询失败。
 - 使用示例：
 
@@ -3161,20 +3162,88 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
   "code": 0,
   "message": "success",
   "data": {
-    "records": [{"id": 1, "source": "vulnx", "vulnerability_id": "CVE-2026-12345", "description": "示例描述"}],
-    "articles": [{"id": 2, "vulnerability_id": "CVE-2026-12345", "url": "https://example.test/advisory"}],
-    "components": [{"id": 3, "vulnerability_id": "CVE-2026-12345", "product": "example", "cpe": []}],
-    "pocs": [],
-    "shodan_exposures": []
+    "records": [{
+      "id": 1,
+      "source": "vulnx",
+      "vulnerability_id": "CVE-2026-12345",
+      "age_in_days": null,
+      "category": null,
+      "created_at": null,
+      "updated_at": null,
+      "cvss_metrics": null,
+      "cvss_score": null,
+      "cwe": null,
+      "description": "示例描述",
+      "epss_percentile": null,
+      "epss_score": null,
+      "max_hosts": null,
+      "min_hosts": null,
+      "filename": null,
+      "h1_rank": null,
+      "h1_reports": null,
+      "impact": null,
+      "vul_name": null,
+      "is_auth": null,
+      "is_kev": null,
+      "is_oss": null,
+      "is_patch_available": null,
+      "is_template": null,
+      "is_poc": null,
+      "is_remote": null,
+      "is_vkev": null,
+      "ntps": null,
+      "poc_count": null,
+      "poc_first_seen": null,
+      "product": null,
+      "vendor": null,
+      "remediation": null,
+      "severity": null,
+      "vuln_status": null,
+      "vulnerability_type": null,
+      "vulnerability_impact": null
+    }],
+    "articles": [{
+      "id": 2,
+      "vulnerability_id": "CVE-2026-12345",
+      "added_at": null,
+      "source": null,
+      "url": "https://example.test/advisory"
+    }],
+    "components": [{
+      "id": 3,
+      "vulnerability_id": "CVE-2026-12345",
+      "cpe": [],
+      "category": null,
+      "deployment_model": null,
+      "industry": null,
+      "product": "example",
+      "summary": null,
+      "vendor": null
+    }],
+    "pocs": [{
+      "id": 4,
+      "vulnerability_id": "CVE-2026-12345",
+      "url": "https://example.test/poc",
+      "source": null,
+      "added_at": null
+    }],
+    "shodan_exposures": [{
+      "id": 5,
+      "vulnerability_id": "CVE-2026-12345",
+      "product_name": null,
+      "max_hosts": null,
+      "min_hosts": null,
+      "search_queries": null
+    }]
   }
 }
 ```
 
-示例仅展示部分字段；实际响应会返回每条记录的全部字段。
+上例完整展示五张表的全部字段及 `null` 的实际响应形式。
 
 ## 攻击路径识别与过滤
 
-部署前执行 docs/SQL/create_manscan_attack_path_tasks.sql，并安装支持 HTTP MCP、--bare 与 --strict-mcp-config 的 Claude CLI。服务端读取私有 config.yaml 中 ai.base_url、ai.model、ai.uuap_id 及可选 ai.claude_binary。每次模型请求按 platform_url 精确查询 manscan_third_party_api_keys 中唯一的 https://ai-force.duxiaoman-int.com/ 记录，使用现有 auth.api_key_encryption_key 解密；无需配置记录 ID，密钥不会写入文件或 API 响应。
+部署前执行 docs/SQL/create_manscan_attack_path_tasks.sql。默认使用 hybrid 模式，由本地规则先分类、疑难路径再批量调用模型，无需安装 Claude CLI；可配置 ai.attack_path_mode: cli 回退到原单会话模式，此时需要支持 HTTP MCP、--bare 与 --strict-mcp-config 的 Claude CLI。服务端读取私有 config.yaml 中 ai.base_url、ai.model、ai.uuap_id 及可选 ai.claude_binary。每次模型请求按 platform_url 精确查询 manscan_third_party_api_keys 中唯一的 https://ai-force.duxiaoman-int.com/ 记录，使用现有 auth.api_key_encryption_key 解密；无需配置记录 ID，密钥不会写入文件或 API 响应。
 
 已有包含 `input_text`、`output_text` 的任务表时，停止任务服务并备份数据库后，一次性执行 `docs/SQL/alter_manscan_attack_path_tasks_file_storage.sql`，再部署当前服务；新建表只执行建表脚本。升级脚本保留已落盘结果的文件名并删除两个正文列，不迁移旧版正文；仅有数据库正文的任务需要重新上传 TXT。
 
@@ -3184,7 +3253,12 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
       base_url: https://ai-force.duxiaoman-int.com/agent-api/openai
       model: global.anthropic.claude-sonnet-5
       uuap_id: <服务账户的UUAP-ID>
-      claude_binary: /usr/local/bin/claude
+      attack_path_mode: hybrid
+      attack_path_concurrency: 5
+      attack_path_batch_size: 500
+      claude_binary: /usr/local/bin/claude # 仅 cli 模式需要
+
+`attack_path_mode` 默认 `hybrid`，可选 `hybrid` / `batch` / `cli`；并发数默认 5、范围 1–32；每批条数默认 500、范围 1–1000。未填写或数值为 0 时使用默认值，越界配置会阻止服务启动。这些配置修改后需要重启服务，不支持按上传请求覆盖。
 
 ### 提示词配置
 
@@ -3192,7 +3266,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 
 | 标识 | 用途 |
 | --- | --- |
-| `attack_path_filter.system` | 恶意路径识别标准、输入可信边界和任务执行规则，作为 CLI 系统提示词 |
+| `attack_path_filter.system` | 恶意路径识别标准、输入可信边界和任务执行规则，作为模型分类标准，CLI 模式同时用作系统提示词 |
 | `attack_path_filter.task` | 当前任务的处理要求，作为 CLI 任务提示词 |
 | `attack_path_filter.tools.read_paths` | 读取路径工具的说明 |
 | `attack_path_filter.tools.write_filtered_paths` | 提交恶意路径编号并写入正常路径工具的说明 |
@@ -3204,11 +3278,77 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 
 缺失文件、缺少标识、空正文、重复标识、无效 YAML 或未知占位符会报错，不回退到代码内默认提示词。单段正文最多 32 KiB，文件最多 1 MiB。启动校验失败会阻止 AI 处理器初始化；运行期间文件被改坏时，下一次任务在调用模型前失败，详情写入服务端日志，前端通过原任务接口获得 `failed` 状态和现有失败提示。
 
-### 文件处理与工具编排
+### hybrid 模式：Coraza + 固定版本 CRS 与模型复核（默认）
+
+1. 引擎固定为 Coraza v3.8.1，规则固定为 coraza-coreruleset/v4 v4.25.0（上游 CRS 4.25.0）。版本与校验和由根目录 go.mod / go.sum 锁定，规则从依赖的嵌入文件系统编译进程序；运行时不下载、不自动更新。旧手写攻击正则、敏感路由名单、三层手工解码和 /api/ 前缀放行逻辑已删除。
+2. 每条输入建立独立的离线 Coraza 事务，执行请求 phase 1 / 2，URI 和查询参数由 Coraza 解析、转换和匹配。只做内存判断，不请求输入 URL，不解析 DNS，不执行载荷。无真实请求方法、请求头、Body 和响应时，适配层使用固定 GET / HTTP/1.1 以及固定 Host、User-Agent、Accept；这些字段不是对目标站点的观测。未加载方法限制、扫描器 UA、multipart、响应检测规则，不能作为完整 HTTP WAF 或业务越权检测器。
+3. 加载 CRS 的 901 初始化、905 通用排除、920 协议规范、921 协议攻击、930–934 LFI/RFI/RCE/PHP/通用攻击、941–944 XSS/SQLi/会话固定/Java 和 949 评分规则组（该编号范围内不存在的组不加载）。运行 DetectionOnly，blocking paranoia level 为 1、detection paranoia level 为 2，不提前阻断，以便获得完整评分；审计和调试输出关闭，避免把原始路径及参数写入日志。
+4. 本地排除要求 CRS 的 PL1 累计分至少 10，且至少命中两个不同的 930–944 攻击检测规则。规则的流程控制命中不作为攻击证据。低分、单规则、仅高敏感等级命中等进入模型复核；该阈值是离线清洗策略，不是 CRS 默认阻断阈值，也不保证所有高分结果均无误报。
+5. 本地保留要求 CRS 完整执行成功、检测分为 0、无检测规则命中，并通过输入完整性及标量类型检查：路径仅包含未编码的 ASCII 字母、数字、斜杠、点、下划线或短横线；参数不重复，名称合法；值仅允许指定分页参数的非负整数、active/enabled/include_deleted 的布尔值、指定日期参数的合法 YYYY-MM-DD 日期，以及 id / *_id 的数字、UUID 或固定长度十六进制 ID。本次扩展允许 cursor/width/height 的非负整数、通过 ISO 货币解析且大小写规范的 currency（排除 XXX/XTS）、规范的 language/locale/lang 语言标签（排除 und、所有扩展和 variant），以及下表中的完整枚举值；枚举匹配区分大小写，额外字符和未知值不通过。自由文本、未知参数类型、异常编码、重复参数和有歧义的 URL 仍交给模型。/api/ 本身不参与放行决策。零分只表示未被当前规则识别，不代表业务请求一定安全。
+6. CRS 编译实例在处理器中复用，每条路径使用独立事务；本地扫描最多使用 5 个且不超过 GOMAXPROCS 的 worker，每批有界并行并按原位置收集结果。模型与本地结果通过位置掩码合并，保留原文本和顺序；疑难路径集中落盘后批量送模型，临时目录 0700、临时文件 0600，处理结束或取消时清理。
+7. processed / kept 仍表示已按顺序写出或排除的输入前缀；本地扫描期间和前方疑难批次等待模型时，进度可能暂不增长。接口方法、上传参数、响应字段与下载格式均未改变。规则加载、事务处理或评分读取失败会使任务失败，不将错误当零分放行。
+8. 模型并发默认 5，所有使用该分类器的任务共享配置的请求并发闸门，而不是每个任务各占 5 个上游请求。已在配置中显式设置 1 的部署需要手动改为 5 并重启；未配置时使用新默认值。上游并发额度和 API Key 本地每分钟限额是独立限制，不能互相替代。遇到 110602 或 HTTP 429 仍共享降为单并发并退避重试，进程重启后恢复配置上限。
+9. prompt.yaml 只影响疑难路径的模型判定。CRS 版本、加载范围、评分阈值和输入类型策略固定在后端，需要改代码并重新构建才能变更。规则和模型均可能误报或漏报，准确率须用独立人工标注数据验证。
+
+本地类型策略新增的有限枚举（每条路径仍先完整执行 CRS，任何 CRS 可疑命中优先进入复核或排除）：
+
+| 参数 | 允许的完整值 |
+| --- | --- |
+| format | json, xml, csv, tsv, txt, pdf, png, jpg, jpeg, gif, webp |
+| theme | light, dark, auto, system |
+| platform | web, ios, android, windows, macos, linux |
+| environment | production, staging, development, test, testing, local |
+| direction / order | asc, desc, ascending, descending, incoming, outgoing, forward, backward |
+| status / state | pending, active, inactive, enabled, disabled, open, closed, paid, unpaid, processing, completed, failed, canceled, cancelled, shipped, delivered, draft, published, archived |
+
+这些类型限制只用于识别明显的结构化输入，不推断业务授权、安全配置或请求意图。role、action、自由文本搜索、URL 值和文件路径值等未知类型不会通过类型检查，继续由 CRS 证据或模型处理；不会根据参数名或短字符串通用放行，也不会删除 request_id、业务 ID 或其他参数后合并不同请求的判定。
+
+### batch 模式：全部路径交给模型
+
+1. 上传、去重、任务归属、落盘、下载和取消接口保持一致。每条路径仍交给模型判断，不采用规则放行或仅抽样判断。
+2. 服务端流式读取输入，每批最多 `attack_path_batch_size` 条，且带有明确 index 编号的路径数组 JSON 编码后最多 48 KiB；长路径或转义较多时会自动减小实际批量。每个请求只包含固定分类提示词和当前批数据，不携带其他批次历史，也不让模型调用文件读写工具。
+3. 每次最多并发 `attack_path_concurrency` 个批次；收到一个完成结果后即在窗口允许时补入新批次，不再等待整组请求全部完成。未按序提交的批次数（运行中与已完成等待的合计）最多为并发数的两倍，慢批次占满窗口时施加背压，不无限预读输入。模型必须返回完整处理数量和本批恶意索引；缺少字段、越界/重复索引、截断或非预期工具响应不会提交结果，同一请求批次最多容许三次格式失败（包含在五次调用上限内）。格式失败或单次请求超时且批量超过 64 条时自动二分重新判定，最多拆分三层；子批仍失败则任务失败。每个子批重新编号并映射回原位置，绝不丢弃非法索引后继续，也不按全部正常放行；鉴权、其他 HTTP 错误和父任务取消不会触发拆批。
+4. 完成分类的批次按输入顺序写入正常路径，再更新 `processed` 与 `kept`。若前面的批次尚未返回，后面的已完成批次等待按序提交，因此进度可能短暂停留后一次增长多个批次；不代表串行调用模型。
+5. hybrid / batch 模式使用第三方 API Key 的 `rate_limit_per_minute`，复用进程内共享限流器；0 表示不施加该本地请求频率限制，上游自身额度仍生效。HTTP 429、业务码 110602、5xx 和可重试网络错误最多调用五次，等待使用指数退避并参考 `Retry-After`（最长等待 5 分钟），取消能中断等待。每次调用最长 45 秒，整个任务最长 24 小时。
+6. 所有结果仍按原顺序、原文本写出，失败或取消不会提供半成品下载。模型判断标准读取 `attack_path_filter.system`；其他四个提示词仍校验以兼容 cli 模式，但 batch 模式的文件调度与响应结构由后端执行，不由提示词覆盖。
+
+吞吐由实际批量、并发额度、模型延迟、路径复杂度和 API Key 限流共同决定。hybrid 的提速还取决于疑难路径比例；大量复杂数据可能仍然很慢。分钟级是优化目标，不能用本地模拟测试耗时当作真实模型的 10 万条耗时。应先用真实样本验证分类质量和请求延迟，再按并发轮次数估算大任务时间。
+
+真实模型定向验证（读取私有配置，调用当前已配置的上游）：
+
+    MANSCAN_TEST_AI_FORCE=1 MANSCAN_TEST_ATTACK_PATH_INPUT=/absolute/path/sample.txt go test ./server/internal/service -run '^TestHybridAttackPathProcessorAIForce$' -v -count=1 -timeout=10m
+
+可额外设置 MANSCAN_TEST_ATTACK_PATH_REPEAT=100 将同一小样本扩展为不同 benchmark_id 参数的最多 10 万条，用于同分布吞吐检查；这种扩展不代表真实生产数据的多样性或准确率。未启用 MANSCAN_TEST_AI_FORCE 时测试自动跳过，不会调用模型。
+
+2026-11-17 本次类型检查优化：同一份原始 1000 条样本，优化前本地保留 252、排除 160、复核 588；优化后本地保留 420、排除 160、复核 420。复核比例从 58.8% 降至 42.0%，模型输入条数减少 28.6%。减少的 168 条均来自 CRS 零分且无检测命中的未知类型输入；158 条 CRS 弱命中复核数量保持不变，剩余 262 条类型/表示歧义仍复核。这是样本的分流数量变化，不能代替独立人工标注的准确率验证，也不能单凭条数比例推断总耗时。
+
+本次真实上游验证结果（均包含本地扫描、模型处理和结果校验，不含上传、排队、数据库进度写入及启动编译）：
+
+| 样本 | 结果 | 模型复核 | 实际上游请求 | 耗时 |
+| --- | --- | --- | --- | --- |
+| 原始 1000 条 | 完成，保留 708、排除 292 | 420 条 | 3 次 | 11.822 秒 |
+| 同样本扩展 10000 条 | 完成，保留 6905、排除 3095 | 4200 条，14 个逻辑批次 | 15 次，并发峰值 5 | 22.982 秒 |
+| 同样本扩展 100000 条 | 未完成；达到集成测试 8 分钟 context 上限 | 未获得完整结束统计 | 未获得完整结束统计 | 480 秒后取消 |
+
+10000 条诊断中各已完成批次记录的共享并发闸门上限均为 5。100000 条复测出现多个 50–79 秒的逻辑批次，可能包含请求等待、重试及拆分；该轮尚未记录闸门值，不能据此确认具体延迟来源。集成测试的 8 分钟超时不改变后端任务的 24 小时上限。当前证据确认复核输入减少 28.6%，但未证明 10 万条完整耗时优于上一版；不可按 1 万条结果线性推算或承诺分钟数。保留/排除数量是模型运行结果，未做独立人工标注的准确率验证。
+
+可只运行本地诊断，不调用模型、不输出原始路径或参数值：
+
+    MANSCAN_TEST_ATTACK_PATH_INPUT=/absolute/path/sample.txt go test ./server/internal/service -run '^TestAttackPathRulesProfile$' -v -count=1 -timeout=90s
+
+2026-11-17 上一版 CRS 保守策略基线（尚未扩展类型及启用补位调度）：将 1000 条原始上传样本增加不同 benchmark_id 参数扩展为 100000 条，使用 Coraza 3.8.1 / CRS 4.25.0、上述保守分流策略及模型 5 并发，完整处理和结果校验耗时 385.896 秒（6 分 25.9 秒）。本地保留 25200 条、本地排除 16000 条、模型复核 58800 条；194 个逻辑批次实际发出 216 次上游请求（包含重试及拆分），实测上游并发峰值 5；一次请求超时后通过拆分恢复。最终保留 69779 条、排除 30221 条，完成数量、输出原文、顺序及最终进度校验通过。计时包含本地规则扫描和模型处理，不包含上传、排队、数据库进度写入或服务启动时规则编译。相同源样本扩展不能替代真实生产数据的多样性与人工标注准确率评估。
+
+该基线策略比旧手写规则更保守，复核比例由旧样本的 6.1% 增加到当时扩展样本的 58.8%，所以即使并发提高，总耗时仍高于旧基线；不能把旧的 90.525 秒作为当前版本承诺。分类数量仅为本次模型运行结果，模型仍可能误判，重复执行可能有差异。
+
+历史基线（旧手写规则，已替换，不适用于当前 CRS）：2026-11-16 实测：将一份 1000 条上传样本按上述方式扩展为 100000 条，使用真实 AI Force、hybrid、单并发和默认批量配置，处理与结果校验耗时 90.525 秒。64400 条由规则保留、29500 条由规则排除，6100 条疑难路径分成 24 批交给模型；最终保留 70000 条、排除 30000 条，原顺序、原文本和最终进度校验通过。此计时不包含上传、任务排队和数据库进度提交，不能代表任意 10 万条生产数据的端到端耗时。
+
+上述旧规则基线中，同一原始样本的新旧结果有 33 条分类差异：规则新增保留 16 条简单 API 路径，新增排除 17 条命中攻击特征或敏感文件规则的路径。旧模型输出并非人工标注答案，保留数量接近也不表示分类完全一致；该吞吐测试不构成准确率评估。
+
+### cli 模式：文件处理与工具编排
 
 1. 上传 UTF-8 TXT，每行一条路径，允许空行和 UTF-8 BOM；上限 1 GiB，去重后最多 500000 条，每条最多 2048 字节。上传流直接去重并写入 `data/attack-path-tasks/<任务ID>/input.txt`，保留首次出现顺序，不生成 multipart 临时副本。
 2. 后台每次任务执行只启动一个 Claude CLI 进程。CLI 通过专用 MCP 文件工具自行编排整份文件的读取、恶意路径判断、结果写入和完成确认；不再由服务端按固定 500 条反复启动 CLI。
-3. 工具 `read_paths` 从当前任务文件读取待处理路径；Claude 可选择每次读取数量（默认 1000，最大 2000），单次路径文本上限 96000 字节。未提交时重读返回相同片段，供重试或上下文压缩后继续处理。
+3. 工具 `read_paths` 从当前任务文件读取待处理路径；Claude 可选择每次读取数量（默认 1000，最大 2000），但实际返回量还受 16000 字节预算限制，预算包含路径的 JSON 引号、转义与分隔符，并为进度元数据预留空间。这可避免大段工具结果被 CLI 转存到当前会话无法读取的临时文件，导致反复读取而不提交。未提交时重读返回相同片段，供重试或上下文压缩后继续处理。
 4. 工具 `write_filtered_paths` 接收片段 ID 与恶意路径编号，直接将原始正常路径按顺序写入本地结果 TXT，并更新数据库中的 `processed`、`kept`。重复提交相同片段与判断不会重复写入。前端继续轮询现有状态接口。
 5. 工具 `finish` 校验所有路径均已提交、无未处理片段，完成文件同步。CLI 成功退出且文件工具确认完成后，任务才标记 `completed`；仅返回“处理完成”等自然语言不能让任务成功。
 6. 下载接口直接流式读取 `data/attack-path-tasks/<任务ID>/output.<执行租约>.txt`。数据库不保存 TXT 正文，只在 `output_file_name` 列保存受校验的结果文件名。输入和结果均必须存在对应的本地文件，不再回退读取数据库正文。
@@ -3217,7 +3357,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 
 文件工具链路：`Claude CLI → 仅回环监听、随机凭据鉴权的任务 MCP 服务 → 当前任务已打开的输入/结果文件`。CLI 只允许上述三个 MCP 工具，使用独立临时配置、严格 MCP 配置和非交互权限模式；内置通用 Shell/任意文件工具不开放。文件工具不接收任意路径、命令或替换文本，无法通过路径参数访问其他任务或服务器配置。上传路径仅作为模型判断数据，不会对这些路径发起 HTTP 请求。
 
-单次任务执行最长 24 小时；每次 AI Force 请求最长 5 分钟，取消和租约失效会终止执行。失败或取消的任务不提供半成品下载。结果目录应挂载持久化磁盘；多实例必须共享文件系统。反向代理需允许 1 GiB 文件及 multipart 开销，并设置合适的上传超时。模型分类仍可能误判，工具编排和大文件读取不会保证模型速度或准确率。
+cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 分钟，取消和租约失效会终止执行。失败或取消的任务不提供半成品下载。结果目录应挂载持久化磁盘；多实例必须共享文件系统。反向代理需允许 1 GiB 文件及 multipart 开销，并设置合适的上传超时。模型分类仍可能误判，工具编排和大文件读取不会保证模型速度或准确率。
 
 所有接口要求 JWT 登录，提交者只能查询、取消、下载自己的任务。接口调用方式如下。
 

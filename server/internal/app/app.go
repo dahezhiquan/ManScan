@@ -130,21 +130,33 @@ func Run() error {
 		if err != nil {
 			return fmt.Errorf("初始化 AI Force 本地协议适配器失败: %w", err)
 		}
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return fmt.Errorf("启动 AI Force 本地协议适配器失败: %w", err)
-		}
-		defer listener.Close()
-		gatewayServer := &http.Server{Handler: gateway}
-		defer gatewayServer.Close()
-		go func() {
-			if serveErr := gatewayServer.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
-				logger.Error("AI Force 本地协议适配器已停止", "error", serveErr)
+		if cfg.AI.AttackPathMode != "cli" {
+			classifier := service.NewAIForceAttackPathClassifier(gateway, apiKeyRateLimiter, cfg.AI.AttackPathConcurrency)
+			if cfg.AI.AttackPathMode == "hybrid" {
+				attackPathProcessor, err = service.NewHybridAttackPathProcessor(classifier, cfg.PromptFilePath(), cfg.AI.AttackPathConcurrency, cfg.AI.AttackPathBatchSize)
+			} else {
+				attackPathProcessor, err = service.NewBatchAttackPathProcessor(classifier, cfg.PromptFilePath(), cfg.AI.AttackPathConcurrency, cfg.AI.AttackPathBatchSize)
 			}
-		}()
-		attackPathProcessor, err = service.NewClaudeAttackPathProcessor(cfg.AI.ClaudeBinary, "http://"+listener.Addr().String(), localToken, cfg.AI.Model, cfg.PromptFilePath())
-		if err != nil {
-			return fmt.Errorf("初始化 Claude 攻击路径处理器失败: %w", err)
+			if err != nil {
+				return fmt.Errorf("初始化攻击路径批量处理器失败: %w", err)
+			}
+		} else {
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				return fmt.Errorf("启动 AI Force 本地协议适配器失败: %w", err)
+			}
+			defer listener.Close()
+			gatewayServer := &http.Server{Handler: gateway}
+			defer gatewayServer.Close()
+			go func() {
+				if serveErr := gatewayServer.Serve(listener); serveErr != nil && serveErr != http.ErrServerClosed {
+					logger.Error("AI Force 本地协议适配器已停止", "error", serveErr)
+				}
+			}()
+			attackPathProcessor, err = service.NewClaudeAttackPathProcessor(cfg.AI.ClaudeBinary, "http://"+listener.Addr().String(), localToken, cfg.AI.Model, cfg.PromptFilePath())
+			if err != nil {
+				return fmt.Errorf("初始化 Claude 攻击路径处理器失败: %w", err)
+			}
 		}
 	}
 	attackPathTaskService := service.NewAttackPathTaskService(attackPathTaskRepository, attackPathProcessor, logger, cfg.RootDir)

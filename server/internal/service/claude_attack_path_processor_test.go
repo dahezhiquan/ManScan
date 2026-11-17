@@ -126,7 +126,7 @@ func TestClaudeAttackPathProcessorRealCLI(t *testing.T) {
 				Finished  bool     `json:"finished"`
 			}
 			if err := json.Unmarshal([]byte(last.Content), &result); err != nil {
-				t.Errorf("invalid tool result: %s", last.Content)
+				t.Errorf("tool result is not inline JSON: %d bytes", len(last.Content))
 				return nil, err
 			}
 			if result.Finished {
@@ -193,7 +193,8 @@ func TestClaudeAttackPathProcessorRealCLI(t *testing.T) {
 			input.WriteString("/../../etc/passwd\n")
 			continue
 		}
-		path := fmt.Sprintf("/api/items/%d\n", i)
+		// A full read of these paths exceeds the CLI's inline output budget.
+		path := fmt.Sprintf("/api/items/%d/%s\n", i, strings.Repeat("segment", 10))
 		input.WriteString(path)
 		expected.WriteString(path)
 	}
@@ -206,7 +207,7 @@ func TestClaudeAttackPathProcessorRealCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if processed != 2100 || kept != 2099 || progress != 2100 || commits != 2 || string(actual) != expected.String() || requests.Load() != 6 {
-		t.Fatalf("processed=%d kept=%d progress=%d requests=%d output=%q", processed, kept, progress, requests.Load(), actual)
+	if processed != 2100 || kept != 2099 || progress != 2100 || commits < 3 || string(actual) != expected.String() || int(requests.Load()) != 2*commits+2 {
+		t.Fatalf("processed=%d kept=%d progress=%d commits=%d requests=%d output_bytes=%d", processed, kept, progress, commits, requests.Load(), len(actual))
 	}
 }

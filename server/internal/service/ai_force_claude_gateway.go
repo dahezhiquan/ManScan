@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -26,6 +25,7 @@ type AIForceClaudeGateway struct {
 	repo     repository.ThirdPartyAPIKeyRepository
 	box      *secretbox.Box
 	client   *http.Client
+	limiter  APIKeyRateLimiter
 }
 
 func NewAIForceClaudeGateway(baseURL, model, uuapID, localKey string, repo repository.ThirdPartyAPIKeyRepository, box *secretbox.Box) (*AIForceClaudeGateway, error) {
@@ -59,50 +59,9 @@ func (g *AIForceClaudeGateway) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "unsupported Messages content or tools", http.StatusBadRequest)
 		return
 	}
-	payload, err := json.Marshal(payloadObject)
-	if err != nil {
-		http.Error(w, "invalid request", http.StatusBadRequest)
-		return
-	}
-	item, err := g.repo.FindAIForce(r.Context())
-	if err != nil || item == nil {
-		http.Error(w, "AI Force key unavailable", http.StatusBadGateway)
-		return
-	}
-	platform, err := url.Parse(strings.TrimSpace(item.PlatformURL))
-	if err != nil || platform.Scheme != "https" || platform.Host != aiForceHost || platform.User != nil || platform.RawQuery != "" || platform.Fragment != "" || (platform.Path != "" && platform.Path != "/" && platform.Path != "/agent-api/openai") {
-		http.Error(w, "AI Force key record does not match platform", http.StatusBadGateway)
-		return
-	}
-	secret, err := g.box.Decrypt(item.EncryptedKey)
-	if err != nil || strings.TrimSpace(secret) == "" {
-		http.Error(w, "AI Force key unavailable", http.StatusBadGateway)
-		return
-	}
-	upstreamURL := *g.upstream
-	upstreamURL.Path += "/v1/chat/completions"
-	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, upstreamURL.String(), bytes.NewReader(payload))
-	if err != nil {
-		http.Error(w, "invalid upstream request", http.StatusBadGateway)
-		return
-	}
-	request.Header.Set("Authorization", "Bearer "+secret)
-	request.Header.Set("UUAP-ID", g.uuapID)
-	request.Header.Set("REQUEST-ID", newGatewayRequestID())
-	request.Header.Set("Content-Type", "application/json")
-	response, err := g.client.Do(request)
+	completion, err := g.complete(r.Context(), payloadObject)
 	if err != nil {
 		http.Error(w, "AI Force request failed", http.StatusBadGateway)
-		return
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		http.Error(w, "AI Force returned an error", http.StatusBadGateway)
-		return
-	}
-	var completion gatewayCompletion
-	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&completion); err != nil {
-		http.Error(w, "AI Force returned an invalid response", http.StatusBadGateway)
 		return
 	}
 	content, stop, err := gatewayResponse(completion, input.Tools)
