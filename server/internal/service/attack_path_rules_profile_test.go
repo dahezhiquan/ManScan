@@ -3,11 +3,9 @@ package service
 import (
 	"bufio"
 	"context"
-	"net/url"
 	"os"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
 )
 
@@ -38,37 +36,6 @@ func TestAttackPathRulesProfile(t *testing.T) {
 		counts["reason/"+r.reason]++
 		for _, id := range r.ruleIDs {
 			counts["rule/"+strconv.Itoa(id)]++
-		}
-		if r.reason != "ambiguous_input" {
-			continue
-		}
-		u, err := url.Parse(raw)
-		if err != nil {
-			continue
-		}
-		values, err := url.ParseQuery(u.RawQuery)
-		if err != nil {
-			continue
-		}
-		for key, values := range values {
-			for _, value := range values {
-				if attackPathScalar(key, value) {
-					continue
-				}
-				// Only print common public parameter labels, never arbitrary input keys.
-				label := "other"
-				switch key {
-				case "status", "state", "sort", "order", "lang", "locale", "q", "query", "keyword", "search", "category", "type", "format", "path", "file", "url", "redirect", "next", "cmd", "filter":
-					label = key
-				}
-				shape := "complex"
-				if value != "" && len(value) <= 32 && strings.IndexFunc(value, func(c rune) bool {
-					return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-')
-				}) == -1 {
-					shape = "short_token"
-				}
-				counts["untyped/"+label+"/"+shape]++
-			}
 		}
 	}
 	if err := scanner.Err(); err != nil {

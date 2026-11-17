@@ -2,21 +2,17 @@ package service
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 	"unicode/utf8"
 
 	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/experimental/plugins/plugintypes"
 	"github.com/corazawaf/coraza/v3/types"
-	"golang.org/x/text/currency"
-	"golang.org/x/text/language"
 )
 
 type attackPathDecision uint8
@@ -82,7 +78,7 @@ func (r *attackPathRules) classify(ctx context.Context, raw string) (attackPathD
 }
 
 func (r *attackPathRules) inspect(ctx context.Context, raw string) (result attackPathRuleResult, err error) {
-	result.reason = "ambiguous_input"
+	result.reason = "invalid_input"
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -90,7 +86,7 @@ func (r *attackPathRules) inspect(ctx context.Context, raw string) (result attac
 		return result, nil
 	}
 	u, parseErr := url.Parse(raw)
-	if parseErr != nil || u.Opaque != "" || u.User != nil || u.Fragment != "" || strings.Contains(raw, "#") || (u.Scheme != "" && u.Scheme != "http" && u.Scheme != "https") || (u.Scheme != "" && u.Host == "") || (u.Scheme == "" && !strings.HasPrefix(raw, "/")) {
+	if parseErr != nil || u.Opaque != "" || u.User != nil || u.Fragment != "" || strings.Contains(raw, "#") || (u.Scheme != "" && u.Scheme != "http" && u.Scheme != "https") || (u.Scheme != "" && u.Host == "") || (u.Scheme == "" && (u.Host != "" || !strings.HasPrefix(raw, "/"))) {
 		return result, nil
 	}
 	// Preserve the raw path and query for Coraza; do not decode, clean or deduplicate.
@@ -178,126 +174,21 @@ func (r *attackPathRules) inspect(ctx context.Context, raw string) (result attac
 		result.reason = "crs_review"
 		return result, nil
 	}
-	if !unambiguousAttackPathInput(u) {
+	// Invalid query encoding is suspicious input, not an unknown business type.
+	// Do not let a partial parser result become a clean classification.
+	if _, queryErr := url.ParseQuery(u.RawQuery); queryErr != nil {
 		return result, nil
 	}
+	// A successfully scanned path with no CRS evidence is kept locally, even
+	// when its query parameter types are unknown. Only suspicious evidence or
+	// input that cannot be reliably scanned requires model review. This policy
+	// intentionally accepts attacks that the loaded rules do not recognize.
 	result.decision = attackPathNormal
-	result.reason = "crs_clean_scalar_input"
+	result.reason = "crs_clean_input"
 	return result, nil
 }
 
-// This is a representation/typing policy, not an attack-signature allowlist.
-// A clean CRS result is necessary. Free text, unknown value types, duplicate
-// arguments and encoded paths still require AI, regardless of an /api prefix.
-func unambiguousAttackPathInput(u *url.URL) bool {
-	if u.Host != "" && u.Scheme == "" {
-		return false
-	}
-	path := u.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
-	for _, c := range path {
-		if !asciiPathCharacter(c) {
-			return false
-		}
-	}
-	values, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return false
-	}
-	for key, items := range values {
-		if key == "" || len(key) > 64 || len(items) != 1 {
-			return false
-		}
-		for _, c := range key {
-			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || (c >= '0' && c <= '9')) {
-				return false
-			}
-		}
-		if !attackPathScalar(key, items[0]) {
-			return false
-		}
-	}
-	return true
-}
-
-func asciiPathCharacter(c rune) bool {
-	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' || c == '-' || c == '_' || c == '.'
-}
-
-func attackPathScalar(key, s string) bool {
-	if s == "" || len(s) > 64 {
-		return false
-	}
-	switch key {
-	case "active", "enabled", "include_deleted":
-		return s == "true" || s == "false"
-	case "date", "from", "to", "start_date", "end_date":
-		_, err := time.Parse("2006-01-02", s)
-		return err == nil
-	case "currency":
-		unit, err := currency.ParseISO(s)
-		return err == nil && unit.String() == s && s != "XXX" && s != "XTS"
-	case "language", "locale", "lang":
-		return attackPathLanguageTag(s)
-	case "format":
-		return attackPathEnum(s, "json", "xml", "csv", "tsv", "txt", "pdf", "png", "jpg", "jpeg", "gif", "webp")
-	case "theme":
-		return attackPathEnum(s, "light", "dark", "auto", "system")
-	case "platform":
-		return attackPathEnum(s, "web", "ios", "android", "windows", "macos", "linux")
-	case "environment":
-		return attackPathEnum(s, "production", "staging", "development", "test", "testing", "local")
-	case "direction", "order":
-		return attackPathEnum(s, "asc", "desc", "ascending", "descending", "incoming", "outgoing", "forward", "backward")
-	case "status", "state":
-		return attackPathEnum(s, "pending", "active", "inactive", "enabled", "disabled", "open", "closed", "paid", "unpaid", "processing", "completed", "failed", "canceled", "cancelled", "shipped", "delivered", "draft", "published", "archived")
-	}
-	isID := key == "id" || strings.HasSuffix(key, "_id")
-	if !isID {
-		switch key {
-		case "page", "page_size", "per_page", "limit", "offset", "size", "cursor", "width", "height":
-		default:
-			return false
-		}
-	}
-	numeric := true
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			numeric = false
-			break
-		}
-	}
-	if numeric {
-		return true
-	}
-	if !isID {
-		return false
-	}
-	if len(s) == 24 || len(s) == 32 || len(s) == 64 {
-		_, err := hex.DecodeString(s)
-		return err == nil
-	}
-	if len(s) == 36 {
-		for i, c := range s {
-			if i == 8 || i == 13 || i == 18 || i == 23 {
-				if c != '-' {
-					return false
-				}
-				continue
-			}
-			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
-// These exact value sets are a conservative input representation policy, not
-// route authorization or an attack allowlist. Unknown values still go to AI.
+// attackPathEnum limits the parameter names and structures used by secondary parsers.
 func attackPathEnum(value string, options ...string) bool {
 	for _, option := range options {
 		if value == option {
@@ -305,13 +196,4 @@ func attackPathEnum(value string, options ...string) bool {
 		}
 	}
 	return false
-}
-
-func attackPathLanguageTag(value string) bool {
-	tag, err := language.Parse(value)
-	if err != nil || tag.String() != value || len(tag.Extensions()) != 0 || len(tag.Variants()) != 0 {
-		return false
-	}
-	base, _, _ := tag.Raw()
-	return base.String() != "und"
 }

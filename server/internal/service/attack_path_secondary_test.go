@@ -104,8 +104,8 @@ func TestAttackPathSecondaryRealCRS(t *testing.T) {
 		{"/api?host=%24%28id%29", attackPathMalicious, "crs_shell_structure"},
 		// SQL-only evidence must not corroborate a Shell syntax finding.
 		{"/api?host=%60id%60", attackPathUncertain, "crs_review"},
-		// An unrecognized command chain still needs review, never local keep.
-		{"/api?host=127.0.0.1%3Bid", attackPathUncertain, "ambiguous_input"},
+		// The clean-CRS policy retains zero-hit input, including this blind spot.
+		{"/api?host=127.0.0.1%3Bid", attackPathNormal, "crs_clean_input"},
 	} {
 		r, err := rules.inspect(context.Background(), tt.raw)
 		if err != nil || r.decision != tt.want || r.reason != tt.reason {

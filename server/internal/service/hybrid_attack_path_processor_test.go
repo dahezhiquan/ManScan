@@ -10,13 +10,13 @@ import (
 )
 
 func TestHybridAttackPathProcessorPackedUncertainAndOrder(t *testing.T) {
-	input := "/api/users\n/../../etc/passwd\n/custom/a?q=free+text\n/api/orders\n/custom/a?q=free+text\n/custom/b?q=free+text\n"
+	input := "/api/users\n/../../etc/passwd\n/custom/a?host=%60id%60\n/api/orders\n/custom/a?host=%60id%60\n/custom/b?host=%60id%60\n"
 	promptFile := testAttackPathPromptFile(t)
 	var calls, reviewed int
 	classifier := attackPathBatchClassifierFunc(func(_ context.Context, _ string, paths []string) ([]int, error) {
 		calls++
 		reviewed += len(paths)
-		if strings.Join(paths, "\n") != "/custom/a?q=free+text\n/custom/a?q=free+text\n/custom/b?q=free+text" {
+		if strings.Join(paths, "\n") != "/custom/a?host=%60id%60\n/custom/a?host=%60id%60\n/custom/b?host=%60id%60" {
 			return nil, errors.New("local paths reached model or uncertain paths split")
 		}
 		return []int{0, 2}, nil
@@ -52,7 +52,7 @@ func TestHybridAttackPathProcessorPackedUncertainAndOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(actual) != "/api/users\n/api/orders\n/custom/a?q=free+text\n" || p != 6 || k != 3 || last != 6 || calls != 1 || reviewed != 3 {
+	if string(actual) != "/api/users\n/api/orders\n/custom/a?host=%60id%60\n" || p != 6 || k != 3 || last != 6 || calls != 1 || reviewed != 3 {
 		t.Fatalf("incorrect hybrid result: p=%d k=%d calls=%d reviewed=%d", p, k, calls, reviewed)
 	}
 	dirs, err := filepath.Glob(filepath.Join(filepath.Dir(out.Name()), ".hybrid-*"))
@@ -66,7 +66,7 @@ func TestHybridAttackPathProcessorLocalAndFailures(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			input := "/api/users\n/../../etc/passwd\n"
 			if mode == "model_error" || mode == "all_uncertain" {
-				input = "/custom?q=free+text\n/custom2?q=free+text\n"
+				input = "/custom?host=%60id%60\n/custom2?host=%60id%60\n"
 			}
 			classifier := attackPathBatchClassifierFunc(func(context.Context, string, []string) ([]int, error) {
 				if mode == "model_error" {
@@ -121,5 +121,34 @@ func TestHybridAttackPathProcessorLocalAndFailures(t *testing.T) {
 				t.Fatal("ignored failure")
 			}
 		})
+	}
+}
+
+// Clean free-text, unknown fields and repeated parameters must not consume AI calls.
+func TestHybridAttackPathProcessorCleanParametersNeverReachModel(t *testing.T) {
+	input := "/api/search?q=手机\n/api/items?category=books\n/api/orders?cursor=abc123\n/api/files?path=reports/a.csv\n/api/items?id=1&id=2\n"
+	classifier := attackPathBatchClassifierFunc(func(context.Context, string, []string) ([]int, error) {
+		t.Error("clean parameters unexpectedly reached model")
+		return nil, errors.New("unexpected model request")
+	})
+	processor, err := NewHybridAttackPathProcessor(classifier, testAttackPathPromptFile(t), 5, 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	p, k, err := processor.Process(context.Background(), strings.NewReader(input), out, 5, func(context.Context, int, int) error { return nil })
+	if err != nil || p != 5 || k != 5 {
+		t.Fatalf("p=%d k=%d err=%v", p, k, err)
+	}
+	actual, err := os.ReadFile(out.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(actual) != input {
+		t.Fatal("clean paths changed or were omitted")
 	}
 }
