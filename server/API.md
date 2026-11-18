@@ -2668,7 +2668,8 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o host-assets.xlsx "http://12
 
 - 说明：
   - `ports` 来自 `manscan_asset_host_port`，按当前主机精确匹配 `ip_address` 字段；同一 IP、协议、端口可按不同 `service_name` 返回多条记录。
-  - `ports[].port_protocol` 表示传输层协议（`tcp` / `udp`），不是模板执行类型。Rsync 指纹即使来自未声明传输协议的 `javascript` 模板，也会按已识别的 `rsync` 服务补充为 `tcp`，同样适用于非标准端口；明确提供的传输协议优先。更新服务后需再次扫描确认，已有空协议记录不会仅因代码更新自动改写。
+  - `ports[].port_protocol` 表示传输层协议（`tcp` / `udp`），不是模板执行类型。`jdwp`、`mssql`、`openssh`、`rsync` 指纹即使来自未声明传输协议的 `javascript` 模板，也会按已识别的服务补充为 `tcp`，同样适用于非标准端口；明确提供的传输协议优先，MSSQL Browser 的 `udp` 标签仍保留为 `udp`。结果及其元数据中的 `tls` / `ssl` 按传输层归一为 `tcp`。更新服务后需再次扫描确认，已有空协议记录不会仅因代码更新自动改写。
+  - `sip-options-detect` 的 SIP 服务及产品指纹（包括 `gowvp`、`audiocodes-mediant`）优先采用结果元数据中的实际 `transport`，缺失时读取该模板 JSON 响应中的 `service: sip` 和 `transport`。不按 SIP 产品名称或默认端口猜测传输协议；同时带有 `tcp` / `udp` 标签且无实际传输证据时保留空值。同一服务在同一 IP 端口分别命中 TCP 和 UDP 时，两种观察结果在批量入库、缓存和目标完成后的存活同步中分别保留。
   - `ports[].port_created_at` 保留该 IP、端口和服务名首次写入的时间；当后续指纹确定此前空缺的 TCP/UDP 协议时，会将空协议记录合并到已确认协议记录，并保留较早的首次发现时间和已知版本。同一服务同时存在 TCP 与 UDP 时不推断空协议记录的归属。`ports[].last_alive_at` 在该组合实际被 HTTP 探测或指纹结果再次确认时更新。任务成功结束不再对端口表执行二次同步；关闭结果队列时尚未落库的实际指纹结果仍会按结果观察时间写入，不使用任务结束时间重写存活时间。
   - 扫描前 HTTP 探测完成后，已检查但未取得响应的 IP 端口，其已有 HTTP 服务记录立即设为 `is_alive=false`。启用前置指纹识别或自动模板映射时，单个目标的指纹识别完成后，立即把该 IP 端口本次未识别到的旧服务设为 `is_alive=false`；已取得 HTTP 响应的端口保留 HTTP 服务存活。失活操作不改写两个时间字段，未启用这两类识别时不执行旧服务指纹失活检查。
   - SSH 指纹的 `ports[].app_version` 包含软件名称和版本，例如 `OpenSSH 7.4`、`WeOnlyDo 2.4.3`。

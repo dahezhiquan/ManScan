@@ -1830,6 +1830,8 @@ func normalizeAssetHostPortProtocol(value string) string {
 	switch value {
 	case "tcp", "udp":
 		return value
+	case "tls", "ssl":
+		return "tcp"
 	default:
 		return ""
 	}
@@ -1837,7 +1839,7 @@ func normalizeAssetHostPortProtocol(value string) string {
 
 func assetHostPortProtocolFromServiceName(value string) string {
 	switch normalizeAssetDomainComponentName(value) {
-	case "ftp", "http", "https", "imap", "mysql", "pop3", "postgres", "postgresql", "rdp", "redis", "rsync", "smtp", "smb", "ssh", "telnet":
+	case "ftp", "http", "https", "imap", "jdwp", "mssql", "mysql", "openssh", "pop3", "postgres", "postgresql", "rdp", "redis", "rsync", "smtp", "smb", "ssh", "telnet":
 		return "tcp"
 	case "snmp", "ntp", "tftp":
 		return "udp"
@@ -1857,13 +1859,11 @@ func uniqueAssetDomainServiceAssetObservations(values []repository.AssetDomainSe
 		if value.Domain == "" || value.AppName == "" {
 			continue
 		}
-		key := value.Domain + "\x00" + value.AppName
+		// One endpoint can expose the same service over both TCP and UDP.
+		key := value.Domain + "\x00" + value.AppName + "\x00" + value.PortProtocol
 		if index, ok := seen[key]; ok {
 			if result[index].AppVersion == "" && value.AppVersion != "" {
 				result[index].AppVersion = value.AppVersion
-			}
-			if result[index].PortProtocol == "" && value.PortProtocol != "" {
-				result[index].PortProtocol = value.PortProtocol
 			}
 			continue
 		}
@@ -1916,13 +1916,10 @@ func uniqueAssetDomainFingerprintCacheComponents(values []assetDomainFingerprint
 		if value.Domain == "" || value.AppName == "" {
 			continue
 		}
-		key := value.Domain + "\x00" + value.AppName
+		key := value.Domain + "\x00" + value.AppName + "\x00" + value.PortProtocol
 		if index, ok := seen[key]; ok {
 			if result[index].AppVersion == "" && value.AppVersion != "" {
 				result[index].AppVersion = value.AppVersion
-			}
-			if result[index].PortProtocol == "" && value.PortProtocol != "" {
-				result[index].PortProtocol = value.PortProtocol
 			}
 			continue
 		}

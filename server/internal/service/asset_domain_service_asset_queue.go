@@ -430,12 +430,17 @@ func assetDomainFingerprintPortProtocol(payload map[string]interface{}, template
 		payload,
 		payloadInfo(payload),
 		interfaceMap(payload["metadata"]),
+		interfaceMap(payloadInfo(payload)["metadata"]),
 	} {
 		for _, key := range []string{"port_protocol", "port-protocol", "transport", "network", "proto", "protocol"} {
 			if protocol := normalizeAssetHostPortProtocol(scanruntime.AsString(values[key])); protocol != "" {
 				return protocol
 			}
 		}
+	}
+
+	if protocol := assetDomainFingerprintResponsePortProtocol(payload); protocol != "" {
+		return protocol
 	}
 
 	for _, value := range []string{
@@ -475,6 +480,23 @@ func assetDomainFingerprintPortProtocol(payload map[string]interface{}, template
 		return protocol
 	}
 	return assetHostPortProtocolFromServiceName(componentName)
+}
+
+// SIP probes export the successful transport for every detected product. Static
+// tcp/udp tags describe all candidates and cannot identify the matched transport.
+func assetDomainFingerprintResponsePortProtocol(payload map[string]interface{}) string {
+	if strings.TrimSpace(scanruntime.AsString(payload["template-id"])) != "sip-options-detect" {
+		return ""
+	}
+	response, ok := normalizeDetailValue(payload["response"])
+	if !ok {
+		return ""
+	}
+	values := interfaceMap(response)
+	if scanruntime.AsString(values["service"]) != "sip" {
+		return ""
+	}
+	return normalizeAssetHostPortProtocol(scanruntime.AsString(values["transport"]))
 }
 
 func assetHostPortProtocolFromTemplateProtocol(value string) string {
