@@ -84,22 +84,24 @@ func Run() error {
 	scheduledJobRunRepository := repository.NewScheduledJobRunRepository(db)
 	jobHandlerRegistry := service.NewJobHandlerRegistry()
 	apiKeyRateLimiter := service.NewAPIKeyRateLimiter(thirdPartyAPIKeyService)
+	vulnerabilityAlerts := service.NewVulnerabilityAlertService(vulnerabilityIntelligenceRepository,
+		repository.NewVulnerabilityAlertRepository(cfg.RootDir), thirdPartyAPIKeyService, apiKeyRateLimiter)
 	if err := jobHandlerRegistry.Register(jobhandlers.NewCVEFileNamesHandler(cfg.RootDir, thirdPartyAPIKeyService, apiKeyRateLimiter)); err != nil {
 		return fmt.Errorf("注册 CVE 文件名定时任务处理器失败: %w", err)
 	}
-	vulnxUpdateHandler := jobhandlers.NewVulnxVulnerabilityUpdateHandler(cfg.RootDir, scheduledJobRepository, thirdPartyAPIKeyService, apiKeyRateLimiter, vulnerabilityIntelligenceRepository)
+	vulnxUpdateHandler := jobhandlers.NewVulnxVulnerabilityUpdateHandler(cfg.RootDir, scheduledJobRepository, thirdPartyAPIKeyService, apiKeyRateLimiter, vulnerabilityAlerts)
 	if err := jobHandlerRegistry.Register(vulnxUpdateHandler); err != nil {
 		return fmt.Errorf("注册 VulnX 漏洞更新定时任务处理器失败: %w", err)
 	}
-	aliyunUpdateHandler := jobhandlers.NewAliyunAVDUpdateHandler(cfg.RootDir, vulnerabilityIntelligenceRepository)
+	aliyunUpdateHandler := jobhandlers.NewAliyunAVDUpdateHandler(cfg.RootDir, vulnerabilityAlerts)
 	if err := jobHandlerRegistry.Register(aliyunUpdateHandler); err != nil {
 		return fmt.Errorf("注册阿里云 AVD 定时任务处理器失败: %w", err)
 	}
-	chaitinUpdateHandler := jobhandlers.NewChaitinVulnerabilityUpdateHandler(vulnerabilityIntelligenceRepository)
+	chaitinUpdateHandler := jobhandlers.NewChaitinVulnerabilityUpdateHandler(vulnerabilityAlerts)
 	if err := jobHandlerRegistry.Register(chaitinUpdateHandler); err != nil {
 		return fmt.Errorf("注册长亭漏洞定时任务处理器失败: %w", err)
 	}
-	if err := jobHandlerRegistry.Register(jobhandlers.NewVulnerabilityIncrementalHandler(cfg.RootDir, scheduledJobRepository, chaitinUpdateHandler, aliyunUpdateHandler, vulnxUpdateHandler)); err != nil {
+	if err := jobHandlerRegistry.Register(jobhandlers.NewVulnerabilityIncrementalHandler(cfg.RootDir, scheduledJobRepository, chaitinUpdateHandler, aliyunUpdateHandler, vulnxUpdateHandler, vulnerabilityAlerts)); err != nil {
 		return fmt.Errorf("注册漏洞情报增量更新定时任务处理器失败: %w", err)
 	}
 	schedulerManager := service.NewSchedulerManager(scheduledJobRepository, scheduledJobRunRepository, jobHandlerRegistry, logger)

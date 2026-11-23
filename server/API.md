@@ -2997,6 +2997,24 @@ curl -L -OJ \
 - 下载产出：综合任务成功后，将阿里云 `no_cve_vulnerabilities.json` 与 VulnX 的 `vulnXerror.zip` 放入按执行记录 ID 命名的 `data/tmp/vulnerability_intelligence/incremental_outputs_<run_id>.zip`，并登记为本次执行的 `output_path`。在执行记录的“下载产出”按钮或 `GET /api/v1/scheduled-job-runs/:run_id/output` 下载。VulnX 压缩包包含 `vulnXerror.txt` 和 `vulnXerrorDetail.log`，无失败时两个文件为空。长亭和 VulnX 正常同步结果写入数据库。旧执行记录不会补生成汇总 ZIP。
 - 部分失败状态：综合任务中单个 CVE 经重试后仍查询、解析或写库失败时，将编号和错误写入 VulnX 失败清单并继续处理其他 CVE；只要三个渠道整体流程及汇总产物生成成功，综合任务仍标记成功，进度消息会显示失败数量，可下载汇总 ZIP 查看详情。来源列表获取、数据库查询、任务取消/超时及产物生成等整体错误仍会使任务失败。独立 `vulnx_vulnerability.sync` 任务保持“存在单个失败 CVE 即标记失败”的行为。
 
+综合增量任务还会自动推送新增漏洞预警（独立全量同步任务不触发推送）：
+
+- 触发条件：以 `source + vulnerability_id` 判断是否新增。长亭（`chaitin`）和阿里云（`avd`）新增记录均推送；VulnX（`vulnx`）新增记录仅在 `severity` 为 `high` 或 `critical`，且 `is_kev`、`is_poc`、`is_vkev` 任一为 `true` 时推送。已有记录的字段更新不触发推送；与详情接口一致，`rejected` 记录不推送。长亭、阿里云仍沿用现有无 CVE 采集范围。
+- 配置：从 API key 管理表中查找描述为 `推送漏洞预警接口的 API key` 的唯一记录（忽略首尾空格及英文字母大小写）。使用该记录的解密 Key 发送 `Authorization: Bearer <key>`，并使用其共享请求限流；综合任务的 `api_key_id` 不用于推送。配置缺失、重复、密钥不可用或平台 URL 无效时，在采集前将任务标记失败。
+- 接收地址：使用该记录的“平台 URL”作为基地址，追加 `/v1/alerts`；已包含该路径时不重复追加。允许内网 HTTP(S) 平台，不跟随重定向。示例：`http://intel.internal:8080` 对应 `http://intel.internal:8080/v1/alerts`。
+- 请求：`POST /v1/alerts`，`Content-Type: application/json`。唯一顶层字段为 `data`，其内容直接复用 `GET /api/v1/vulnerability-intelligence-records/:vulnerability_id` 的详情数据，包含 `records`、`articles`、`components`、`pocs`、`shodan_exposures` 五个数组；无关联数据时数组为 `[]`，记录可空字段保持 `null`。不发送 ManScan 的 `code`、`message` 响应外壳；`vuln_status` 随详情发送，由接收端按协议丢弃。单个漏洞一条请求，不截断详情；超过接收端默认 256 KiB 上限时保留待处理并报告失败。
+- 响应与失败处理：HTTP `202`（入队）或 `200`（重复提交），且响应 `resultCode` 与 HTTP 状态码一致时视为成功。HTTP `400`、`401`、`413`、`500`、`503`，以及其他状态、响应格式错误、连接失败或 15 秒请求超时均视为失败。新增记录成功入库后立即尝试推送；推送失败不回滚情报入库。待推送来源及编号保存在 `data/vulnerability_alerts/pending/`，不保存 Key 或详情正文，任务结束前补偿重试（包括之前执行留下的记录）；仍有失败则任务失败，并在执行记录错误信息中显示待重试数量。取消或服务重启后保留待推送记录，下次增量任务重新读取详情和最新 Key 配置再推送。该目录需随服务数据持久化，勿作为临时文件清理。接收端已接收但本地尚未确认成功时可能重复投递，由接收端按协议去重。
+
+请求格式示意（`data` 实际为完整漏洞详情）：
+
+```http
+POST /v1/alerts
+Authorization: Bearer <推送漏洞预警接口的 API key>
+Content-Type: application/json
+
+{"data":{"records":[{"source":"chaitin","vulnerability_id":"CT-DEMO"}],"articles":[],"components":[],"pocs":[],"shodan_exposures":[]}}
+```
+
 以下接口均要求 JWT 登录且当前用户角色为管理员。API Key 使用 AES-256-GCM 加密后只存入 `manscan_third_party_api_keys.encrypted_key`；数据库不保留明文 Key 列，列表、单条查询及增改删响应均不返回密钥明文或密文，只返回 `key_configured`。如确有必要，可使用下方明文查询接口；该接口是唯一返回明文 Key 的接口。新部署请执行 `docs/SQL/create_manscan_third_party_api_keys.sql`；已有表请先备份并执行 `docs/SQL/alter_manscan_third_party_api_keys_encrypt_key.sql`。迁移会将当前版本的 `api_key` 密文列重命名为 `encrypted_key` 并保留密文；如果数据库中存在早期独立的明文 `key` 列，迁移会删除该列及其中数据。配置密钥丢失或更换后既有密文不可恢复。请求体最大 16 KiB。
 
 ### 列表
