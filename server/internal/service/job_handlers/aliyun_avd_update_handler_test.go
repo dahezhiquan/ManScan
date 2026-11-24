@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"ManScan/server/internal/model/entity"
+	"ManScan/server/internal/repository"
 )
 
 type avdRoundTripperFunc func(*http.Request) (*http.Response, error)
@@ -23,7 +24,9 @@ func TestAVDClientReportsProcessedListPages(t *testing.T) {
 	client := NewAVDClient(0, 3)
 	client.httpClient.Transport = avdRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		body := `<table><tbody><tr><td><a href="/detail?id=AVD-2026-1">AVD-2026-1</a></td><td>Has CVE CVE-2026-10</td><td>type</td><td>2026-01-01</td><td><button title="CVE-2026-10">CVE</button></td></tr></tbody></table>`
-		if request.URL.Query().Get("page") == "2" {
+		if request.URL.Path == "/detail" {
+			body = `<h5 class="header__title"><span class="header__title__text">Example</span></h5><div class="metric"><p class="metric-label">CVE编号</p><div class="metric-value">CVE-2026-10</div></div>`
+		} else if request.URL.Query().Get("page") == "2" {
 			body = `<html><body>阿里云漏洞库<table><tbody></tbody></table></body></html>`
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
@@ -42,8 +45,12 @@ func TestAVDClientReportsProcessedListPages(t *testing.T) {
 		return nil
 	}
 
-	if _, err := client.CollectNoCVE(context.Background()); err != nil {
+	collection, err := client.Collect(context.Background())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(collection.Errors) != 0 || len(collection.Vulnerabilities) != 1 {
+		t.Fatalf("collection = %+v", collection)
 	}
 	if len(updates) != 2 {
 		t.Fatalf("progress update count = %d, want 2", len(updates))
@@ -66,30 +73,46 @@ func TestAVDClientIncrementalStopsAfterExistingFirstPage(t *testing.T) {
 		body := `<table><tbody><tr><td><a href="/detail?id=AVD-2026-2">AVD-2026-2</a></td><td>No CVE vuln</td><td>type</td><td>2026-02-01</td><td><button title="无CVE">CVE</button></td></tr></tbody></table>`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})
-	collection, err := client.CollectNoCVEWithFirstPageStop(context.Background(), func(_ context.Context, items []AVDListItem) (bool, error) {
+	collection, err := client.CollectWithFirstPageStop(context.Background(), func(_ context.Context, items []AVDListItem) (bool, error) {
 		return len(items) == 1 && items[0].VulnerabilityID == "AVD-2026-2", nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests != 1 || collection.ListPages != 1 || collection.NoCVECandidateCount != 1 {
+	if requests != 1 || collection.ListPages != 1 || collection.CandidateCount != 1 {
 		t.Fatalf("requests=%d collection=%+v; expected stop before details and later pages", requests, collection)
 	}
 }
 
+type avdRecordingRepository struct {
+	vulnxRepositoryStub
+	records []*repository.VulnerabilityIntelligenceBundle
+}
+
+func (r *avdRecordingRepository) UpsertAVD(_ context.Context, bundle *repository.VulnerabilityIntelligenceBundle) error {
+	r.records = append(r.records, bundle)
+	return nil
+}
+
 func TestAVDHandlerIncrementalStopsOnlyCompositeRun(t *testing.T) {
-	repo := &vulnxRepositoryStub{existing: map[string]struct{}{"AVD-2026-2": {}}}
+	repo := &avdRecordingRepository{vulnxRepositoryStub: vulnxRepositoryStub{existing: map[string]struct{}{"AVD-2026-1": {}, "AVD-2026-2": {}}}}
 	handler := NewAliyunAVDUpdateHandler(t.TempDir(), repo)
 	requests := 0
 	handler.clientFn = func(delay time.Duration, maxPages int) *AVDClient {
-		client := NewAVDClient(delay, maxPages)
+		client := NewAVDClient(0, maxPages)
 		client.httpClient.Transport = avdRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
 			requests++
-			body := `<table><tbody><tr><td><a href="/detail?id=AVD-2026-2">AVD-2026-2</a></td><td>No CVE vuln</td><td>type</td><td>2026-02-01</td><td><button title="无CVE">CVE</button></td></tr></tbody></table>`
+			body := `<table><tbody>
+<tr><td><a href="/detail?id=AVD-2026-1">AVD-2026-1</a></td><td>Has CVE CVE-2026-10</td><td>type</td><td>2026-02-01</td><td><button title="CVE-2026-10">CVE</button></td></tr>
+<tr><td><a href="/detail?id=AVD-2026-2">AVD-2026-2</a></td><td>No CVE vuln</td><td>type</td><td>2026-02-01</td><td><button title="无CVE">CVE</button></td></tr>
+</tbody></table>`
 			if request.URL.Query().Get("page") == "2" {
 				body = `<html><body>阿里云漏洞库<table><tbody></tbody></table></body></html>`
 			} else if request.URL.Path == "/detail" {
 				body = `<h5 class="header__title"><span class="header__title__text">Example</span></h5>`
+				if request.URL.Query().Get("id") == "AVD-2026-1" {
+					body += `<div class="metric"><p class="metric-label">CVE编号</p><div class="metric-value">CVE-2026-10</div></div>`
+				}
 			}
 			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 		})
@@ -99,27 +122,46 @@ func TestAVDHandlerIncrementalStopsOnlyCompositeRun(t *testing.T) {
 	if err := handler.ExecuteIncremental(context.Background(), job, entity.ScheduledJobRun{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 1 {
-		t.Fatalf("incremental requests = %d, want only first list page", requests)
+	if requests != 1 || len(repo.records) != 0 {
+		t.Fatalf("incremental requests = %d, records = %d, want only first list page", requests, len(repo.records))
+	}
+	assertRecords := func() {
+		t.Helper()
+		if requests != 4 || len(repo.records) != 2 {
+			t.Fatalf("requests=%d records=%d, want 2 list pages and 2 details/records", requests, len(repo.records))
+		}
+		for index, id := range []string{"AVD-2026-1", "AVD-2026-2"} {
+			if record := repo.records[index].Record; record.Source != "avd" || record.VulnerabilityID != id {
+				t.Fatalf("record identity = %+v, want avd/%s", record, id)
+			}
+		}
+		data, err := os.ReadFile(avdOutputPath(handler.rootDir))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var collection AVDCollection
+		if err := json.Unmarshal(data, &collection); err != nil {
+			t.Fatal(err)
+		}
+		if collection.CandidateCount != 2 || len(collection.Errors) != 0 || len(collection.Vulnerabilities) != 2 || collection.Vulnerabilities[0].CVE != "CVE-2026-10" {
+			t.Fatalf("output = %+v", collection)
+		}
 	}
 	requests = 0
 	if err := handler.Execute(context.Background(), job, entity.ScheduledJobRun{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 3 {
-		t.Fatalf("full sync requests = %d, want list, detail, and terminal page", requests)
-	}
-	delete(repo.existing, "AVD-2026-2")
-	requests = 0
+	assertRecords()
+	// A new CVE-associated AVD ID must prevent early stopping even if all no-CVE IDs exist.
+	delete(repo.existing, "AVD-2026-1")
+	requests, repo.records = 0, nil
 	if err := handler.ExecuteIncremental(context.Background(), job, entity.ScheduledJobRun{}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 3 {
-		t.Fatalf("incremental requests with a missing ID = %d, want list, detail, and terminal page", requests)
-	}
+	assertRecords()
 }
 
-func TestParseAVDListFiltersNoCVE(t *testing.T) {
+func TestParseAVDListIncludesAllCVEStatuses(t *testing.T) {
 	page := []byte(`<table><tbody>
 <tr><td><a href="/detail?id=AVD-2026-1">AVD-2026-1</a></td><td>Has CVE CVE-2026-10</td><td>CWE-1</td><td>2026-01-01</td><td><button title="CVE-2026-10">CVE</button></td></tr>
 <tr><td><a href="/detail?id=AVD-2026-2">AVD-2026-2</a></td><td>No CVE vuln</td><td>未定义</td><td>2026-02-01</td><td><button title="无CVE">CVE</button><button title="POC 已公开">PoC</button></td></tr>
@@ -128,7 +170,7 @@ func TestParseAVDListFiltersNoCVE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 2 || isNoCVEItem(items[0]) || !isNoCVEItem(items[1]) {
+	if len(items) != 2 || items[0].VulnerabilityID != "AVD-2026-1" || items[1].VulnerabilityID != "AVD-2026-2" {
 		t.Fatalf("parsed list items = %+v", items)
 	}
 	if items[1].DetailURL != aliyunAVDBaseURL+"/detail?id=AVD-2026-2" || len(items[1].Statuses) != 2 {
@@ -158,9 +200,28 @@ func TestParseAVDDetailCapturesRiskAndAffectedSoftware(t *testing.T) {
 	}
 }
 
+func TestParseAVDDetailAllowsCVEWithNoCVEListStatus(t *testing.T) {
+	for _, cve := range []string{"", "暂无", "CVE-2026-1234"} {
+		t.Run(cve, func(t *testing.T) {
+			body := []byte(`<h5 class="header__title"><span class="header__title__text">Example</span></h5><div class="metric"><p class="metric-label">CVE编号</p><div class="metric-value">` + cve + `</div></div>`)
+			vuln, err := parseAVDDetail(body, AVDListItem{VulnerabilityID: "AVD-2026-2", Statuses: []string{"无CVE"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantCVE := ""
+			if cve == "CVE-2026-1234" {
+				wantCVE = cve
+			}
+			if vuln.VulnerabilityID != "AVD-2026-2" || vuln.CVE != wantCVE {
+				t.Fatalf("detail = %+v", vuln)
+			}
+		})
+	}
+}
+
 func TestAVDHandlerWritesOutputWithoutDatabase(t *testing.T) {
 	root := t.TempDir()
-	collection := &AVDCollection{FetchedAt: time.Now(), ListPages: 1, ListedCount: 1, NoCVECandidateCount: 1, Vulnerabilities: []AVDVulnerability{{VulnerabilityID: "AVD-2026-2", Title: "Example", References: []string{"https://example.test"}}}}
+	collection := &AVDCollection{FetchedAt: time.Now(), ListPages: 1, ListedCount: 1, CandidateCount: 1, Vulnerabilities: []AVDVulnerability{{VulnerabilityID: "AVD-2026-2", Title: "Example", References: []string{"https://example.test"}}}}
 	path := avdOutputPath(root)
 	if err := writeAVDCollection(path, collection); err != nil {
 		t.Fatal(err)
@@ -182,6 +243,7 @@ func TestAVDBundleUsesConfirmedFieldMapping(t *testing.T) {
 	score := 8.3
 	bundle, err := avdVulnerabilityBundle(&AVDVulnerability{
 		VulnerabilityID: "AVD-2026-1911719",
+		CVE:             "CVE-2026-1234",
 		Title:           "Redis blocked-client 远程代码执行漏洞",
 		Severity:        "高危",
 		ExploitStatus:   "POC 已公开",

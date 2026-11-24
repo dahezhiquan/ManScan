@@ -22,7 +22,7 @@ type avdJobConfig struct {
 	MaxPages       int `json:"max_pages"`
 }
 
-// AliyunAVDUpdateHandler 抓取阿里云高危列表中的无 CVE 漏洞详情并同步已确认字段。
+// AliyunAVDUpdateHandler 抓取阿里云高危列表中的漏洞详情并同步已确认字段。
 type AliyunAVDUpdateHandler struct {
 	rootDir    string
 	repository repository.VulnerabilityIntelligenceRepository
@@ -55,7 +55,7 @@ func (h *AliyunAVDUpdateHandler) Execute(ctx context.Context, job entity.Schedul
 	return h.execute(ctx, job, progress, false)
 }
 
-// ExecuteIncremental stops after page one when all no-CVE identifiers are already stored.
+// ExecuteIncremental stops after page one when all AVD identifiers are already stored.
 func (h *AliyunAVDUpdateHandler) ExecuteIncremental(ctx context.Context, job entity.ScheduledJob, _ entity.ScheduledJobRun, progress service.ProgressReporter) error {
 	return h.execute(ctx, job, progress, true)
 }
@@ -73,7 +73,7 @@ func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.Schedul
 	if maxPages == 0 {
 		maxPages = aliyunAVDMaxPages
 	}
-	if err := reportProgress(ctx, progress, 0, int64(maxPages), "fetching", "正在抓取阿里云高危漏洞列表及无 CVE 详情"); err != nil {
+	if err := reportProgress(ctx, progress, 0, int64(maxPages), "fetching", "正在抓取阿里云高危漏洞列表及漏洞详情"); err != nil {
 		return err
 	}
 	client := h.clientFn(delay, maxPages)
@@ -86,13 +86,10 @@ func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.Schedul
 	var collection *AVDCollection
 	var err error
 	if stopOnExistingFirstPage {
-		collection, err = client.CollectNoCVEWithFirstPageStop(ctx, func(ctx context.Context, items []AVDListItem) (bool, error) {
+		collection, err = client.CollectWithFirstPageStop(ctx, func(ctx context.Context, items []AVDListItem) (bool, error) {
 			ids := make([]string, 0, len(items))
 			seen := make(map[string]struct{}, len(items))
 			for _, item := range items {
-				if !isNoCVEItem(item) {
-					continue
-				}
 				id := strings.TrimSpace(item.VulnerabilityID)
 				if id == "" {
 					return false, nil
@@ -112,12 +109,12 @@ func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.Schedul
 			return len(existing) == len(ids), nil
 		})
 	} else {
-		collection, err = client.CollectNoCVE(ctx)
+		collection, err = client.Collect(ctx)
 	}
 	if err != nil {
 		return err
 	}
-	if err := reportProgress(ctx, progress, 0, int64(len(collection.Vulnerabilities)), "syncing", fmt.Sprintf("正在同步 %d 条无 CVE 漏洞详情", len(collection.Vulnerabilities))); err != nil {
+	if err := reportProgress(ctx, progress, 0, int64(len(collection.Vulnerabilities)), "syncing", fmt.Sprintf("正在同步 %d 条漏洞详情", len(collection.Vulnerabilities))); err != nil {
 		return err
 	}
 	for index := range collection.Vulnerabilities {
@@ -131,18 +128,18 @@ func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.Schedul
 		if mapErr != nil {
 			collection.Errors = append(collection.Errors, fmt.Sprintf("%s database sync: %v", collection.Vulnerabilities[index].VulnerabilityID, mapErr))
 		}
-		if err := reportProgress(ctx, progress, int64(index+1), int64(len(collection.Vulnerabilities)), "syncing", fmt.Sprintf("已同步 %d/%d 条无 CVE 漏洞详情", index+1, len(collection.Vulnerabilities))); err != nil {
+		if err := reportProgress(ctx, progress, int64(index+1), int64(len(collection.Vulnerabilities)), "syncing", fmt.Sprintf("已同步 %d/%d 条漏洞详情", index+1, len(collection.Vulnerabilities))); err != nil {
 			return err
 		}
 	}
 	outputPath := filepath.Join(h.rootDir, "data", "tmp", "aliyun_avd", "no_cve_vulnerabilities.json")
-	if err := reportProgress(ctx, progress, 0, 1, "writing", "正在写入阿里云无 CVE 漏洞采集结果"); err != nil {
+	if err := reportProgress(ctx, progress, 0, 1, "writing", "正在写入阿里云漏洞采集结果"); err != nil {
 		return err
 	}
 	if err := writeAVDCollection(outputPath, collection); err != nil {
 		return err
 	}
-	if err := reportProgress(ctx, progress, 1, 1, "writing", "阿里云无 CVE 漏洞采集结果已写入"); err != nil {
+	if err := reportProgress(ctx, progress, 1, 1, "writing", "阿里云漏洞采集结果已写入"); err != nil {
 		return err
 	}
 	if reporter, ok := progress.(service.OutputReporter); ok {
@@ -150,7 +147,7 @@ func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.Schedul
 			return fmt.Errorf("保存阿里云 AVD 产物路径失败: %w", err)
 		}
 	}
-	message := fmt.Sprintf("已抓取 %d 页列表，筛出 %d 条无 CVE 漏洞，成功获取 %d 条详情", collection.ListPages, collection.NoCVECandidateCount, len(collection.Vulnerabilities))
+	message := fmt.Sprintf("已抓取 %d 页列表，筛出 %d 条漏洞，成功获取 %d 条详情", collection.ListPages, collection.CandidateCount, len(collection.Vulnerabilities))
 	if len(collection.Errors) > 0 {
 		return fmt.Errorf("%s，%d 条详情失败，首条错误：%s", message, len(collection.Errors), collection.Errors[0])
 	}

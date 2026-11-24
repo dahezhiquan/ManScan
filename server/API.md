@@ -2855,7 +2855,7 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
 
 ## 40. 定时任务
 
-定时任务接口用于管理通用后台任务（例如同步数据或执行脚本）。当前已内置 `cve_file_names.sync` 处理器，用于从 GitHub `CVEProject/cvelistV5` 获取 CVE 文件名并原子替换 `data/tmp/cve_data/cves.txt`；`vulnx_vulnerability.sync` 处理器获取最新完整 CVE 列表并只查询数据库缺失编号的 ProjectDiscovery VulnX 详情，新增五张漏洞情报表；`chaitin_vulnerability.sync` 同步长亭全部漏洞（不限制 CVE），`aliyun_avd_vulnerability.sync` 同步阿里云无 CVE 漏洞；`vulnerability_intelligence.incremental` 依次执行三个渠道并汇总进度。未配置 `api_key_id` 时按处理器使用 `GITHUB_TOKEN` 或 `PDCP_API_KEY`。创建未知类型仍可保存配置，但触发后会以“定时任务类型未注册”失败；后续注册同名 `JobHandler` 后即可执行。所有接口都需要登录，新增、编辑、删除和立即触发仅管理员可操作。
+定时任务接口用于管理通用后台任务（例如同步数据或执行脚本）。当前已内置 `cve_file_names.sync` 处理器，用于从 GitHub `CVEProject/cvelistV5` 获取 CVE 文件名并原子替换 `data/tmp/cve_data/cves.txt`；`vulnx_vulnerability.sync` 处理器获取最新完整 CVE 列表并只查询数据库缺失编号的 ProjectDiscovery VulnX 详情，新增五张漏洞情报表；`chaitin_vulnerability.sync` 同步长亭全部漏洞（不限制 CVE），`aliyun_avd_vulnerability.sync` 同步阿里云高危列表全部漏洞（不限制 CVE）；`vulnerability_intelligence.incremental` 依次执行三个渠道并汇总进度。未配置 `api_key_id` 时按处理器使用 `GITHUB_TOKEN` 或 `PDCP_API_KEY`。创建未知类型仍可保存配置，但触发后会以“定时任务类型未注册”失败；后续注册同名 `JobHandler` 后即可执行。所有接口都需要登录，新增、编辑、删除和立即触发仅管理员可操作。
 
 ### 查询定时任务列表
 
@@ -2975,16 +2975,16 @@ curl -L -OJ \
 - records 沿用 `category=non-cve`（包括有关联 CVE 的 CT 编号记录，不根据 `cve_id` 改写分类），写入标题、描述、影响、解决建议、严重性、披露时间和更新时间；`vulnerability_type`、`is_patch_available`、`cvss_metrics`、`cvss_score` 不写入。articles 的 `source` 固定为 `chaitin`，`added_at` 不写入。
 - 不写入 `manscan_vulnerability_intelligence_pocs`、`manscan_vulnerability_intelligence_components` 和 `manscan_vulnerability_intelligence_shodan_exposures`。
 
-### 内置任务：阿里云高危无 CVE 漏洞采集
+### 内置任务：阿里云高危漏洞情报全量同步
 
 - `job_type`：`aliyun_avd_vulnerability.sync`
 - 默认计划：`0 30 * * *`，时区 `Asia/Shanghai`；初始化 SQL 默认启用，可在任务管理页面调整。
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_aliyun_avd_no_cve_sync.sql`，按 `job_type` 判断，可重复执行。
 - `config_json`：可选 `{"request_delay_ms":250,"max_pages":0}`；请求间隔范围 0-60000 毫秒（0 使用 250 毫秒默认值），最大列表页数范围 0-10000（0 使用 10000 页上限）。
-- 抓取流程：顺序请求阿里云 `/high-risk/list?page=N`，解析 AVD 编号、标题、类型、披露时间及状态，只对标记无 CVE 或标题无 CVE 编号的记录请求详情页；列表结束时停止。列表与详情均限制为 HTTPS 固定主机 `avd.aliyun.com`，响应体最大 16 MiB，具备请求超时、退避重试、Cookie Jar，并执行页面 WAF 校验脚本以取得校验后的 URL。进度在抓取阶段按“已处理列表页/最大列表页数”逐页推送，抓取完成后切换为详情数据库同步、产物写入和完成阶段提示。
+- 抓取流程：顺序请求阿里云 `/high-risk/list?page=N`，解析 AVD 编号、标题、类型、披露时间及状态，对所有有效 AVD 编号请求详情页，不按列表状态、标题或详情中的 CVE 筛选；详情中的 CVE 作为采集信息保留，漏洞编号始终使用 AVD 编号。同次采集按 AVD 编号去重，列表结束时停止。列表与详情均限制为 HTTPS 固定主机 `avd.aliyun.com`，响应体最大 16 MiB，具备请求超时、退避重试、Cookie Jar，并执行页面 WAF 校验脚本以取得校验后的 URL。进度在抓取阶段按“已处理列表页/最大列表页数”逐页推送，抓取完成后切换为详情数据库同步、产物写入和完成阶段提示。
 - 详情产物：包含 AVD/CVE 编号、标题、严重等级、利用情况、补丁情况、披露时间、描述、解决建议、参考 URL 数组、阿里云评分、评分拆分指标、CWE、受影响软件、阿里云安全产品覆盖、列表元数据、来源 URL 和抓取时间。源页面未提供的字段为空或缺省，不从描述推断填充。
-- 输出：原子写入 `data/tmp/aliyun_avd/no_cve_vulnerabilities.json`，执行记录登记产物路径，可通过定时任务产出下载接口获取。存在部分详情失败时保留成功记录和错误摘要，任务状态标记失败。
-- 数据库映射：在一个事务中按 `source=avd` 与 AVD 编号更新或新增 `manscan_vulnerability_intelligence_records`，并按漏洞编号和 URL 幂等写入参考链接到 `manscan_vulnerability_intelligence_articles`。records 写入 `category=non-cve`、标题、描述、解决建议、阿里云评分、披露时间到 `created_at`，severity 转为 `critical`/`high`/`medium`/`low`/`none`，`is_poc` 在利用情况或 EXP 成熟度为“EXP 已公开”或“POC 已公开”时为 1；`vulnerability_impact` 不写，`updated_at` 不由任务写入。articles 的 `source` 固定为 `avd`，`url` 为参考链接，`added_at` 不由任务写入。已有记录更新时保留现有 `updated_at`、`vulnerability_impact`；新增时间列由数据库默认值生成。
+- 输出：为兼容既有下载及综合任务打包，继续原子写入 `data/tmp/aliyun_avd/no_cve_vulnerabilities.json`，实际包含有 CVE 和无 CVE 的记录；JSON 历史字段 `no_cve_candidate_count` 现统计全部去重后的 AVD 候选数量。执行记录登记产物路径，可通过定时任务产出下载接口获取。存在部分详情失败时保留成功记录和错误摘要，任务状态标记失败。
+- 数据库映射：在一个事务中按 `source=avd` 与 AVD 编号更新或新增 `manscan_vulnerability_intelligence_records`，并按漏洞编号和 URL 幂等写入参考链接到 `manscan_vulnerability_intelligence_articles`。records 沿用 `category=non-cve`（包括有关联 CVE 的 AVD 编号记录），写入标题、描述、解决建议、阿里云评分、披露时间到 `created_at`，severity 转为 `critical`/`high`/`medium`/`low`/`none`，`is_poc` 在利用情况或 EXP 成熟度为“EXP 已公开”或“POC 已公开”时为 1；`vulnerability_impact` 不写，`updated_at` 不由任务写入。articles 的 `source` 固定为 `avd`，`url` 为参考链接，`added_at` 不由任务写入。已有记录更新时保留现有 `updated_at`、`vulnerability_impact`；新增时间列由数据库默认值生成。
 - 不写入 `manscan_vulnerability_intelligence_components`、`manscan_vulnerability_intelligence_pocs` 和 `manscan_vulnerability_intelligence_shodan_exposures`。
 - 数据库升级：已有数据库执行 `docs/SQL/alter_manscan_vulnerability_intelligence_avd_timestamp_defaults.sql`，以便 records.`updated_at` 和 articles.`added_at` 在任务省略这些字段时由数据库默认生成。
 
@@ -2992,7 +2992,7 @@ curl -L -OJ \
 
 - `job_type`：`vulnerability_intelligence.incremental`
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_vulnerability_incremental.sql`，默认每天 02:00 执行，按 `job_type` 判断后可重复执行。默认超时 21600 秒；任务顺序执行三个渠道。
-- 执行顺序：长亭全部漏洞列表、阿里云无 CVE 列表与详情、VulnX 最新完整 CVE 列表及缺失项详情。综合任务中，长亭获取第一页后，若该页全部 `ct_id` 均已存在于 `source=chaitin` 的数据库记录中，则更新完第一页后停止请求后续列表页；此判断不受 `cve_id` 影响。阿里云仍按第一页无 CVE 漏洞编号判断，全部已存在时停止后续列表页并跳过已有编号的详情请求。若第一页没有可用于判断的编号或仍有新编号，则继续分页。该提前停止逻辑仅用于综合任务，不影响独立的长亭、阿里云全量同步任务。各来源任务分别报告阶段、当前值、总量和说明，综合任务进度按渠道阶段推进；每个数据源完成后继续下一个，发生错误则停止并标明失败渠道。
+- 执行顺序：长亭全部漏洞列表、阿里云高危列表全部漏洞及详情、VulnX 最新完整 CVE 列表及缺失项详情。综合任务中，长亭获取第一页后，若该页全部 `ct_id` 均已存在于 `source=chaitin` 的数据库记录中，则更新完第一页后停止请求后续列表页；此判断不受 `cve_id` 影响。阿里云按第一页全部 AVD 编号判断，不限制 CVE；全部已存在时停止后续列表页并跳过该页全部详情请求。若第一页没有可用于判断的编号或仍有新编号，则继续分页。该提前停止逻辑仅用于综合任务，不影响独立的长亭、阿里云全量同步任务。各来源任务分别报告阶段、当前值、总量和说明，综合任务进度按渠道阶段推进；每个数据源完成后继续下一个，发生错误则停止并标明失败渠道。
 - 长亭与阿里云：按各自来源和漏洞编号匹配现有记录；新编号插入，字段有变化时更新映射字段，参考链接按来源同步差异。其他来源和关联表不受影响。
 - VulnX：先获取最新完整 CVE 列表，再按 1000 个编号一批检查 `source=vulnx`。只对不存在的编号请求详情并新增完整情报快照，已有 CVE 不进行重复 API 请求。
 - API Key：综合任务和独立 VulnX 任务均从数据库读取 `cve_file_names.sync`（“全量 CVE 列表获取”）的 `api_key_id` 用于 GitHub 列表请求，从 `vulnx_vulnerability.sync`（“全量 VulnX 漏洞更新（长耗时）”）读取 `api_key_id` 用于 VulnX 详情请求。两种请求分别使用对应 Key 的共享限流；综合任务自身的 `api_key_id` 不参与这两种请求。CVE 列表任务不存在时任务失败；列表任务未绑定 Key 时 GitHub 请求回退到 `GITHUB_TOKEN`，VulnX 任务未绑定 Key 时详情请求回退到 `PDCP_API_KEY`。
@@ -3001,7 +3001,7 @@ curl -L -OJ \
 
 综合增量任务还会自动推送新增漏洞预警（独立全量同步任务不触发推送）：
 
-- 触发条件：以 `source + vulnerability_id` 判断是否新增。长亭（`chaitin`）和阿里云（`avd`）新增记录均推送；VulnX（`vulnx`）新增记录仅在 `severity` 为 `high` 或 `critical`，且 `is_kev`、`is_poc`、`is_vkev` 任一为 `true` 时推送。已有记录的字段更新不触发推送；与详情接口一致，`rejected` 记录不推送。长亭新增记录不受 `cve_id` 限制，均以 `ct_id` 推送；阿里云仍仅采集无 CVE 漏洞。
+- 触发条件：以 `source + vulnerability_id` 判断是否新增。长亭（`chaitin`）和阿里云（`avd`）新增记录均推送；VulnX（`vulnx`）新增记录仅在 `severity` 为 `high` 或 `critical`，且 `is_kev`、`is_poc`、`is_vkev` 任一为 `true` 时推送。已有记录的字段更新不触发推送；与详情接口一致，`rejected` 记录不推送。长亭新增记录不受 `cve_id` 限制，均以 `ct_id` 推送；阿里云高危列表新增记录同样不限制 CVE，均以 AVD 编号推送。
 - 配置：从 API key 管理表中查找描述为 `推送漏洞预警接口的 API key` 的唯一记录（忽略首尾空格及英文字母大小写）。使用该记录的解密 Key 发送 `Authorization: Bearer <key>`，并使用其共享请求限流；综合任务的 `api_key_id` 不用于推送。配置缺失、重复、密钥不可用或平台 URL 无效时，在采集前将任务标记失败。
 - 接收地址：使用该记录的“平台 URL”作为基地址，追加 `/v1/alerts`；已包含该路径时不重复追加。允许内网 HTTP(S) 平台，不跟随重定向。示例：`http://intel.internal:8080` 对应 `http://intel.internal:8080/v1/alerts`。
 - 请求：`POST /v1/alerts`，`Content-Type: application/json`。唯一顶层字段为 `data`，其内容直接复用 `GET /api/v1/vulnerability-intelligence-records/:vulnerability_id` 的详情数据，包含 `records`、`articles`、`components`、`pocs`、`shodan_exposures` 五个数组；无关联数据时数组为 `[]`，记录可空字段保持 `null`。不发送 ManScan 的 `code`、`message` 响应外壳；`vuln_status` 随详情发送，由接收端按协议丢弃。单个漏洞一条请求，不截断详情；超过接收端默认 256 KiB 上限时保留待处理并报告失败。

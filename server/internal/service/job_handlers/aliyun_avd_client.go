@@ -103,12 +103,13 @@ type AVDSecurityCoverage struct {
 }
 
 type AVDCollection struct {
-	FetchedAt           time.Time          `json:"fetched_at"`
-	ListPages           int                `json:"list_pages"`
-	ListedCount         int                `json:"listed_count"`
-	NoCVECandidateCount int                `json:"no_cve_candidate_count"`
-	Vulnerabilities     []AVDVulnerability `json:"vulnerabilities"`
-	Errors              []string           `json:"errors,omitempty"`
+	FetchedAt   time.Time `json:"fetched_at"`
+	ListPages   int       `json:"list_pages"`
+	ListedCount int       `json:"listed_count"`
+	// Keep the legacy JSON key for existing output consumers; count all unique AVD IDs.
+	CandidateCount  int                `json:"no_cve_candidate_count"`
+	Vulnerabilities []AVDVulnerability `json:"vulnerabilities"`
+	Errors          []string           `json:"errors,omitempty"`
 }
 
 // AVDProgressFunc reports progress after a list page and its candidate details
@@ -147,16 +148,17 @@ func NewAVDClient(requestDelay time.Duration, maxPages int) *AVDClient {
 	}
 }
 
-func (c *AVDClient) CollectNoCVE(ctx context.Context) (*AVDCollection, error) {
-	return c.collectNoCVE(ctx, nil)
+// Collect fetches all high-risk list entries regardless of associated CVEs.
+func (c *AVDClient) Collect(ctx context.Context) (*AVDCollection, error) {
+	return c.collect(ctx, nil)
 }
 
-// CollectNoCVEWithFirstPageStop allows the incremental job to stop after the first list page.
-func (c *AVDClient) CollectNoCVEWithFirstPageStop(ctx context.Context, shouldStop func(context.Context, []AVDListItem) (bool, error)) (*AVDCollection, error) {
-	return c.collectNoCVE(ctx, shouldStop)
+// CollectWithFirstPageStop allows the incremental job to stop after the first list page.
+func (c *AVDClient) CollectWithFirstPageStop(ctx context.Context, shouldStop func(context.Context, []AVDListItem) (bool, error)) (*AVDCollection, error) {
+	return c.collect(ctx, shouldStop)
 }
 
-func (c *AVDClient) collectNoCVE(ctx context.Context, shouldStop func(context.Context, []AVDListItem) (bool, error)) (*AVDCollection, error) {
+func (c *AVDClient) collect(ctx context.Context, shouldStop func(context.Context, []AVDListItem) (bool, error)) (*AVDCollection, error) {
 	result := &AVDCollection{FetchedAt: time.Now().UTC(), Vulnerabilities: make([]AVDVulnerability, 0)}
 	seen := make(map[string]struct{})
 	exhausted := false
@@ -191,15 +193,13 @@ func (c *AVDClient) collectNoCVE(ctx context.Context, shouldStop func(context.Co
 			}
 			if stop {
 				for _, item := range items {
-					if isNoCVEItem(item) {
-						if _, seenBefore := seen[item.VulnerabilityID]; !seenBefore {
-							seen[item.VulnerabilityID] = struct{}{}
-							result.NoCVECandidateCount++
-						}
+					if _, seenBefore := seen[item.VulnerabilityID]; !seenBefore {
+						seen[item.VulnerabilityID] = struct{}{}
+						result.CandidateCount++
 					}
 				}
 				if c.progress != nil {
-					if err := c.progress(ctx, 1, int64(c.maxPages), "fetching", "第一页无 CVE 漏洞均已存在，跳过后续查询"); err != nil {
+					if err := c.progress(ctx, 1, int64(c.maxPages), "fetching", "第一页漏洞均已存在，跳过后续查询"); err != nil {
 						return result, err
 					}
 				}
@@ -207,14 +207,11 @@ func (c *AVDClient) collectNoCVE(ctx context.Context, shouldStop func(context.Co
 			}
 		}
 		for _, item := range items {
-			if !isNoCVEItem(item) {
-				continue
-			}
 			if _, ok := seen[item.VulnerabilityID]; ok {
 				continue
 			}
 			seen[item.VulnerabilityID] = struct{}{}
-			result.NoCVECandidateCount++
+			result.CandidateCount++
 			body, fetchErr := c.fetch(ctx, item.DetailURL)
 			if fetchErr != nil {
 				result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", item.VulnerabilityID, fetchErr))
@@ -228,7 +225,7 @@ func (c *AVDClient) collectNoCVE(ctx context.Context, shouldStop func(context.Co
 			result.Vulnerabilities = append(result.Vulnerabilities, *vuln)
 		}
 		if c.progress != nil {
-			message := fmt.Sprintf("已处理列表第 %d 页，筛出 %d 条无 CVE 候选，成功获取 %d 条详情", page, result.NoCVECandidateCount, len(result.Vulnerabilities))
+			message := fmt.Sprintf("已处理列表第 %d 页，筛出 %d 条漏洞候选，成功获取 %d 条详情", page, result.CandidateCount, len(result.Vulnerabilities))
 			if err := c.progress(ctx, int64(page), int64(c.maxPages), "fetching", message); err != nil {
 				return result, err
 			}
@@ -238,18 +235,6 @@ func (c *AVDClient) collectNoCVE(ctx context.Context, shouldStop func(context.Co
 		return result, errors.New("阿里云高危列表超过最大页数限制")
 	}
 	return result, nil
-}
-
-func isNoCVEItem(item AVDListItem) bool {
-	for _, status := range item.Statuses {
-		if strings.Contains(status, "无CVE") {
-			return true
-		}
-		if aliyunAVDCVEPattern.MatchString(status) {
-			return false
-		}
-	}
-	return !aliyunAVDCVEPattern.MatchString(item.Title)
 }
 
 func (c *AVDClient) fetch(ctx context.Context, target string) ([]byte, error) {
@@ -497,9 +482,6 @@ func parseAVDDetail(body []byte, item AVDListItem) (*AVDVulnerability, error) {
 	})
 	vuln.AffectedSoftware = parseAffectedSoftware(doc)
 	vuln.SecurityCoverage = parseSecurityCoverage(doc)
-	if vuln.CVE != "" && aliyunAVDCVEPattern.MatchString(vuln.CVE) {
-		return nil, errors.New("列表标记无 CVE，但详情页发现 CVE")
-	}
 	return vuln, nil
 }
 
