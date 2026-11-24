@@ -122,13 +122,13 @@ func Run() error {
 	)
 	attackPathTaskRepository := repository.NewAttackPathTaskRepository(db)
 	var attackPathProcessor service.AttackPathFileProcessor
-	if cfg.AI.BaseURL != "" || cfg.AI.Model != "" || cfg.AI.UUAPID != "" {
+	if cfg.AI.Model != "" || cfg.AI.UUAPID != "" {
 		var tokenBytes [32]byte
 		if _, err := rand.Read(tokenBytes[:]); err != nil {
 			return fmt.Errorf("生成本地模型网关凭据失败: %w", err)
 		}
 		localToken := hex.EncodeToString(tokenBytes[:])
-		gateway, err := service.NewAIForceClaudeGateway(cfg.AI.BaseURL, cfg.AI.Model, cfg.AI.UUAPID, localToken, thirdPartyAPIKeyRepository, apiKeyBox)
+		gateway, err := service.NewAIForceClaudeGateway(cfg.AI.Model, cfg.AI.UUAPID, localToken, thirdPartyAPIKeyRepository, apiKeyBox)
 		if err != nil {
 			return fmt.Errorf("初始化 AI Force 本地协议适配器失败: %w", err)
 		}
@@ -144,7 +144,7 @@ func Run() error {
 			}()
 			classifier := service.NewCachedAttackPathClassifier(
 				service.NewAIForceAttackPathClassifier(gateway, apiKeyRateLimiter, cfg.AI.AttackPathConcurrency),
-				modelCache, cfg.AI.BaseURL, cfg.AI.Model,
+				modelCache, service.AIForcePlatformDescription, cfg.AI.Model,
 			)
 			if cfg.AI.AttackPathMode == "hybrid" {
 				attackPathProcessor, err = service.NewHybridAttackPathProcessor(classifier, cfg.PromptFilePath(), cfg.AI.AttackPathConcurrency, cfg.AI.AttackPathBatchSize)

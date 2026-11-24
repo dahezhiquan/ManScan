@@ -37,7 +37,7 @@ func (g *AIForceClaudeGateway) complete(ctx context.Context, payloadObject map[s
 		return completion, errors.New("AI Force key unavailable")
 	}
 	platform, err := url.Parse(strings.TrimSpace(item.PlatformURL))
-	if err != nil || platform.Scheme != "https" || platform.Host != aiForceHost || platform.User != nil || platform.RawQuery != "" || platform.Fragment != "" || (platform.Path != "" && platform.Path != "/" && platform.Path != "/agent-api/openai") {
+	if err != nil || platform.Scheme != "https" || platform.Host != aiForceHost || platform.User != nil || platform.RawQuery != "" || platform.Fragment != "" || platform.Opaque != "" || (platform.Path != "" && platform.Path != "/" && platform.Path != "/agent-api/openai") || !strings.EqualFold(strings.TrimSpace(item.Description), AIForcePlatformDescription) {
 		return completion, errors.New("AI Force key record does not match platform")
 	}
 	if g.limiter != nil {
@@ -49,7 +49,11 @@ func (g *AIForceClaudeGateway) complete(ctx context.Context, payloadObject map[s
 	if err != nil || strings.TrimSpace(secret) == "" {
 		return completion, errors.New("AI Force key unavailable")
 	}
-	upstreamURL := *g.upstream
+	upstreamURL := *platform
+	upstreamURL.Path = strings.TrimRight(upstreamURL.Path, "/")
+	if upstreamURL.Path == "" || upstreamURL.Path == "/" {
+		upstreamURL.Path = "/agent-api/openai"
+	}
 	upstreamURL.Path += "/v1/chat/completions"
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL.String(), bytes.NewReader(payload))
 	if err != nil {

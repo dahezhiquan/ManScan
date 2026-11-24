@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func TestFindAIForceSelectsUniquePlatformRecord(t *testing.T) {
+func TestFindAIForceSelectsUniqueDescriptionRecord(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "api_keys.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		t.Fatal(err)
@@ -26,8 +26,9 @@ func TestFindAIForceSelectsUniquePlatformRecord(t *testing.T) {
 	if _, err := repo.FindAIForce(ctx); !errors.Is(err, gorm.ErrRecordNotFound) {
 		t.Fatalf("missing platform error = %v, want record not found", err)
 	}
-	for _, platform := range []string{"https://example.com/", "https://ai-force.duxiaoman-int.com/", "https://AI-force.duxiaoman-int.com/"} {
-		if err := repo.Create(ctx, &entity.ThirdPartyAPIKey{PlatformURL: platform, EncryptedKey: "ciphertext"}); err != nil {
+	for _, item := range []entity.ThirdPartyAPIKey{{PlatformURL: "https://example.com/", Description: "其他平台"}, {PlatformURL: "https://ai-force.duxiaoman-int.com/", Description: " 原力平台 "}, {PlatformURL: "https://AI-force.duxiaoman-int.com/", Description: "其他平台"}} {
+		item.EncryptedKey = "ciphertext"
+		if err := repo.Create(ctx, &item); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -35,7 +36,7 @@ func TestFindAIForceSelectsUniquePlatformRecord(t *testing.T) {
 	if err != nil || item.PlatformURL != "https://ai-force.duxiaoman-int.com/" {
 		t.Fatalf("selected item = %+v, error = %v", item, err)
 	}
-	if err := repo.Create(ctx, &entity.ThirdPartyAPIKey{PlatformURL: "https://ai-force.duxiaoman-int.com", EncryptedKey: "other"}); err != nil {
+	if err := repo.Create(ctx, &entity.ThirdPartyAPIKey{PlatformURL: "https://custom-ai.internal/agent-api/openai", Description: "原力平台", EncryptedKey: "other"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.FindAIForce(ctx); err == nil {

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -15,10 +14,10 @@ import (
 )
 
 const aiForceHost = "ai-force.duxiaoman-int.com"
+const AIForcePlatformDescription = "原力平台"
 
 // AIForceClaudeGateway translates Messages text and tool calls into AI Force chat completions.
 type AIForceClaudeGateway struct {
-	upstream *url.URL
 	model    string
 	uuapID   string
 	localKey string
@@ -28,12 +27,11 @@ type AIForceClaudeGateway struct {
 	limiter  APIKeyRateLimiter
 }
 
-func NewAIForceClaudeGateway(baseURL, model, uuapID, localKey string, repo repository.ThirdPartyAPIKeyRepository, box *secretbox.Box) (*AIForceClaudeGateway, error) {
-	upstream, err := url.Parse(strings.TrimRight(strings.TrimSpace(baseURL), "/"))
-	if err != nil || upstream.Scheme != "https" || upstream.Host != aiForceHost || upstream.Path != "/agent-api/openai" || upstream.User != nil || upstream.RawQuery != "" || upstream.Fragment != "" || strings.TrimSpace(model) == "" || strings.TrimSpace(uuapID) == "" || strings.ContainsAny(uuapID, "\r\n") || localKey == "" || repo == nil || box == nil {
+func NewAIForceClaudeGateway(model, uuapID, localKey string, repo repository.ThirdPartyAPIKeyRepository, box *secretbox.Box) (*AIForceClaudeGateway, error) {
+	if strings.TrimSpace(model) == "" || strings.TrimSpace(uuapID) == "" || strings.ContainsAny(uuapID, "\r\n") || localKey == "" || repo == nil || box == nil {
 		return nil, errors.New("AI Force 配置不合法")
 	}
-	return &AIForceClaudeGateway{upstream: upstream, model: strings.TrimSpace(model), uuapID: uuapID, localKey: localKey, repo: repo, box: box, client: &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &AIForceClaudeGateway{model: strings.TrimSpace(model), uuapID: uuapID, localKey: localKey, repo: repo, box: box, client: &http.Client{Timeout: 5 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 
 func (g *AIForceClaudeGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {

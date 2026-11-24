@@ -89,7 +89,7 @@ func configuredAttackPathTestGateway(t *testing.T) (*config.Config, *AIForceClau
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := NewAIForceClaudeGateway(cfg.AI.BaseURL, cfg.AI.Model, cfg.AI.UUAPID, key, repository.NewThirdPartyAPIKeyRepository(db), box)
+	gateway, err := NewAIForceClaudeGateway(cfg.AI.Model, cfg.AI.UUAPID, key, repository.NewThirdPartyAPIKeyRepository(db), box)
 	if err != nil {
 		t.Fatal("invalid AI Force gateway configuration")
 	}

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
@@ -74,23 +75,20 @@ func (r *thirdPartyAPIKeyRepository) FindByID(ctx context.Context, itemID int64)
 	return &item, nil
 }
 
-// FindAIForce returns the unique key record belonging to the AI Force platform.
+// FindAIForce returns the unique API key record described as 原力平台.
 func (r *thirdPartyAPIKeyRepository) FindAIForce(ctx context.Context) (*entity.ThirdPartyAPIKey, error) {
 	var items []entity.ThirdPartyAPIKey
-	err := r.db.WithContext(ctx).
-		Where("platform_url IN ?", []string{"https://ai-force.duxiaoman-int.com/", "https://ai-force.duxiaoman-int.com"}).
-		Find(&items).Error
+	err := r.db.WithContext(ctx).Find(&items).Error
 	if err != nil {
 		return nil, err
 	}
 	var matched *entity.ThirdPartyAPIKey
 	for index := range items {
-		platform := items[index].PlatformURL
-		if platform != "https://ai-force.duxiaoman-int.com/" && platform != "https://ai-force.duxiaoman-int.com" {
+		if !strings.EqualFold(strings.TrimSpace(items[index].Description), "原力平台") {
 			continue
 		}
 		if matched != nil {
-			return nil, fmt.Errorf("AI Force 平台存在多条密钥记录，请保留唯一记录")
+			return nil, fmt.Errorf("原力平台存在多条密钥记录，请保留唯一记录")
 		}
 		matched = &items[index]
 	}

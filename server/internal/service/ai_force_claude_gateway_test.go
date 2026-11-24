@@ -39,7 +39,7 @@ func TestAIForceClaudeGatewayConvertsMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := NewAIForceClaudeGateway("https://ai-force.duxiaoman-int.com/agent-api/openai", "global.anthropic.claude-sonnet-5", "operator_dxm", "local-secret", aiForceKeyRepo{&entity.ThirdPartyAPIKey{PlatformURL: "https://ai-force.duxiaoman-int.com/", EncryptedKey: ciphertext}}, box)
+	gateway, err := NewAIForceClaudeGateway("global.anthropic.claude-sonnet-5", "operator_dxm", "local-secret", aiForceKeyRepo{&entity.ThirdPartyAPIKey{PlatformURL: "https://ai-force.duxiaoman-int.com/", Description: "原力平台", EncryptedKey: ciphertext}}, box)
 	if err != nil {
 		t.Fatal(err)
 	}

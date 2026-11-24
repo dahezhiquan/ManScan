@@ -63,7 +63,7 @@ func TestClaudeAttackPathProcessorRealCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := NewAIForceClaudeGateway("https://ai-force.duxiaoman-int.com/agent-api/openai", "claude-sonnet-4-5", "tester", "local-secret", aiForceKeyRepo{&entity.ThirdPartyAPIKey{PlatformURL: "https://ai-force.duxiaoman-int.com/", EncryptedKey: encrypted}}, box)
+	gateway, err := NewAIForceClaudeGateway("claude-sonnet-4-5", "tester", "local-secret", aiForceKeyRepo{&entity.ThirdPartyAPIKey{PlatformURL: "https://ai-force.duxiaoman-int.com/", Description: "原力平台", EncryptedKey: encrypted}}, box)
 	if err != nil {
 		t.Fatal(err)
 	}

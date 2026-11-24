@@ -3004,7 +3004,7 @@ curl -L -OJ \
 综合增量任务还会自动推送新增漏洞预警（独立全量同步任务不触发推送）：
 
 - 触发条件：以 `source + vulnerability_id` 判断是否新增。长亭（`chaitin`）和阿里云（`avd`）新增记录均推送；VulnX（`vulnx`）新增记录仅在 `severity` 为 `high` 或 `critical`，且 `is_kev`、`is_poc`、`is_vkev` 任一为 `true` 时推送。已有记录的字段更新不触发推送；与详情接口一致，`rejected` 记录不推送。长亭新增记录不受 `cve_id` 限制，均以 `ct_id` 推送；阿里云高危列表新增记录同样不限制 CVE，均以 AVD 编号推送。
-- 配置：从 API key 管理表中查找描述为 `推送漏洞预警接口的 API key` 的唯一记录（忽略首尾空格及英文字母大小写）。使用该记录的解密 Key 发送 `Authorization: Bearer <key>`，并使用其共享请求限流；综合任务的 `api_key_id` 不用于推送。配置缺失、重复、密钥不可用或平台 URL 无效时，在采集前将任务标记失败。
+- 配置：从 API key 管理表中查找描述为 `推送漏洞预警` 的唯一记录（忽略首尾空格及英文字母大小写）。使用该记录的解密 Key 发送 `Authorization: Bearer <key>`，并使用其共享请求限流；综合任务的 `api_key_id` 不用于推送。配置缺失、重复、密钥不可用或平台 URL 无效时，在采集前将任务标记失败。
 - 接收地址：使用该记录的“平台 URL”作为基地址，追加 `/v1/alerts`；已包含该路径时不重复追加。允许内网 HTTP(S) 平台，不跟随重定向。示例：`http://intel.internal:8080` 对应 `http://intel.internal:8080/v1/alerts`。
 - 请求：`POST /v1/alerts`，`Content-Type: application/json`。唯一顶层字段为 `data`，其内容直接复用 `GET /api/v1/vulnerability-intelligence-records/:vulnerability_id` 的详情数据，包含 `records`、`articles`、`components`、`pocs`、`shodan_exposures` 五个数组；无关联数据时数组为 `[]`，记录可空字段保持 `null`。不发送 ManScan 的 `code`、`message` 响应外壳；`vuln_status` 随详情发送，由接收端按协议丢弃。单个漏洞一条请求，不截断详情；超过接收端默认 256 KiB 上限时保留待处理并报告失败。
 - 响应与失败处理：HTTP `202`（入队）或 `200`（重复提交），且响应 `resultCode` 与 HTTP 状态码一致时视为成功。HTTP `400`、`401`、`413`、`500`、`503`，以及其他状态、响应格式错误、连接失败或 15 秒请求超时均视为失败。新增记录成功入库后立即尝试推送；推送失败不回滚情报入库。待推送来源及编号保存在 `data/vulnerability_alerts/pending/`，不保存 Key 或详情正文，任务结束前补偿重试（包括之前执行留下的记录）；仍有失败则任务失败，并在执行记录错误信息中显示待重试数量。取消或服务重启后保留待推送记录，下次增量任务重新读取详情和最新 Key 配置再推送。该目录需随服务数据持久化，勿作为临时文件清理。接收端已接收但本地尚未确认成功时可能重复投递，由接收端按协议去重。
@@ -3013,7 +3013,7 @@ curl -L -OJ \
 
 ```http
 POST /v1/alerts
-Authorization: Bearer <推送漏洞预警接口的 API key>
+Authorization: Bearer <推送漏洞预警 API key>
 Content-Type: application/json
 
 {"data":{"records":[{"source":"chaitin","vulnerability_id":"CT-DEMO"}],"articles":[],"components":[],"pocs":[],"shodan_exposures":[]}}
@@ -3266,14 +3266,13 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
 
 ## 攻击路径识别与过滤
 
-部署前执行 docs/SQL/create_manscan_attack_path_tasks.sql。默认使用 hybrid 模式，由本地规则先分类、疑难路径再批量调用模型，无需安装 Claude CLI；可配置 ai.attack_path_mode: cli 回退到原单会话模式，此时需要支持 HTTP MCP、--bare 与 --strict-mcp-config 的 Claude CLI。服务端读取私有 config.yaml 中 ai.base_url、ai.model、ai.uuap_id 及可选 ai.claude_binary。每次模型请求按 platform_url 精确查询 manscan_third_party_api_keys 中唯一的 https://ai-force.duxiaoman-int.com/ 记录，使用现有 auth.api_key_encryption_key 解密；无需配置记录 ID，密钥不会写入文件或 API 响应。
+部署前执行 docs/SQL/create_manscan_attack_path_tasks.sql。默认使用 hybrid 模式，由本地规则先分类、疑难路径再批量调用模型，无需安装 Claude CLI；可配置 ai.attack_path_mode: cli 回退到原单会话模式，此时需要支持 HTTP MCP、--bare 与 --strict-mcp-config 的 Claude CLI。服务端读取私有 config.yaml 中 ai.model、ai.uuap_id 及可选 ai.claude_binary。每次模型请求从 manscan_third_party_api_keys 中查找描述为 `原力平台` 的唯一记录，使用该记录的 `platform_url` 和 API Key；API Key 通过现有 auth.api_key_encryption_key 解密。无需在 config.yaml 中配置记录 ID、URL 或 API Key；密钥不会写入文件或 API 响应。
 
 已有包含 `input_text`、`output_text` 的任务表时，停止任务服务并备份数据库后，一次性执行 `docs/SQL/alter_manscan_attack_path_tasks_file_storage.sql`，再部署当前服务；新建表只执行建表脚本。升级脚本保留已落盘结果的文件名并删除两个正文列，不迁移旧版正文；仅有数据库正文的任务需要重新上传 TXT。
 
 配置示例：
 
     ai:
-      base_url: https://ai-force.duxiaoman-int.com/agent-api/openai
       model: global.anthropic.claude-sonnet-5
       uuap_id: <服务账户的UUAP-ID>
       attack_path_mode: hybrid
@@ -3281,7 +3280,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
       attack_path_batch_size: 500
       claude_binary: /usr/local/bin/claude # 仅 cli 模式需要
 
-`attack_path_mode` 默认 `hybrid`，可选 `hybrid` / `batch` / `cli`；并发数默认 5、范围 1–32；每批条数默认 500、范围 1–1000。未填写或数值为 0 时使用默认值，越界配置会阻止服务启动。这些配置修改后需要重启服务，不支持按上传请求覆盖。
+`attack_path_mode` 默认 `hybrid`，可选 `hybrid` / `batch` / `cli`；并发数默认 5、范围 1–32；每批条数默认 500、范围 1–1000。未填写或数值为 0 时使用默认值，越界配置会阻止服务启动。这些配置修改后需要重启服务，不支持按上传请求覆盖。原力平台的 URL 和 API Key 必须在第三方 API Key 管理中配置，描述填写 `原力平台`；同名配置必须唯一，URL 使用 `https://ai-force.duxiaoman-int.com/` 或其 `/agent-api/openai` 地址。
 
 ### 提示词配置
 

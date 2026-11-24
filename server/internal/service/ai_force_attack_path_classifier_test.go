@@ -27,7 +27,7 @@ func testBatchGateway(t *testing.T) *AIForceClaudeGateway {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := NewAIForceClaudeGateway("https://ai-force.duxiaoman-int.com/agent-api/openai", "test-model", "tester", "local-key", aiForceKeyRepo{&entity.ThirdPartyAPIKey{ID: 1, PlatformURL: "https://ai-force.duxiaoman-int.com/", EncryptedKey: encrypted}}, box)
+	g, err := NewAIForceClaudeGateway("test-model", "tester", "local-key", aiForceKeyRepo{&entity.ThirdPartyAPIKey{ID: 1, PlatformURL: "https://ai-force.duxiaoman-int.com/", Description: "原力平台", EncryptedKey: encrypted}}, box)
 	if err != nil {
 		t.Fatal(err)
 	}
