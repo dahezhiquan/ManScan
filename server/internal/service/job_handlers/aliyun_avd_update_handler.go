@@ -175,7 +175,7 @@ func avdVulnerabilityBundle(vuln *AVDVulnerability) (*repository.VulnerabilityIn
 	if remediation != "" {
 		remediationValue = &remediation
 	}
-	category := "non-cve"
+	category := vulnerabilityIntelligenceCategory(vuln.CVE)
 	var severityValue, title *string
 	if value := strings.TrimSpace(vuln.Severity); value != "" {
 		severity := avdSeverity(value)

@@ -33,7 +33,6 @@ const (
 
 var (
 	aliyunAVDScriptPattern = regexp.MustCompile(`(?s)<script>(.*?)</script>`)
-	aliyunAVDCVEPattern    = regexp.MustCompile(`(?i)\bCVE-[0-9]{4}-[0-9]+\b`)
 	aliyunAVDIDPattern     = regexp.MustCompile(`^AVD-[0-9]{4}-[0-9]+$`)
 	aliyunAVDCWEPattern    = regexp.MustCompile(`(?i)^CWE-[0-9]+$`)
 )
@@ -430,7 +429,7 @@ func parseAVDDetail(body []byte, item AVDListItem) (*AVDVulnerability, error) {
 			vuln.Disclosure = value
 		}
 	})
-	if !aliyunAVDCVEPattern.MatchString(vuln.CVE) {
+	if !vulnerabilityCVEPattern.MatchString(vuln.CVE) {
 		vuln.CVE = ""
 	}
 	vuln.Description = avdSectionText(doc, "漏洞描述")

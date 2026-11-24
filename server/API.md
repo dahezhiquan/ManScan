@@ -2972,8 +2972,9 @@ curl -L -OJ \
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_chaitin_vulnerability_sync.sql`，按 `job_type` 判断，可重复执行。
 - 抓取流程：顺序请求 `https://stack.chaitin.com/api/v2/vuln/list/`，使用 `limit=15` 与 `offset=0,15,30...` 全量分页；同步全部记录，不按 `cve_id` 筛选；无论是否有关联 CVE，均以 `ct_id` 作为漏洞编号。独立全量任务不会因第一页编号全部已存在而提前停止。
 - 数据库映射：在事务中按 `source=chaitin` 与 `ct_id` 更新或新增 `manscan_vulnerability_intelligence_records`，并幂等写入 `references` 到 `manscan_vulnerability_intelligence_articles`。
-- records 沿用 `category=non-cve`（包括有关联 CVE 的 CT 编号记录，不根据 `cve_id` 改写分类），写入标题、描述、影响、解决建议、严重性、披露时间和更新时间；`vulnerability_type`、`is_patch_available`、`cvss_metrics`、`cvss_score` 不写入。articles 的 `source` 固定为 `chaitin`，`added_at` 不写入。
+- records 根据 `cve_id` 分类：包含 CVE 编号时写入 `category=cve`（与 VulnX 一致），缺失、空白或“暂无”等无 CVE 编号的值写入 `category=non-cve`；仍以 CT 编号作为漏洞编号，写入标题、描述、影响、解决建议、严重性、披露时间和更新时间；`vulnerability_type`、`is_patch_available`、`cvss_metrics`、`cvss_score` 不写入。articles 的 `source` 固定为 `chaitin`，`added_at` 不写入。
 - 不写入 `manscan_vulnerability_intelligence_pocs`、`manscan_vulnerability_intelligence_components` 和 `manscan_vulnerability_intelligence_shodan_exposures`。
+- 分类规则同样适用于综合任务中实际同步到的记录。历史分类需重新执行独立全量同步更新，部署不会自动回填整库。
 
 ### 内置任务：阿里云高危漏洞情报全量同步
 
@@ -2984,8 +2985,9 @@ curl -L -OJ \
 - 抓取流程：顺序请求阿里云 `/high-risk/list?page=N`，解析 AVD 编号、标题、类型、披露时间及状态，对所有有效 AVD 编号请求详情页，不按列表状态、标题或详情中的 CVE 筛选；详情中的 CVE 作为采集信息保留，漏洞编号始终使用 AVD 编号。同次采集按 AVD 编号去重，列表结束时停止。列表与详情均限制为 HTTPS 固定主机 `avd.aliyun.com`，响应体最大 16 MiB，具备请求超时、退避重试、Cookie Jar，并执行页面 WAF 校验脚本以取得校验后的 URL。进度在抓取阶段按“已处理列表页/最大列表页数”逐页推送，抓取完成后切换为详情数据库同步、产物写入和完成阶段提示。
 - 详情产物：包含 AVD/CVE 编号、标题、严重等级、利用情况、补丁情况、披露时间、描述、解决建议、参考 URL 数组、阿里云评分、评分拆分指标、CWE、受影响软件、阿里云安全产品覆盖、列表元数据、来源 URL 和抓取时间。源页面未提供的字段为空或缺省，不从描述推断填充。
 - 输出：为兼容既有下载及综合任务打包，继续原子写入 `data/tmp/aliyun_avd/no_cve_vulnerabilities.json`，实际包含有 CVE 和无 CVE 的记录；JSON 历史字段 `no_cve_candidate_count` 现统计全部去重后的 AVD 候选数量。执行记录登记产物路径，可通过定时任务产出下载接口获取。存在部分详情失败时保留成功记录和错误摘要，任务状态标记失败。
-- 数据库映射：在一个事务中按 `source=avd` 与 AVD 编号更新或新增 `manscan_vulnerability_intelligence_records`，并按漏洞编号和 URL 幂等写入参考链接到 `manscan_vulnerability_intelligence_articles`。records 沿用 `category=non-cve`（包括有关联 CVE 的 AVD 编号记录），写入标题、描述、解决建议、阿里云评分、披露时间到 `created_at`，severity 转为 `critical`/`high`/`medium`/`low`/`none`，`is_poc` 在利用情况或 EXP 成熟度为“EXP 已公开”或“POC 已公开”时为 1；`vulnerability_impact` 不写，`updated_at` 不由任务写入。articles 的 `source` 固定为 `avd`，`url` 为参考链接，`added_at` 不由任务写入。已有记录更新时保留现有 `updated_at`、`vulnerability_impact`；新增时间列由数据库默认值生成。
+- 数据库映射：在一个事务中按 `source=avd` 与 AVD 编号更新或新增 `manscan_vulnerability_intelligence_records`，并按漏洞编号和 URL 幂等写入参考链接到 `manscan_vulnerability_intelligence_articles`。records 根据详情中的 CVE 分类：包含 CVE 编号时写入 `category=cve`（与 VulnX 一致），无 CVE 编号时写入 `category=non-cve`；仍以 AVD 编号作为漏洞编号，写入标题、描述、解决建议、阿里云评分、披露时间到 `created_at`，severity 转为 `critical`/`high`/`medium`/`low`/`none`，`is_poc` 在利用情况或 EXP 成熟度为“EXP 已公开”或“POC 已公开”时为 1；`vulnerability_impact` 不写，`updated_at` 不由任务写入。articles 的 `source` 固定为 `avd`，`url` 为参考链接，`added_at` 不由任务写入。已有记录更新时保留现有 `updated_at`、`vulnerability_impact`；新增时间列由数据库默认值生成。
 - 不写入 `manscan_vulnerability_intelligence_components`、`manscan_vulnerability_intelligence_pocs` 和 `manscan_vulnerability_intelligence_shodan_exposures`。
+- 分类规则同样适用于综合任务中实际同步到的记录。历史分类需重新执行独立全量同步更新；综合任务可能提前停止并跳过已有详情，不能保证纠正全部历史记录。
 - 数据库升级：已有数据库执行 `docs/SQL/alter_manscan_vulnerability_intelligence_avd_timestamp_defaults.sql`，以便 records.`updated_at` 和 articles.`added_at` 在任务省略这些字段时由数据库默认生成。
 
 ### 内置任务：漏洞情报增量更新（三渠道）

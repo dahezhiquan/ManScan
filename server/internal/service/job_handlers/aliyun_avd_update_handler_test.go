@@ -261,7 +261,7 @@ func TestAVDBundleUsesConfirmedFieldMapping(t *testing.T) {
 	if record.Source != "avd" || record.VulnerabilityID != "AVD-2026-1911719" || record.Severity == nil || *record.Severity != "high" || record.IsPOC == nil || !*record.IsPOC {
 		t.Fatalf("mapped record = %+v", record)
 	}
-	if record.Category == nil || *record.Category != "non-cve" || record.CreatedAt == nil || record.CreatedAt.Format("2006-01-02") != "2026-08-19" || record.UpdatedAt != nil || record.VulnerabilityImpact != nil {
+	if record.Category == nil || *record.Category != "cve" || record.CreatedAt == nil || record.CreatedAt.Format("2006-01-02") != "2026-08-19" || record.UpdatedAt != nil || record.VulnerabilityImpact != nil {
 		t.Fatalf("record timestamps/impact = %+v", record)
 	}
 	if record.CVSSScore == nil || *record.CVSSScore != score || len(bundle.Articles) != 1 || bundle.Articles[0].Source == nil || *bundle.Articles[0].Source != "avd" || bundle.Articles[0].URL != "https://example.test/advisory" || bundle.Articles[0].AddedAt != nil {
