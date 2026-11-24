@@ -1052,6 +1052,16 @@ func (s *scanTaskService) getProgress(ctx context.Context, taskID int64, status 
 	if err == nil {
 		var snapshot scanruntime.TaskProgressSnapshot
 		if json.Unmarshal(data, &snapshot) == nil {
+			// After a server restart, cancellation can finish in the database
+			// without a live State to update the old on-disk progress snapshot.
+			if isFinishedTaskStatus(status) {
+				snapshot.Finished = true
+				snapshot.FinishedStatus = normalizeTaskStatus(status)
+				snapshot.ProgressStatus = "finished"
+				if snapshot.FinishedStatus == "success" {
+					snapshot.Percent = 100
+				}
+			}
 			if snapshot.ProgressStatus == "" {
 				switch {
 				case snapshot.Finished:
@@ -1078,6 +1088,9 @@ func (s *scanTaskService) getProgress(ctx context.Context, taskID int64, status 
 	}
 	if finished && status == "success" {
 		snapshot.Percent = 100
+	}
+	if finished {
+		snapshot.ProgressStatus = "finished"
 	}
 
 	if status == "" {

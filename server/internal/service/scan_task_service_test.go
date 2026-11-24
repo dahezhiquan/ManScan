@@ -1577,7 +1577,18 @@ func TestCancelMarksStrandedRunningTaskCancelled(t *testing.T) {
 		repository: repo,
 		logger:     logx.New(),
 		states:     map[int64]*scanTaskRuntime{},
+		runtimeDir: t.TempDir(),
 	}
+
+	state, err := scanruntime.NewState(13, "task-13", "stranded-task", 1, svc.runtimeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.UpdateProgress(func(progress *scanruntime.TaskProgressSnapshot) {
+		progress.ProgressStatus = "running"
+		progress.FinishedStatus = "running"
+	})
+	state.Close()
 
 	resp, err := svc.Cancel(context.Background(), 13)
 	if err != nil {
@@ -1591,6 +1602,53 @@ func TestCancelMarksStrandedRunningTaskCancelled(t *testing.T) {
 	}
 	if repo.updateStatusCalls[0].status != "cancelled" {
 		t.Fatalf("updated status = %q, want cancelled", repo.updateStatusCalls[0].status)
+	}
+	progress := svc.getProgress(context.Background(), 13, repo.tasks[13].Status)
+	if !progress.Finished || progress.FinishedStatus != "cancelled" || progress.ProgressStatus != "finished" {
+		t.Fatalf("cancelled task exposed stale progress: %+v", progress)
+	}
+}
+
+func TestGetProgressReconcilesStoredSnapshotWithTaskStatus(t *testing.T) {
+	t.Parallel()
+	for _, status := range []string{"cancelled", "failed", "success", "paused", "running"} {
+		for _, stored := range []bool{true, false} {
+			name := status + "/missing"
+			if stored {
+				name = status + "/stored"
+			}
+			t.Run(name, func(t *testing.T) {
+				svc := &scanTaskService{runtimeDir: t.TempDir()}
+				if stored {
+					if err := os.MkdirAll(svc.runtimeTaskDir(13), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					data := []byte(`{"total_requests":135671,"requests":14235,"percent":13.86,"finished":false,"finished_status":"running","progress_status":"running"}`)
+					if err := os.WriteFile(svc.progressFilePath(13), data, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				progress := svc.getProgress(context.Background(), 13, status)
+				finished := status != "running"
+				if progress.Finished != finished || progress.FinishedStatus != status {
+					t.Fatalf("unexpected progress for %s: %+v", status, progress)
+				}
+				if finished && progress.ProgressStatus != "finished" {
+					t.Fatalf("ProgressStatus = %q, want finished", progress.ProgressStatus)
+				}
+				if status == "success" && progress.Percent != 100 {
+					t.Fatalf("Percent = %v, want 100", progress.Percent)
+				}
+				if stored {
+					if progress.TotalRequests != 135671 || progress.Requests != 14235 {
+						t.Fatalf("request counts changed: %+v", progress)
+					}
+					if status != "success" && progress.Percent != 13.86 {
+						t.Fatalf("Percent = %v, want 13.86", progress.Percent)
+					}
+				}
+			})
+		}
 	}
 }
 
