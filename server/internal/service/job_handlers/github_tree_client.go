@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -18,6 +19,7 @@ const (
 	defaultGitHubAPIBaseURL = "https://api.github.com"
 	defaultCVEOwner         = "CVEProject"
 	defaultCVERepository    = "cvelistV5"
+	githubTreeMaxAttempts   = 3
 )
 
 var cveFileNamePattern = regexp.MustCompile(`^CVE-\d{4}-\d+\.json$`)
@@ -32,6 +34,14 @@ type treeResponse struct {
 	Tree      []treeEntry `json:"tree"`
 	Truncated bool        `json:"truncated"`
 }
+
+type githubTreeRetryError struct{ err error }
+
+func (e *githubTreeRetryError) Error() string {
+	return fmt.Sprintf("GitHub tree request failed after %d attempts: %v", githubTreeMaxAttempts, e.err)
+}
+
+func (e *githubTreeRetryError) Unwrap() error { return e.err }
 
 // GitHubTreeClient reads GitHub Git Tree metadata for one repository.
 type GitHubTreeClient struct {
@@ -95,14 +105,15 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 		}
 		seenTrees[sha] = struct{}{}
 
-		// Recursive trees reduce request volume. A truncated result is discarded
-		// and replaced by a direct listing so every subtree is still visited.
+		// Large recursive responses can time out before GitHub's truncation flag
+		// arrives. Discard incomplete results and walk smaller subtrees instead.
 		recursive := true
 		tree, err := c.getTree(ctx, sha, recursive)
-		if err != nil {
+		var exhausted *githubTreeRetryError
+		if err != nil && (ctx.Err() != nil || !errors.As(err, &exhausted)) {
 			return nil, fmt.Errorf("read tree %q: %w", sha, err)
 		}
-		if tree.Truncated {
+		if err != nil || tree.Truncated {
 			recursive = false
 			tree, err = c.getTree(ctx, sha, recursive)
 			if err != nil {
@@ -140,6 +151,47 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 }
 
 func (c *GitHubTreeClient) getTree(ctx context.Context, ref string, recursive bool) (treeResponse, error) {
+	for attempt := 0; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return treeResponse{}, err
+		}
+		// Every actual attempt shares the key's quota. Configuration/limiter
+		// failures must stop immediately rather than become network retries.
+		if c.beforeRequest != nil {
+			if err := c.beforeRequest(ctx); err != nil {
+				return treeResponse{}, err
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return treeResponse{}, err
+		}
+		tree, err := c.getTreeOnce(ctx, ref, recursive)
+		if ctx.Err() != nil {
+			return treeResponse{}, ctx.Err()
+		}
+		if err == nil || !retryableGitHubTreeError(err) {
+			return tree, err
+		}
+		if attempt+1 >= githubTreeMaxAttempts {
+			return treeResponse{}, &githubTreeRetryError{err: err}
+		}
+		timer := time.NewTimer(time.Second << attempt)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return treeResponse{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func retryableGitHubTreeError(err error) bool {
+	var networkError net.Error
+	return (errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary())) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+func (c *GitHubTreeClient) getTreeOnce(ctx context.Context, ref string, recursive bool) (treeResponse, error) {
 	baseURL := strings.TrimRight(c.BaseURL, "/")
 	endpoint := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s", baseURL, c.Owner, c.Repository, url.PathEscape(ref))
 	if recursive {
@@ -159,11 +211,6 @@ func (c *GitHubTreeClient) getTree(ctx context.Context, ref string, recursive bo
 	httpClient := c.HTTPClient
 	if httpClient == nil {
 		httpClient = http.DefaultClient
-	}
-	if c.beforeRequest != nil {
-		if err := c.beforeRequest(ctx); err != nil {
-			return treeResponse{}, err
-		}
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
