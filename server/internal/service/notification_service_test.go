@@ -15,7 +15,6 @@ import (
 
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
-	"ManScan/server/internal/pkg/secretbox"
 	"ManScan/server/internal/repository"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -58,12 +57,8 @@ func newNotificationTestService(t *testing.T) (*notificationService, *gorm.DB, *
 	if err := repository.NewNotificationRepository(db).Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	box, err := secretbox.New("notification-test-encryption-key-long-enough")
-	if err != nil {
-		t.Fatal(err)
-	}
 	sender := &notificationSenderStub{}
-	svc := NewNotificationService(repository.NewNotificationRepository(db), box, nil, sender, nil).(*notificationService)
+	svc := NewNotificationService(repository.NewNotificationRepository(db), nil, sender, nil).(*notificationService)
 	return svc, db, sender
 }
 
@@ -72,8 +67,11 @@ func notificationTestRequest(enabled bool) dto.SaveNotificationRequest {
 	return dto.SaveNotificationRequest{Name: "扫描通知", Enabled: &enabled, Webhook: &webhook}
 }
 
-func TestNotificationCRUDEncryptionSwitchAndPagination(t *testing.T) {
+func TestNotificationCRUDPlaintextSwitchAndPagination(t *testing.T) {
 	s, db, _ := newNotificationTestService(t)
+	if !db.Migrator().HasColumn(&entity.Notification{}, "webhook") || db.Migrator().HasColumn(&entity.Notification{}, "encrypted_webhook") {
+		t.Fatal("notification schema must use only the webhook column")
+	}
 	ctx := context.Background()
 	created, err := s.Create(ctx, notificationTestRequest(true))
 	if err != nil {
@@ -86,11 +84,10 @@ func TestNotificationCRUDEncryptionSwitchAndPagination(t *testing.T) {
 	if err := db.First(&stored, created.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	plaintext, err := s.box.Decrypt(stored.EncryptedWebhook)
-	if err != nil || plaintext != testNotificationWebhook || strings.Contains(stored.EncryptedWebhook, "open.feishu.cn") {
-		t.Fatal("webhook encryption failed")
+	if stored.Webhook != testNotificationWebhook {
+		t.Fatal("webhook was not stored as plaintext")
 	}
-	originalCiphertext := stored.EncryptedWebhook
+	originalWebhook := stored.Webhook
 	request := notificationTestRequest(false)
 	request.Webhook = nil
 	request.Style = "cat_orange"
@@ -104,8 +101,8 @@ func TestNotificationCRUDEncryptionSwitchAndPagination(t *testing.T) {
 	if err := db.First(&stored, created.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.EncryptedWebhook != originalCiphertext {
-		t.Fatal("omitted webhook changed ciphertext")
+	if stored.Webhook != originalWebhook {
+		t.Fatal("omitted webhook changed stored address")
 	}
 	newWebhook := strings.Replace(testNotificationWebhook, "00000000-", "11111111-", 1)
 	request.Webhook = &newWebhook
@@ -115,8 +112,7 @@ func TestNotificationCRUDEncryptionSwitchAndPagination(t *testing.T) {
 	if err := db.First(&stored, created.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	plaintext, err = s.box.Decrypt(stored.EncryptedWebhook)
-	if err != nil || plaintext != newWebhook {
+	if stored.Webhook != newWebhook {
 		t.Fatal("replacement webhook not stored")
 	}
 	if _, err := s.Create(ctx, notificationTestRequest(true)); err != nil {
@@ -133,7 +129,7 @@ func TestNotificationCRUDEncryptionSwitchAndPagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(encoded), testNotificationWebhook) || strings.Contains(string(encoded), stored.EncryptedWebhook) {
+	if strings.Contains(string(encoded), testNotificationWebhook) || strings.Contains(string(encoded), stored.Webhook) {
 		t.Fatal("credentials exposed")
 	}
 	enabled, err := s.repository.FindEnabled(ctx, NotificationEventScanStarted, 0, 1)
@@ -151,11 +147,148 @@ func TestNotificationCRUDEncryptionSwitchAndPagination(t *testing.T) {
 	}
 }
 
+func TestNotificationPlaintextWebhookDelivery(t *testing.T) {
+	s, _, sender := newNotificationTestService(t)
+	ctx := context.Background()
+	created, err := s.Create(ctx, notificationTestRequest(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := s.repository.FindByID(ctx, created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []string{"", "opaque-ciphertext", "http://127.0.0.1/webhook"} {
+		item.Webhook = invalid
+		if err := s.repository.Update(ctx, item, true); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Test(ctx, item.ID, "admin"); !errors.Is(err, ErrNotificationDelivery) {
+			t.Fatal("invalid stored address accepted")
+		}
+	}
+	if len(sender.webhooks) != 0 {
+		t.Fatal("invalid stored address reached sender")
+	}
+	if _, err := s.Update(ctx, item.ID, notificationTestRequest(true)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Test(ctx, item.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.webhooks) != 1 || sender.webhooks[0] != testNotificationWebhook {
+		t.Fatal("plaintext address was not sent directly")
+	}
+}
+
+func TestNotificationDescriptionLifecycle(t *testing.T) {
+	s, db, _ := newNotificationTestService(t)
+	ctx := context.Background()
+	request := notificationTestRequest(true)
+	description := "  扫描发起时通知安全巡检群 🐱  "
+	request.Description = &description
+	created, err := s.Create(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertDescription := func(t *testing.T, want string) {
+		t.Helper()
+		got, err := s.Get(ctx, created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, err := s.List(ctx, 1, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stored entity.Notification
+		if err := db.First(&stored, created.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if got.Description != want || stored.Description != want || len(page.Items) != 1 || page.Items[0].Description != want {
+			t.Fatalf("description not preserved in storage/detail/list, want %q", want)
+		}
+	}
+	if created.Description != strings.TrimSpace(description) {
+		t.Fatalf("create description=%q", created.Description)
+	}
+	assertDescription(t, strings.TrimSpace(description))
+	request.Webhook = nil
+	maximum := strings.Repeat("猫", 500)
+	empty, whitespace := "", " \n\t "
+	for _, test := range []struct {
+		name        string
+		description *string
+		want        string
+	}{
+		{"replace at character limit", &maximum, maximum},
+		{"omitted preserves value", nil, maximum},
+		{"explicit empty clears value", &empty, ""},
+		{"restore value", &description, strings.TrimSpace(description)},
+		{"whitespace clears value", &whitespace, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request.Description = test.description
+			updated, err := s.Update(ctx, created.ID, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if updated.Description != test.want {
+				t.Fatalf("updated description=%q, want %q", updated.Description, test.want)
+			}
+			assertDescription(t, test.want)
+		})
+	}
+	tooLong := strings.Repeat("猫", 501)
+	request.Description = &tooLong
+	if _, err := s.Update(ctx, created.ID, request); !errors.Is(err, ErrInvalidNotification) {
+		t.Fatalf("overlong description accepted: %v", err)
+	}
+	assertDescription(t, "")
+	legacy, err := s.Create(ctx, notificationTestRequest(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Description != "" {
+		t.Fatalf("omitted description=%q", legacy.Description)
+	}
+}
+
+func TestNotificationDescriptionMigrationPreservesExistingPolicy(t *testing.T) {
+	s, db, _ := newNotificationTestService(t)
+	ctx := context.Background()
+	created, err := s.Create(ctx, notificationTestRequest(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var before entity.Notification
+	if err := db.First(&before, created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Emulate an existing database created before the description field.
+	if err := db.Migrator().DropColumn(&entity.Notification{}, "description"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.repository.Migrate(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var after entity.Notification
+	if err := db.First(&after, created.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("migration changed existing notification metadata or credentials")
+	}
+}
+
 func TestNotificationInvalidConfiguration(t *testing.T) {
 	s, _, _ := newNotificationTestService(t)
 	cases := []func(*dto.SaveNotificationRequest){
 		func(r *dto.SaveNotificationRequest) { r.Name = " " },
 		func(r *dto.SaveNotificationRequest) { r.Name = strings.Repeat("猫", 101) },
+		func(r *dto.SaveNotificationRequest) { value := strings.Repeat("猫", 501); r.Description = &value },
 		func(r *dto.SaveNotificationRequest) { r.Enabled = nil },
 		func(r *dto.SaveNotificationRequest) { r.Webhook = nil },
 		func(r *dto.SaveNotificationRequest) { r.Style = "custom" },

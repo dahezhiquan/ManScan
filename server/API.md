@@ -3474,9 +3474,13 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 
 ## 飞书群通知
 
-通知配置保存到数据库表 `manscan_notifications`。服务启动时仅自动迁移通知表，显式采用 utf8mb4（旧通知表如为其他字符集会转换），不修改其他业务表；数据库账号需要该表的建表/变更权限。Webhook 使用现有 `auth.api_key_encryption_key` / `MANSCAN_API_KEY_ENCRYPTION_KEY` 加密保存到 `encrypted_webhook`，接口只返回遮蔽后的地址，更新时省略 `webhook` 可保留已有密文。
+通知配置保存到数据库表 `manscan_notifications`。服务启动时仅自动迁移通知表结构，显式采用 utf8mb4（旧通知表如为其他字符集会转换），不修改其他业务表；数据库账号需要该表的建表/变更权限。Webhook 以明文保存到 `webhook` 列，新增、修改和发送均直接使用明文地址。接口仍只返回遮蔽后的地址，更新时省略或传 null 的 `webhook` 可保留已有地址。
+
+通知功能不依赖加密器，不执行历史密文转换，也不兼容密文发送。已有表如仍使用 `encrypted_webhook` 列，需在启动新版服务前执行 `docs/SQL/alter_manscan_notifications_plaintext_webhook.sql`，将列名改为 `webhook`；该脚本仅重命名字段，保留原值。旧记录如果仍为密文，需要通过通知修改接口重新填写完整的明文地址后才能发送。新建表使用 `docs/SQL/create_manscan_notifications.sql`。第三方 API Key 的加密配置与行为不变。
 
 所有通知接口均需要 Bearer Token 和 `admin` 角色。普通用户不能读取、创建、修改、删除或测试全局群通知。多个启用的配置可订阅同一事件并分别发送到各自的群。
+
+通知策略的 `description` 为可选的通知描述，最多 500 字符，保存时去除首尾空白；用于管理策略，不作为飞书卡片中的扫描简介或通知标题。创建时省略或传 null 默认为空字符串；修改时省略或传 null 保留原描述，传空字符串可清空。创建、修改、详情和列表响应均包含该字段。新版服务启动时会自动补齐该列，已有记录默认为空字符串；手动升级已存在且缺少该列的表可执行 `docs/SQL/alter_manscan_notifications_add_description.sql`，新建表使用 `docs/SQL/create_manscan_notifications.sql`。
 
 ### 通知事件和卡片字段
 
@@ -3506,6 +3510,7 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | name | string | 是 | 1–100 字符，去除首尾空白后不能为空 |
+| description | string | 否 | 通知策略描述，最多 500 字符，去除首尾空白；省略或 null 默认为空字符串 |
 | enabled | boolean | 是 | true 开启自动通知，false 关闭；不能省略 |
 | webhook | string | 是 | 飞书自定义机器人完整 webhook，最大 512 字符；不会明文返回 |
 | event | string | 否 | 当前仅 scan_started，默认 scan_started |
@@ -3520,6 +3525,7 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
   "data": {
     "id": 1,
     "name": "扫描发起通知",
+    "description": "扫描任务发起时通知安全巡检群",
     "enabled": true,
     "event": "scan_started",
     "webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/********",
@@ -3530,13 +3536,13 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 }
 ```
 
-- 错误码：40001 参数或 webhook 不合法；40101 未登录；40301 非管理员；50001 加密或保存失败。
+- 错误码：40001 参数或 webhook 不合法；40101 未登录；40301 非管理员；50001 保存失败。
 - 使用示例（真实地址放在环境变量中，不要提交到版本库）：
 
 ```bash
 # FEISHU_WEBHOOK 和 TOKEN 由操作者在当前会话中设置。
 jq -n --arg webhook "$FEISHU_WEBHOOK" \
-  '{name:"扫描发起通知",enabled:true,event:"scan_started",webhook:$webhook,style:"orange"}' |
+  '{name:"扫描发起通知",description:"扫描任务发起时通知安全巡检群",enabled:true,event:"scan_started",webhook:$webhook,style:"orange"}' |
   curl -X POST 'http://127.0.0.1:8686/api/v1/notifications' \
     -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data-binary @-
 ```
@@ -3569,6 +3575,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8686/api/v1/notificatio
 
 - 方法和路径：`PUT /api/v1/notifications/:id`
 - 请求参数：id（int64，路径参数，必填，正整数）；JSON 中 name、enabled 必填，规则同创建；event、style 可选，省略时分别使用 scan_started 和 blue；webhook 可选，省略或 null 保留原地址，提供时必须为新的合法完整地址，不能回传遮蔽地址或空字符串。
+- description（string，可选）：最多 500 字符，去除首尾空白；省略或 null 保留原描述，传空字符串或全空白字符串清空。
 - 响应格式：与创建通知相同，返回修改后的通知对象。
 - 错误码：40001 参数非法；40101 未登录；40301 非管理员；40401 配置不存在；50001 保存失败。
 - 使用示例（关闭通知并保留原 webhook）：
@@ -3576,7 +3583,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8686/api/v1/notificatio
 ```bash
 curl -X PUT 'http://127.0.0.1:8686/api/v1/notifications/1' \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"扫描发起通知","enabled":false,"event":"scan_started","style":"orange"}'
+  -d '{"name":"扫描发起通知","description":"扫描任务发起时通知安全巡检群","enabled":false,"event":"scan_started","style":"orange"}'
 ```
 
 ### 删除通知
@@ -3618,7 +3625,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8686/api/v1/not
 
 ### 命令行初始化通知
 
-管理员也可在项目根目录执行以下命令，用现有 config.yaml 中的数据库与加密配置创建通知，无须启动扫描服务。环境变量 MANSCAN_FEISHU_WEBHOOK 只用于本次配置写入，不会硬编码到程序；命令不会发送消息。同名配置已存在时拒绝重复创建，后续编辑使用通知 API。
+管理员也可在项目根目录执行以下命令，用现有 config.yaml 中的数据库配置创建明文通知地址，无须启动扫描服务。配置加载仍遵循服务端统一校验。环境变量 MANSCAN_FEISHU_WEBHOOK 只用于本次配置写入，不会硬编码到程序；命令不会发送消息。同名配置已存在时拒绝重复创建，后续编辑使用通知 API。
 
     MANSCAN_FEISHU_WEBHOOK='<机器人完整地址>' go run ./server/cmd/notification -name '扫描发起通知' -style orange -enabled=true
 

@@ -12,7 +12,6 @@ import (
 	"ManScan/server/internal/handler"
 	"ManScan/server/internal/middleware"
 	"ManScan/server/internal/model/entity"
-	"ManScan/server/internal/pkg/secretbox"
 	"ManScan/server/internal/repository"
 	"ManScan/server/internal/service"
 	"github.com/gin-gonic/gin"
@@ -40,11 +39,7 @@ func TestNotificationHandlerCRUDValidationAndAdmin(t *testing.T) {
 	if err = db.AutoMigrate(&entity.Notification{}); err != nil {
 		t.Fatal(err)
 	}
-	box, err := secretbox.New("notification-handler-test-secret-32-bytes")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := handler.NewNotificationHandler(service.NewNotificationService(repository.NewNotificationRepository(db), box, nil, nil, nil), nil)
+	h := handler.NewNotificationHandler(service.NewNotificationService(repository.NewNotificationRepository(db), nil, nil, nil), nil)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(middleware.ContextUserRoleKey, c.GetHeader("X-Test-Role"))
@@ -67,16 +62,72 @@ func TestNotificationHandlerCRUDValidationAndAdmin(t *testing.T) {
 		router.ServeHTTP(w, r)
 		return w
 	}
-	body := `{"name":"scan","enabled":true,"webhook":"https://open.feishu.cn/open-apis/bot/v2/hook/00000000-0000-0000-0000-000000000000","style":"cat_orange"}`
+	body := `{"name":"scan","description":"  扫描发起通知策略 🐱  ","enabled":true,"webhook":"https://open.feishu.cn/open-apis/bot/v2/hook/00000000-0000-0000-0000-000000000000","style":"cat_orange"}`
 	created := request("POST", "/notifications", body, "admin")
 	if created.Code != 200 {
 		t.Fatalf("create: %s", created.Body.String())
 	}
-	var result struct{ Data struct{ ID int64 } }
+	var result struct {
+		Data struct {
+			ID          int64
+			Description string
+		}
+	}
 	if err = json.Unmarshal(created.Body.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
 	path := fmt.Sprintf("/notifications/%d", result.Data.ID)
+	if result.Data.Description != "扫描发起通知策略 🐱" {
+		t.Fatalf("create description=%q", result.Data.Description)
+	}
+	for _, test := range []struct {
+		name, body, want string
+		status           int
+	}{
+		{"omitted", `{"name":"scan","enabled":true}`, "扫描发起通知策略 🐱", 200},
+		{"null", `{"name":"scan","enabled":true,"description":null}`, "扫描发起通知策略 🐱", 200},
+		{"maximum", fmt.Sprintf(`{"name":"scan","enabled":true,"description":%q}`, strings.Repeat("猫", 500)), strings.Repeat("猫", 500), 200},
+		{"overlong", fmt.Sprintf(`{"name":"scan","enabled":true,"description":%q}`, strings.Repeat("猫", 501)), strings.Repeat("猫", 500), 400},
+		{"invalid type", `{"name":"scan","enabled":true,"description":123}`, strings.Repeat("猫", 500), 400},
+		{"clear", `{"name":"scan","enabled":true,"description":""}`, "", 200},
+	} {
+		t.Run("description "+test.name, func(t *testing.T) {
+			w := request("PUT", path, test.body, "admin")
+			if w.Code != test.status {
+				t.Fatalf("update: %d %s", w.Code, w.Body.String())
+			}
+			for i, response := range []*httptest.ResponseRecorder{w, request("GET", path, "", "admin")} {
+				if i == 0 && test.status != 200 {
+					continue
+				}
+				if response.Code != 200 {
+					t.Fatalf("description response: %d %s", response.Code, response.Body.String())
+				}
+				var value struct{ Data struct{ Description *string } }
+				if err := json.Unmarshal(response.Body.Bytes(), &value); err != nil {
+					t.Fatal(err)
+				}
+				if value.Data.Description == nil || *value.Data.Description != test.want {
+					t.Fatalf("description response: %s", response.Body.String())
+				}
+			}
+			listed := request("GET", "/notifications", "", "admin")
+			var list struct {
+				Data struct {
+					Items []struct{ Description *string }
+				}
+			}
+			if listed.Code != 200 {
+				t.Fatalf("list: %s", listed.Body.String())
+			}
+			if err := json.Unmarshal(listed.Body.Bytes(), &list); err != nil {
+				t.Fatal(err)
+			}
+			if len(list.Data.Items) != 1 || list.Data.Items[0].Description == nil || *list.Data.Items[0].Description != test.want {
+				t.Fatalf("list description: %s", listed.Body.String())
+			}
+		})
+	}
 	for _, tc := range []struct {
 		method, path, body string
 		status             int
@@ -138,6 +189,9 @@ func TestNotificationHandlerCRUDValidationAndAdmin(t *testing.T) {
 	}
 	if stored.Enabled || stored.Style != "purple" {
 		t.Fatal("switch/style not updated")
+	}
+	if stored.Webhook != "https://open.feishu.cn/open-apis/bot/v2/hook/00000000-0000-0000-0000-000000000000" {
+		t.Fatal("webhook not stored as plaintext")
 	}
 	for _, role := range []string{"", "user"} {
 		for _, tc := range []struct{ method, path string }{{"GET", "/notifications"}, {"GET", "/notifications/styles"}, {"GET", path}, {"POST", "/notifications"}, {"PUT", path}, {"DELETE", path}, {"POST", path + "/test"}} {

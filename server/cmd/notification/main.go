@@ -12,7 +12,6 @@ import (
 	"ManScan/server/config"
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/logx"
-	"ManScan/server/internal/pkg/secretbox"
 	"ManScan/server/internal/repository"
 	"ManScan/server/internal/service"
 	"gorm.io/driver/mysql"
@@ -62,11 +61,7 @@ func provision(name, style string, enabled bool, logger *logx.Logger) error {
 	if err = repo.Migrate(ctx); err != nil {
 		return fmt.Errorf("初始化通知表失败")
 	}
-	box, err := secretbox.New(cfg.Auth.APIKeyEncryptionKey)
-	if err != nil {
-		return fmt.Errorf("初始化通知加密器失败")
-	}
-	svc := service.NewNotificationService(repo, box, nil, nil, logger)
+	svc := service.NewNotificationService(repo, nil, nil, logger)
 	// Avoid silently creating repeated subscriptions when the command is rerun.
 	for page := 1; ; page++ {
 		existing, err := svc.List(ctx, page, 100)

@@ -10,7 +10,6 @@ import (
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/pkg/logx"
-	"ManScan/server/internal/pkg/secretbox"
 	"ManScan/server/internal/repository"
 	"gorm.io/gorm"
 )
@@ -57,19 +56,18 @@ type NotificationService interface {
 
 type notificationService struct {
 	repository repository.NotificationRepository
-	box        *secretbox.Box
 	logger     *logx.Logger
 	templates  repository.TemplateRepository
 	sender     FeishuSender
 	queue      chan ScanStartedNotification
 }
 
-// NewNotificationService reuses the existing secret box for webhook encryption.
-func NewNotificationService(repo repository.NotificationRepository, box *secretbox.Box, templates repository.TemplateRepository, sender FeishuSender, logger *logx.Logger) NotificationService {
-	return &notificationService{repository: repo, box: box, templates: templates, sender: sender, logger: logger, queue: make(chan ScanStartedNotification, 128)}
+// NewNotificationService creates a notification service using plaintext webhooks.
+func NewNotificationService(repo repository.NotificationRepository, templates repository.TemplateRepository, sender FeishuSender, logger *logx.Logger) NotificationService {
+	return &notificationService{repository: repo, templates: templates, sender: sender, logger: logger, queue: make(chan ScanStartedNotification, 128)}
 }
 
-// Create validates and encrypts the webhook before inserting a subscription.
+// Create validates and stores the plaintext webhook before inserting a subscription.
 func (s *notificationService) Create(ctx context.Context, request dto.SaveNotificationRequest) (*dto.NotificationResponse, error) {
 	item := &entity.Notification{}
 	if err := s.applyRequest(item, request, true); err != nil {
@@ -113,6 +111,9 @@ func (s *notificationService) applyRequest(item *entity.Notification, request dt
 	if name == "" || utf8.RuneCountInString(name) > 100 || request.Enabled == nil || event != NotificationEventScanStarted || !validNotificationStyle(style) {
 		return ErrInvalidNotification
 	}
+	if request.Description != nil && utf8.RuneCountInString(*request.Description) > 500 {
+		return ErrInvalidNotification
+	}
 	if create && request.Webhook == nil {
 		return ErrInvalidNotification
 	}
@@ -121,16 +122,13 @@ func (s *notificationService) applyRequest(item *entity.Notification, request dt
 		if !validFeishuWebhook(webhook) {
 			return ErrInvalidNotification
 		}
-		if s.box == nil {
-			return errors.New("通知加密器未配置")
-		}
-		encrypted, err := s.box.Encrypt(webhook)
-		if err != nil {
-			return errors.New("通知地址加密失败")
-		}
-		item.EncryptedWebhook = encrypted
+		item.Webhook = webhook
 	}
 	item.Name, item.Enabled, item.Event, item.Style = name, *request.Enabled, event, style
+	// Omitted descriptions preserve existing policies for older API clients.
+	if request.Description != nil {
+		item.Description = strings.TrimSpace(*request.Description)
+	}
 	return nil
 }
 
@@ -291,11 +289,7 @@ func (s *notificationService) dispatch(ctx context.Context, event ScanStartedNot
 }
 
 func (s *notificationService) deliver(ctx context.Context, item entity.Notification, event ScanStartedNotification, templateCount string) error {
-	if s.box == nil || s.sender == nil || !validNotificationStyle(item.Style) {
-		return ErrNotificationDelivery
-	}
-	webhook, err := s.box.Decrypt(item.EncryptedWebhook)
-	if err != nil {
+	if s.sender == nil || !validNotificationStyle(item.Style) || !validFeishuWebhook(item.Webhook) {
 		return ErrNotificationDelivery
 	}
 	payload, err := buildScanStartedCard(item.Style, event, templateCount, notificationSystemIPs())
@@ -304,7 +298,7 @@ func (s *notificationService) deliver(ctx context.Context, item entity.Notificat
 	}
 	sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err = s.sender.Send(sendCtx, webhook, payload); err != nil {
+	if err = s.sender.Send(sendCtx, item.Webhook, payload); err != nil {
 		return ErrNotificationDelivery
 	}
 	return nil
@@ -317,7 +311,7 @@ func (s *notificationService) logFailure(taskID, notificationID int64, reason st
 }
 
 func notificationResponse(item entity.Notification) dto.NotificationResponse {
-	return dto.NotificationResponse{ID: item.ID, Name: item.Name, Enabled: item.Enabled, Event: item.Event, Webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/********", Style: normalizeNotificationStyle(item.Style), CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	return dto.NotificationResponse{ID: item.ID, Name: item.Name, Description: item.Description, Enabled: item.Enabled, Event: item.Event, Webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/********", Style: normalizeNotificationStyle(item.Style), CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }
 
 func notificationReadError(err error) error {

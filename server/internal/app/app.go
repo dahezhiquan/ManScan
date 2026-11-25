@@ -118,7 +118,7 @@ func Run() error {
 	if migrationErr != nil {
 		return fmt.Errorf("初始化通知配置表失败: %w", migrationErr)
 	}
-	notificationService := service.NewNotificationService(notificationRepository, apiKeyBox, templateRepository, service.NewFeishuSender(), logger)
+	notificationService := service.NewNotificationService(notificationRepository, templateRepository, service.NewFeishuSender(), logger)
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
 		vulnerabilityRepository,

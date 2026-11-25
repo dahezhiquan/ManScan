@@ -26,7 +26,7 @@ func NewNotificationRepository(db *gorm.DB) NotificationRepository {
 	return &notificationRepository{db: db}
 }
 
-// Create inserts a configuration with an encrypted webhook.
+// Create inserts a configuration with a plaintext webhook.
 func (r *notificationRepository) Create(ctx context.Context, item *entity.Notification) error {
 	return r.db.WithContext(ctx).Create(item).Error
 }
@@ -63,9 +63,9 @@ func (r *notificationRepository) FindEnabled(ctx context.Context, event string, 
 
 // Update also persists false switches and preserves an omitted webhook.
 func (r *notificationRepository) Update(ctx context.Context, item *entity.Notification, replaceWebhook bool) error {
-	values := map[string]any{"name": item.Name, "enabled": item.Enabled, "event": item.Event, "style": item.Style}
+	values := map[string]any{"name": item.Name, "description": item.Description, "enabled": item.Enabled, "event": item.Event, "style": item.Style}
 	if replaceWebhook {
-		values["encrypted_webhook"] = item.EncryptedWebhook
+		values["webhook"] = item.Webhook
 	}
 	return r.db.WithContext(ctx).Model(&entity.Notification{}).Where("id = ?", item.ID).Updates(values).Error
 }

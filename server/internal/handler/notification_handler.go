@@ -181,7 +181,7 @@ func notificationID(c *gin.Context) (int64, bool) {
 func handleNotificationError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, service.ErrInvalidNotification):
-		response.Fail(c, errcode.InvalidParams, "名称、开关、事件、飞书 webhook 或卡片样式不合法")
+		response.Fail(c, errcode.InvalidParams, "名称、描述、开关、事件、飞书 webhook 或卡片样式不合法")
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		response.Fail(c, errcode.NotFound, "通知配置不存在")
 	case errors.Is(err, service.ErrNotificationDelivery):
