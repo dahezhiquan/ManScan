@@ -61,7 +61,7 @@ type GitHubTreeClient struct {
 func NewGitHubTreeClient(token string) *GitHubTreeClient {
 	return &GitHubTreeClient{
 		HTTPClient: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 120 * time.Second,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
