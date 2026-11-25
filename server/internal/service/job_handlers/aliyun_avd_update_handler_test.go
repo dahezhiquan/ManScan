@@ -73,7 +73,7 @@ func TestAVDClientIncrementalStopsAfterExistingFirstPage(t *testing.T) {
 		body := `<table><tbody><tr><td><a href="/detail?id=AVD-2026-2">AVD-2026-2</a></td><td>No CVE vuln</td><td>type</td><td>2026-02-01</td><td><button title="无CVE">CVE</button></td></tr></tbody></table>`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})
-	collection, err := client.CollectWithFirstPageStop(context.Background(), func(_ context.Context, items []AVDListItem) (bool, error) {
+	collection, err := client.CollectWithPageStop(context.Background(), func(_ context.Context, items []AVDListItem) (bool, error) {
 		return len(items) == 1 && items[0].VulnerabilityID == "AVD-2026-2", nil
 	})
 	if err != nil {

@@ -2975,7 +2975,7 @@ curl -L -OJ \
 - `job_type`：`chaitin_vulnerability.sync`
 - 默认计划建议：`0 30 * * *`，时区 `Asia/Shanghai`。
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_chaitin_vulnerability_sync.sql`，按 `job_type` 判断，可重复执行。
-- 抓取流程：顺序请求 `https://stack.chaitin.com/api/v2/vuln/list/`，使用 `limit=15` 与 `offset=0,15,30...` 全量分页；同步全部记录，不按 `cve_id` 筛选；无论是否有关联 CVE，均以 `ct_id` 作为漏洞编号。独立全量任务不会因第一页编号全部已存在而提前停止。
+- 抓取流程：顺序请求 `https://stack.chaitin.com/api/v2/vuln/list/`，使用 `limit=15` 与 `offset=0,15,30...` 全量分页；同步全部记录，不按 `cve_id` 筛选；无论是否有关联 CVE，均以 `ct_id` 作为漏洞编号。独立全量任务不会因任意页编号全部已存在而提前停止。
 - 数据库映射：在事务中按 `source=chaitin` 与 `ct_id` 更新或新增 `manscan_vulnerability_intelligence_records`，并幂等写入 `references` 到 `manscan_vulnerability_intelligence_articles`。
 - records 根据 `cve_id` 分类：包含 CVE 编号时写入 `category=cve`（与 VulnX 一致），缺失、空白或“暂无”等无 CVE 编号的值写入 `category=non-cve`；仍以 CT 编号作为漏洞编号，写入标题、描述、影响、解决建议、严重性、披露时间和更新时间；`vulnerability_type`、`is_patch_available`、`cvss_metrics`、`cvss_score` 不写入。articles 的 `source` 固定为 `chaitin`，`added_at` 不写入。
 - 不写入 `manscan_vulnerability_intelligence_pocs`、`manscan_vulnerability_intelligence_components` 和 `manscan_vulnerability_intelligence_shodan_exposures`。
@@ -2999,7 +2999,7 @@ curl -L -OJ \
 
 - `job_type`：`vulnerability_intelligence.incremental`
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_vulnerability_incremental.sql`，默认每天 02:00 执行，按 `job_type` 判断后可重复执行。默认超时 21600 秒；任务顺序执行三个渠道。
-- 执行顺序：长亭全部漏洞列表、阿里云高危列表全部漏洞及详情、VulnX 最新完整 CVE 列表及缺失项详情。综合任务中，长亭获取第一页后，若该页全部 `ct_id` 均已存在于 `source=chaitin` 的数据库记录中，则更新完第一页后停止请求后续列表页；此判断不受 `cve_id` 影响。阿里云按第一页全部 AVD 编号判断，不限制 CVE；全部已存在时停止后续列表页并跳过该页全部详情请求。若第一页没有可用于判断的编号或仍有新编号，则继续分页。该提前停止逻辑仅用于综合任务，不影响独立的长亭、阿里云全量同步任务。各来源任务分别报告阶段、当前值、总量和说明，综合任务进度按渠道阶段推进；每个数据源完成后继续下一个，发生错误则停止并标明失败渠道。
+- 执行顺序：长亭全部漏洞列表、阿里云高危列表全部漏洞及详情、VulnX 最新完整 CVE 列表及缺失项详情。综合任务中，长亭和阿里云逐页检查当前页编号是否全部已存在，而非仅检查第一页。长亭在每页入库前按 `source=chaitin + ct_id` 判断；若全部已存在，更新完当前页后停止请求后续列表页，此判断不受 `cve_id` 影响。阿里云在每页详情请求前按 `source=avd + AVD 编号` 判断，不限制 CVE；全部已存在时跳过当前页全部详情请求并停止后续列表页。当前页仍有新编号则继续分页；空列表按数据源结束条件停止，编号缺失不作为“整页已存在”的依据。例：第 1 页有新编号、第 2 页全部已存在，则第 2 页停止，不再读取第 3 页。进度说明显示实际停止页码。该提前停止逻辑仅用于综合任务，不影响独立的长亭、阿里云全量同步任务。各来源任务分别报告阶段、当前值、总量和说明，综合任务进度按渠道阶段推进；每个数据源完成后继续下一个，发生错误则停止并标明失败渠道。
 - 长亭与阿里云：按各自来源和漏洞编号匹配现有记录；新编号插入，字段有变化时更新映射字段，参考链接按来源同步差异。其他来源和关联表不受影响。
 - VulnX：先获取最新完整 CVE 列表，再按 1000 个编号一批检查 `source=vulnx`。只对不存在的编号请求详情并新增完整情报快照，已有 CVE 不进行重复 API 请求。
 - API Key：综合任务和独立 VulnX 任务均从数据库读取 `cve_file_names.sync`（“全量 CVE 列表获取”）的 `api_key_id` 用于 GitHub 列表请求，从 `vulnx_vulnerability.sync`（“全量 VulnX 漏洞更新（长耗时）”）读取 `api_key_id` 用于 VulnX 详情请求。两种请求分别使用对应 Key 的共享限流；综合任务自身的 `api_key_id` 不参与这两种请求。CVE 列表任务不存在时任务失败；列表任务未绑定 Key 时 GitHub 请求回退到 `GITHUB_TOKEN`，VulnX 任务未绑定 Key 时详情请求回退到 `PDCP_API_KEY`。

@@ -152,8 +152,8 @@ func (c *AVDClient) Collect(ctx context.Context) (*AVDCollection, error) {
 	return c.collect(ctx, nil)
 }
 
-// CollectWithFirstPageStop allows the incremental job to stop after the first list page.
-func (c *AVDClient) CollectWithFirstPageStop(ctx context.Context, shouldStop func(context.Context, []AVDListItem) (bool, error)) (*AVDCollection, error) {
+// CollectWithPageStop allows the incremental job to stop after any fully existing list page.
+func (c *AVDClient) CollectWithPageStop(ctx context.Context, shouldStop func(context.Context, []AVDListItem) (bool, error)) (*AVDCollection, error) {
 	return c.collect(ctx, shouldStop)
 }
 
@@ -185,7 +185,7 @@ func (c *AVDClient) collect(ctx context.Context, shouldStop func(context.Context
 		}
 		result.ListPages = page
 		result.ListedCount += len(items)
-		if page == 1 && shouldStop != nil {
+		if shouldStop != nil {
 			stop, checkErr := shouldStop(ctx, items)
 			if checkErr != nil {
 				return result, checkErr
@@ -198,7 +198,7 @@ func (c *AVDClient) collect(ctx context.Context, shouldStop func(context.Context
 					}
 				}
 				if c.progress != nil {
-					if err := c.progress(ctx, 1, int64(c.maxPages), "fetching", "第一页漏洞均已存在，跳过后续查询"); err != nil {
+					if err := c.progress(ctx, int64(page), int64(c.maxPages), "fetching", fmt.Sprintf("第 %d 页漏洞均已存在，跳过本页详情及后续列表查询", page)); err != nil {
 						return result, err
 					}
 				}

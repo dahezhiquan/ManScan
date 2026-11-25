@@ -55,12 +55,12 @@ func (h *AliyunAVDUpdateHandler) Execute(ctx context.Context, job entity.Schedul
 	return h.execute(ctx, job, progress, false)
 }
 
-// ExecuteIncremental stops after page one when all AVD identifiers are already stored.
+// ExecuteIncremental stops after any page whose AVD identifiers are all already stored.
 func (h *AliyunAVDUpdateHandler) ExecuteIncremental(ctx context.Context, job entity.ScheduledJob, _ entity.ScheduledJobRun, progress service.ProgressReporter) error {
 	return h.execute(ctx, job, progress, true)
 }
 
-func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.ScheduledJob, progress service.ProgressReporter, stopOnExistingFirstPage bool) error {
+func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.ScheduledJob, progress service.ProgressReporter, stopOnExistingPage bool) error {
 	var config avdJobConfig
 	if err := json.Unmarshal([]byte(job.ConfigJSON), &config); err != nil {
 		return fmt.Errorf("解析阿里云 AVD 任务配置失败: %w", err)
@@ -85,8 +85,8 @@ func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.Schedul
 	}
 	var collection *AVDCollection
 	var err error
-	if stopOnExistingFirstPage {
-		collection, err = client.CollectWithFirstPageStop(ctx, func(ctx context.Context, items []AVDListItem) (bool, error) {
+	if stopOnExistingPage {
+		collection, err = client.CollectWithPageStop(ctx, func(ctx context.Context, items []AVDListItem) (bool, error) {
 			ids := make([]string, 0, len(items))
 			seen := make(map[string]struct{}, len(items))
 			for _, item := range items {
@@ -104,7 +104,7 @@ func (h *AliyunAVDUpdateHandler) execute(ctx context.Context, job entity.Schedul
 			}
 			existing, findErr := h.repository.FindExistingIDs(ctx, "avd", ids)
 			if findErr != nil {
-				return false, fmt.Errorf("查询阿里云第一页已有漏洞编号失败: %w", findErr)
+				return false, fmt.Errorf("查询阿里云当前页已有漏洞编号失败: %w", findErr)
 			}
 			return len(existing) == len(ids), nil
 		})
