@@ -64,6 +64,7 @@ const (
 )
 
 type scanTaskService struct {
+	notifier                ScanStartNotifier
 	repository              repository.ScanTaskRepository
 	vulnerabilityRepository repository.VulnerabilityRepository
 	assetDomainRepository   repository.AssetDomainRepository
@@ -111,11 +112,17 @@ func NewScanTaskService(
 	templateRepo repository.TemplateRepository,
 	logger *logx.Logger,
 	rootDir string,
+	notifiers ...ScanStartNotifier,
 ) ScanTaskService {
 	runtimeDir := filepath.Join(rootDir, "data", "runtime")
 	_ = os.MkdirAll(runtimeDir, 0o755)
 
+	var notifier ScanStartNotifier
+	if len(notifiers) > 0 {
+		notifier = notifiers[0]
+	}
 	return &scanTaskService{
+		notifier:                notifier,
 		repository:              repo,
 		vulnerabilityRepository: vulnerabilityRepo,
 		assetDomainRepository:   assetDomainRepo,
@@ -289,6 +296,7 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 
 	state.Append("info", "task_created", "扫描任务已创建，等待执行")
 
+	s.notifyScanStarted(ctx, task, plan, state)
 	s.launchTask(task.ID, plan, runtime)
 
 	return &dto.ScanTaskSummary{

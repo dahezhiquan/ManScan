@@ -3471,3 +3471,159 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 - 响应格式：统一 JSON 响应，`data` 为取消后的任务状态；已结束的任务保持原状态。
 - 错误码：40101（未登录）、40401（任务不存在或不属于当前用户）、50001（取消失败）。
 - 示例：`curl -X POST -H 'Authorization: Bearer <token>' https://<server>/api/v1/attack-path-filter-tasks/<id>/cancel`
+
+## 飞书群通知
+
+通知配置保存到数据库表 `manscan_notifications`。服务启动时仅自动迁移通知表，显式采用 utf8mb4（旧通知表如为其他字符集会转换），不修改其他业务表；数据库账号需要该表的建表/变更权限。Webhook 使用现有 `auth.api_key_encryption_key` / `MANSCAN_API_KEY_ENCRYPTION_KEY` 加密保存到 `encrypted_webhook`，接口只返回遮蔽后的地址，更新时省略 `webhook` 可保留已有密文。
+
+所有通知接口均需要 Bearer Token 和 `admin` 角色。普通用户不能读取、创建、修改、删除或测试全局群通知。多个启用的配置可订阅同一事件并分别发送到各自的群。
+
+### 通知事件和卡片字段
+
+当前事件为 `scan_started`：扫描任务已成功入库并完成运行态初始化，即将启动扫描时触发。包含 `POST /api/v1/scans` 和 `POST /api/v1/scans/:id/rescan`；恢复暂停任务不会重复发送。创建失败和参数校验失败不会发送。此处“发起”不表示主扫描子进程已经加载完模版。
+
+| 卡片字段 | 取值口径 |
+| --- | --- |
+| 扫描任务名称 | 本次任务规范化后的名称 |
+| 发起人 | 当前请求的已认证用户名；重扫显示本次点击重扫的用户。内部调用没有认证上下文时回退任务创建人，不改变既有 `created_by` 存储/响应语义 |
+| 目标数量 | `targets` 与 `inline_targets_list` 合并规范化去重后的提交目标数；尚未扣除禁扫目标，也不等于存活数量 |
+| 模版数量 | 普通扫描为按标签、严重级别、协议和 ID 条件筛选的配置候选数，并明确标注“以引擎实际加载为准”；自动映射或新模版模式在发起时尚未确定，显示“运行时确定”。能力开关、禁扫及前置指纹过滤可能继续减少实际模版数。纯截图任务显示“1（截图采集）” |
+| 扫描简介 | 任务 description，空值显示“未填写”；超长内容截断展示 |
+| 扫描 UA | custom_headers 中最后一个合法的 User-Agent；未指定时显示“引擎默认随机 UA（未指定固定 User-Agent）” |
+| 当前系统 IP | 服务进程所在机器/容器启用的非回环网卡 IPv4/IPv6 地址，去重排序；不是客户端 IP，也不通过外部网站探测公网出口 IP |
+
+卡片样式只控制标题栏颜色，不包含标题文案或独立主题。支持蓝、橙、紫、红、绿、黄、灰七种配色；标题由具体触发节点通过事件的 Title 字段传入，卡片渲染器不根据样式决定或硬编码业务标题。创建扫描任务节点（含重新扫描）传入“扫描任务已发起”，测试通知节点传入“通知测试”，正文保留小猫颜文字、猫咪图标和原有布局。历史样式 cat_blue、cat_orange、cat_purple 仍可提交和读取，分别映射为 blue、orange、purple；写入及接口响应统一返回颜色标识，无须修改现有数据库记录。动态内容采用 plain_text，输入中的 Markdown、HTML 和 @所有人语法不会作为卡片指令解析。不会发送目标明细、其他自定义 Header、代理凭证或 Interactsh Token。
+
+自动通知通过容量 128 的进程内队列异步发送，单次请求超时 10 秒，数据库查询超时 5 秒。发送前重新检查开关；通知失败或队列满不影响扫描，日志仅记录任务 ID、通知 ID 和固定原因，不记录 webhook。当前为尽力发送：队列不持久化，进程退出会丢失待发事件，不自动重试，避免重复群消息。已开始的发送不能被之后的关闭操作撤回。
+
+仅支持 `https://open.feishu.cn/open-apis/bot/v2/hook/<UUID>`；不允许自定义主机、端口、查询参数、凭据或重定向。发送器直接连接飞书，拒绝解析到回环/私网/链路本地等地址，不使用环境 HTTP 代理。不支持机器人签名密钥；若机器人启用了签名校验，需要先调整机器人安全配置。可使用飞书侧 IP 白名单，关键词应与卡片中的固定文本（例如 ManScan）一致。
+
+### 创建通知
+
+- 方法和路径：`POST /api/v1/notifications`
+- 请求参数（JSON）：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| name | string | 是 | 1–100 字符，去除首尾空白后不能为空 |
+| enabled | boolean | 是 | true 开启自动通知，false 关闭；不能省略 |
+| webhook | string | 是 | 飞书自定义机器人完整 webhook，最大 512 字符；不会明文返回 |
+| event | string | 否 | 当前仅 scan_started，默认 scan_started |
+| style | string | 否 | blue、orange、purple、red、green、yellow、grey，仅控制标题栏颜色，默认 blue |
+
+- 响应格式：
+
+```json
+{
+  "code": 0,
+  "message": "success",
+  "data": {
+    "id": 1,
+    "name": "扫描发起通知",
+    "enabled": true,
+    "event": "scan_started",
+    "webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/********",
+    "style": "orange",
+    "created_at": "2026-11-25T10:00:00+08:00",
+    "updated_at": "2026-11-25T10:00:00+08:00"
+  }
+}
+```
+
+- 错误码：40001 参数或 webhook 不合法；40101 未登录；40301 非管理员；50001 加密或保存失败。
+- 使用示例（真实地址放在环境变量中，不要提交到版本库）：
+
+```bash
+# FEISHU_WEBHOOK 和 TOKEN 由操作者在当前会话中设置。
+jq -n --arg webhook "$FEISHU_WEBHOOK" \
+  '{name:"扫描发起通知",enabled:true,event:"scan_started",webhook:$webhook,style:"orange"}' |
+  curl -X POST 'http://127.0.0.1:8686/api/v1/notifications' \
+    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' --data-binary @-
+```
+
+### 分页查询通知
+
+- 方法和路径：`GET /api/v1/notifications`
+- 请求参数：page（integer，可选，默认 1，范围 1–2147483647）；page_size（integer，可选，默认 20，范围 1–100）。
+- 响应格式：`{"code":0,"message":"success","data":{"page":1,"page_size":20,"total":1,"total_pages":1,"items":[<通知对象>]}}`。通知对象同创建响应，按 ID 倒序排列。
+- 错误码：40001 分页参数非法；40101 未登录；40301 非管理员；50001 查询失败。
+- 使用示例：
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8686/api/v1/notifications?page=1&page_size=20'
+```
+
+### 获取通知详情
+
+- 方法和路径：`GET /api/v1/notifications/:id`
+- 请求参数：id（int64，路径参数，必填，正整数）。
+- 响应格式：与创建通知相同；webhook 始终遮蔽，不提供明文读取接口。
+- 错误码：40001 ID 非法；40101 未登录；40301 非管理员；40401 配置不存在；50001 查询失败。
+- 使用示例：
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8686/api/v1/notifications/1'
+```
+
+### 修改通知与切换开关
+
+- 方法和路径：`PUT /api/v1/notifications/:id`
+- 请求参数：id（int64，路径参数，必填，正整数）；JSON 中 name、enabled 必填，规则同创建；event、style 可选，省略时分别使用 scan_started 和 blue；webhook 可选，省略或 null 保留原地址，提供时必须为新的合法完整地址，不能回传遮蔽地址或空字符串。
+- 响应格式：与创建通知相同，返回修改后的通知对象。
+- 错误码：40001 参数非法；40101 未登录；40301 非管理员；40401 配置不存在；50001 保存失败。
+- 使用示例（关闭通知并保留原 webhook）：
+
+```bash
+curl -X PUT 'http://127.0.0.1:8686/api/v1/notifications/1' \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"扫描发起通知","enabled":false,"event":"scan_started","style":"orange"}'
+```
+
+### 删除通知
+
+- 方法和路径：`DELETE /api/v1/notifications/:id`
+- 请求参数：id（int64，路径参数，必填，正整数）。
+- 响应格式：`{"code":0,"message":"success","data":{"id":1,"deleted_count":1}}`。
+- 错误码：40001 ID 非法；40101 未登录；40301 非管理员；40401 配置不存在；50001 删除失败。
+- 使用示例：
+
+```bash
+curl -X DELETE -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8686/api/v1/notifications/1'
+```
+
+### 获取卡片样式
+
+- 方法和路径：`GET /api/v1/notifications/styles`
+- 请求参数：无。
+- 响应格式：`{"code":0,"message":"success","data":{"items":[{"id":"blue","name":"蓝色"},{"id":"orange","name":"橙色"},{"id":"purple","name":"紫色"},{"id":"red","name":"红色"},{"id":"green","name":"绿色"},{"id":"yellow","name":"黄色"},{"id":"grey","name":"灰色"}]}}`。
+- 错误码：40101 未登录；40301 非管理员。
+- 使用示例：
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8686/api/v1/notifications/styles'
+```
+
+### 测试群通知
+
+- 方法和路径：`POST /api/v1/notifications/:id/test`
+- 请求参数：id（int64，路径参数，必填，正整数）；无请求体。
+- 行为：使用已保存的样式和 webhook 发送一张标题为“通知测试”的测试卡片，显示当前管理员、当前系统 IP 及测试说明，目标/模版数量为 0，不发起扫描。显式测试不受 enabled 开关影响。
+- 响应格式：`{"code":0,"message":"success","data":{"id":1,"sent":true}}`，只有飞书 HTTP 成功且业务状态码为 0 才返回 sent=true。
+- 错误码：40001 ID 非法；40101 未登录；40301 非管理员；40401 配置不存在；50001 查询失败；50301 地址解密、网络请求或飞书业务响应失败。不会向客户端返回飞书原始报错中的地址或凭证。
+- 使用示例：
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" 'http://127.0.0.1:8686/api/v1/notifications/1/test'
+```
+
+### 命令行初始化通知
+
+管理员也可在项目根目录执行以下命令，用现有 config.yaml 中的数据库与加密配置创建通知，无须启动扫描服务。环境变量 MANSCAN_FEISHU_WEBHOOK 只用于本次配置写入，不会硬编码到程序；命令不会发送消息。同名配置已存在时拒绝重复创建，后续编辑使用通知 API。
+
+    MANSCAN_FEISHU_WEBHOOK='<机器人完整地址>' go run ./server/cmd/notification -name '扫描发起通知' -style orange -enabled=true
+
+参数：name（通知名称，默认“扫描发起通知”）；style（标题栏颜色，默认 orange）；enabled（默认 true）。也可用 MANSCAN_CONFIG_FILE 指向其他服务配置。预建表脚本位于 docs/SQL/create_manscan_notifications.sql。
+
+真实飞书联调测试默认跳过，只有显式设置 MANSCAN_TEST_FEISHU_WEBHOOK 时发送一条卡片，不发起扫描：
+
+    MANSCAN_TEST_FEISHU_WEBHOOK='<测试机器人完整地址>' go test ./server/internal/service -run '^TestNotificationFeishuLive$' -count=1 -v

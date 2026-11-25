@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"ManScan/server/internal/middleware"
 	"ManScan/server/internal/model/dto"
 	"ManScan/server/internal/pkg/errcode"
 	"ManScan/server/internal/pkg/response"
@@ -51,7 +52,7 @@ func (h *scanTaskHandler) Create(c *gin.Context) {
 		return
 	}
 
-	task, err := h.service.Create(c.Request.Context(), request)
+	task, err := h.service.Create(service.WithScanInitiator(c.Request.Context(), c.GetString(middleware.ContextUsernameKey)), request)
 	if err != nil {
 		response.Fail(c, errcode.InvalidParams, err.Error())
 		return
@@ -72,7 +73,7 @@ func (h *scanTaskHandler) Rescan(c *gin.Context) {
 		return
 	}
 
-	task, serviceErr := h.service.Rescan(c.Request.Context(), taskID)
+	task, serviceErr := h.service.Rescan(service.WithScanInitiator(c.Request.Context(), c.GetString(middleware.ContextUsernameKey)), taskID)
 	if serviceErr != nil {
 		if errors.Is(serviceErr, gorm.ErrRecordNotFound) {
 			response.Fail(c, errcode.NotFound, "任务不存在")

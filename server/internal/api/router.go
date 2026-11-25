@@ -27,6 +27,7 @@ func NewRouter(
 	dashboardHandler handler.DashboardHandler,
 	vulnerabilityIntelligenceHandler handler.VulnerabilityIntelligenceHandler,
 	attackPathTaskHandler handler.AttackPathTaskHandler,
+	notificationHandler handler.NotificationHandler,
 	scheduledJobHandlers ...handler.ScheduledJobHandler,
 ) *gin.Engine {
 	router := gin.New()
@@ -112,6 +113,16 @@ func NewRouter(
 		protected.GET("/scheduled-jobs/:id/runs", scheduledJobHandler.ListRuns)
 		protected.GET("/scheduled-job-runs/:run_id", scheduledJobHandler.GetRun)
 		protected.GET("/scheduled-job-runs/:run_id/output", scheduledJobHandler.DownloadRunOutput)
+	}
+
+	if notificationHandler != nil {
+		protected.GET("/notifications", notificationHandler.List)
+		protected.GET("/notifications/styles", notificationHandler.Styles)
+		protected.GET("/notifications/:id", notificationHandler.Get)
+		protected.POST("/notifications", notificationHandler.Create)
+		protected.PUT("/notifications/:id", notificationHandler.Update)
+		protected.DELETE("/notifications/:id", notificationHandler.Delete)
+		protected.POST("/notifications/:id/test", notificationHandler.Test)
 	}
 
 	protected.GET("/settings/theme", settingHandler.GetTheme)

@@ -110,6 +110,15 @@ func Run() error {
 	dashboardRepository := repository.NewDashboardRepository(db)
 	dashboardService := service.NewDashboardService(dashboardRepository, logger)
 	authService := service.NewAuthService(userRepository, userSessionRepository, authChallengeRepository, tokenManager, cfg.Auth.TokenTTL())
+	// Only the new notification table is migrated; existing tables are untouched.
+	migrationCtx, cancelMigration := context.WithTimeout(context.Background(), 15*time.Second)
+	notificationRepository := repository.NewNotificationRepository(db)
+	migrationErr := notificationRepository.Migrate(migrationCtx)
+	cancelMigration()
+	if migrationErr != nil {
+		return fmt.Errorf("初始化通知配置表失败: %w", migrationErr)
+	}
+	notificationService := service.NewNotificationService(notificationRepository, apiKeyBox, templateRepository, service.NewFeishuSender(), logger)
 	scanTaskService := service.NewScanTaskService(
 		scanTaskRepository,
 		vulnerabilityRepository,
@@ -119,6 +128,7 @@ func Run() error {
 		templateRepository,
 		logger,
 		cfg.RootDir,
+		notificationService,
 	)
 	attackPathTaskRepository := repository.NewAttackPathTaskRepository(db)
 	var attackPathProcessor service.AttackPathFileProcessor
@@ -190,11 +200,13 @@ func Run() error {
 		handler.NewDashboardHandler(dashboardService),
 		handler.NewVulnerabilityIntelligenceHandler(vulnerabilityIntelligenceService),
 		handler.NewAttackPathTaskHandler(attackPathTaskService),
+		handler.NewNotificationHandler(notificationService, logger),
 		handler.NewScheduledJobHandler(scheduledJobService),
 	)
 	workerContext, stopWorkers := context.WithCancel(context.Background())
 	defer stopWorkers()
 	go attackPathTaskService.Run(workerContext)
+	go notificationService.Run(workerContext)
 	if err := schedulerManager.Start(context.Background()); err != nil {
 		return fmt.Errorf("启动定时任务调度器失败: %w", err)
 	}
