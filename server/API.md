@@ -2943,11 +2943,12 @@ curl -L -OJ \
 - 默认计划：`0 0 * * *`，时区 `Asia/Shanghai`，每天零点执行。
 - `config_json`：可选 `{"ref":"main"}`，用于指定 GitHub 分支、标签或提交 SHA；为空时使用 `main`。
 - 输出：成功获取完整列表后，使用临时文件原子替换 `data/tmp/cve_data/cves.txt`，失败时保留上一次成功文件。
-- 请求恢复：GitHub Tree 单次请求超时为 120 秒（包含响应体读取）。网络超时、临时网络错误或响应体提前结束时，同一请求最多尝试 3 次，重试前分别等待 1 秒、2 秒；每次尝试均参与 API Key 共享限流。递归 Tree 重试耗尽后，回退到非递归目录列表并继续遍历子树；成功响应标记 `truncated` 时同样回退，避免遗漏 CVE。非递归请求仍失败或被截断时任务失败，保留旧文件。鉴权、HTTP 限流、其他 HTTP 错误、非截断类 JSON 格式错误和本地限流配置错误不触发此重试或回退。任务取消或总超时立即中止请求及退避等待。独立 VulnX 与综合增量任务获取 GitHub CVE 列表时复用此策略。
-- 详细进度：复用执行记录的 `progress_phase`、`progress_message` 和 `progress_updated_at`。GitHub 阶段分别为 `github_waiting`（等待 API Key 额度）、`github_requesting`（请求及读取响应）、`github_retrying`（重试退避）、`github_fallback`（回退逐层读取）、`github_traversing`（目录处理完成）和 `github_finished`（列表获取完成，尚未写入文件）。说明中包含当前目录、已完成目录数、待处理目录数（不含当前正在读取的目录）、已去重 CVE 数量及实际请求次数；请求说明还包含递归方式、尝试次数、耗时及已接收 KiB。长请求及额度等待期间每 5 秒刷新；重试说明包含原因和下次等待秒数。目录完成数包含仓库根目录及已处理的树请求单元，递归响应内的子目录不单独计数；重试和回退不重复计入完成数。
-- 进度口径：GitHub 遍历期间 `progress_current` 为已完成目录数，`progress_total=0`，不预估全量百分比；解析成功的完整目录才计入 CVE 数量，被截断或读取失败的部分结果不计入。写文件阶段为 `writing`，当前值和总量切换为已写入/全部 CVE 数，并在说明中展示。最终任务完成阶段仍为 `finished`。独立 VulnX 任务沿用上述 GitHub 阶段；综合增量任务在阶段及说明前添加 `VulnX` 来源标识，当前值和总量保持原有三渠道加权口径，GitHub 遍历时整体百分比不递增，详细计数持续刷新。进度上报失败会停止本次处理，不当作 GitHub 网络错误重试。
+- 获取方式：先读取仓库根目录定位 `cves` 的 SHA，再以 `recursive=1` 一次请求整个 `cves` 目录树；正常共两次请求。不再维护子目录队列，不再对年份或编号分组目录逐层请求，也不在超时或截断时拆分回退。`recursive=1` 是 GitHub 返回整个目录树所需的参数，不表示客户端逐个遍历子目录。成功响应必须未被截断；若 `truncated=true`，任务明确报错并保留旧文件，不使用部分列表。GitHub 大仓库可能触发整树结果截断，延长超时无法解除该服务端限制。
+- 请求恢复：GitHub Tree 单次请求超时为 120 秒（包含响应体读取）。网络超时、临时网络错误或响应体提前结束时，同一请求最多尝试 3 次，重试前分别等待 1 秒、2 秒；每次尝试均参与 API Key 共享限流。重试耗尽、鉴权、HTTP 限流、其他 HTTP 错误、非截断类 JSON 格式错误和本地限流配置错误均停止任务，不切换到子目录读取。任务取消或总超时立即中止请求及退避等待。独立 VulnX 与综合增量任务获取 GitHub CVE 列表时复用此策略。
+- 详细进度：复用执行记录的 `progress_phase`、`progress_message` 和 `progress_updated_at`。GitHub 阶段分别为 `github_waiting`（等待 API Key 额度）、`github_requesting`（请求及读取响应）、`github_retrying`（重试退避）、`github_listing`（已定位 CVE 目录，开始整树读取）和 `github_finished`（列表获取完成，尚未写入文件）。不再产生 `github_fallback` 和 `github_traversing`。说明中包含当前读取位置、已完成读取步骤数（根目录、整树共两个步骤）、已去重 CVE 数量及实际请求次数；请求说明还包含读取方式、尝试次数、耗时及已接收 KiB。长请求及额度等待期间每 5 秒刷新；重试说明包含原因和下次等待秒数。
+- 进度口径：GitHub 获取期间 `progress_current` 为已完成读取步骤数（0–2），`progress_total=0`，不预估全量下载百分比；完整整树响应解析成功后才统计 CVE 数量。写文件阶段为 `writing`，当前值和总量切换为已写入/全部 CVE 数，并在说明中展示。最终任务完成阶段仍为 `finished`。独立 VulnX 任务沿用上述 GitHub 阶段；综合增量任务在阶段及说明前添加 `VulnX` 来源标识，当前值和总量保持原有三渠道加权口径，GitHub 获取时整体百分比不递增，读取状态持续刷新。进度上报失败会停止本次处理，不当作 GitHub 网络错误重试。
 - 产出：成功执行后，在本次执行记录的 `output_path` 字段写入固定路径 `data/tmp/cve_data/cves.txt`，前端可使用“产出下载”按钮调用执行记录产出下载接口。
-- 限流：当任务配置 `api_key_id` 且该 API Key 的 `rate_limit_per_minute=N` 大于 `0` 时，请求按至少 `60/N` 秒的间隔放行，不允许突发透支。同一服务进程内，相同 API Key ID 的所有任务及并发执行实例（包括自动和手动触发）共享额度，不同 API Key ID 相互独立；根目录、递归 Tree、截断回退和后续子树请求均参与限流。未配置 API Key 或限流值为 `0` 时不启用服务端限流，但仍受 GitHub 自身限流策略约束。
+- 限流：当任务配置 `api_key_id` 且该 API Key 的 `rate_limit_per_minute=N` 大于 `0` 时，请求按至少 `60/N` 秒的间隔放行，不允许突发透支。同一服务进程内，相同 API Key ID 的所有任务及并发执行实例（包括自动和手动触发）共享额度，不同 API Key ID 相互独立；根目录、整树请求及其重试均参与限流。未配置 API Key 或限流值为 `0` 时不启用服务端限流，但仍受 GitHub 自身限流策略约束。
 - 配置变更与取消：每次请求以及等待唤醒后重新读取当前 API Key 限流值；已有等待在下一次检查时采用新值。等待计入任务的 `timeout_seconds`，支持取消和超时，等待期间取消不预占后续额度，获取列表失败时保留上一次成功文件。
 - 共享范围：限流状态保存在当前服务进程内，重启后清空；多个服务进程或实例之间不共享额度。
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_cve_file_names.sql`，可重复执行，不会重复插入同一 `job_type`。

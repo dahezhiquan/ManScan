@@ -14,11 +14,11 @@ import (
 
 // githubTreeProgress belongs to one list operation, never to a shared client.
 type githubTreeProgress struct {
-	reporter                  service.ProgressReporter
-	directory                 string
-	completed, pending, found int
-	requests                  atomic.Int64
-	received                  atomic.Int64
+	reporter         service.ProgressReporter
+	directory        string
+	completed, found int
+	requests         atomic.Int64
+	received         atomic.Int64
 }
 
 type githubTreeProgressError struct{ err error }
@@ -37,8 +37,8 @@ func (p *githubTreeProgress) report(ctx context.Context, phase, message string) 
 	if len(directory) > 160 {
 		directory = append(directory[:160], '…')
 	}
-	message = fmt.Sprintf("%s；目录 %q；已完成 %d 个目录，待处理 %d 个，已发现 %d 个 CVE，已发起 %d 次请求",
-		message, string(directory), p.completed, p.pending, p.found, p.requests.Load())
+	message = fmt.Sprintf("%s；目录 %q；已完成 %d/2 个读取步骤，已发现 %d 个 CVE，已发起 %d 次请求",
+		message, string(directory), p.completed, p.found, p.requests.Load())
 	// Leave room for the composite task's source prefix in VARCHAR(512).
 	if runes := []rune(message); len(runes) > 480 {
 		message = string(runes[:479]) + "…"

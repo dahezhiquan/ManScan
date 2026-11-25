@@ -62,7 +62,7 @@ func TestGitHubTreeRetriesIncompleteResponse(t *testing.T) {
 	}
 }
 
-func TestGitHubTreeTimeoutFallsBackToCompleteSubtrees(t *testing.T) {
+func TestGitHubTreeTimeoutDoesNotSplitSubtrees(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		client := NewGitHubTreeClient("")
 		requests, limits, recursiveAttempts, directAttempts := 0, 0, 0, 0
@@ -79,10 +79,10 @@ func TestGitHubTreeTimeoutFallsBackToCompleteSubtrees(t *testing.T) {
 			return githubTestTreeResponse(request)
 		})
 		names, err := client.ListCVEFileNames(context.Background(), "main")
-		if err != nil || strings.Join(names, ",") != "CVE-2026-0001" {
+		if !errors.Is(err, context.DeadlineExceeded) || names != nil {
 			t.Fatalf("names=%v err=%v", names, err)
 		}
-		if recursiveAttempts != 3 || directAttempts != 1 || requests != 6 || limits != requests {
+		if recursiveAttempts != 3 || directAttempts != 0 || requests != 4 || limits != requests {
 			t.Fatalf("recursive=%d direct=%d requests=%d limits=%d", recursiveAttempts, directAttempts, requests, limits)
 		}
 	})
@@ -174,10 +174,38 @@ func TestCVEFileNamesExhaustedTreeRetriesPreserveOutput(t *testing.T) {
 			return githubTreeStalledResponse(request), nil
 		}))
 		err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, nil)
-		if err == nil || !strings.Contains(err.Error(), "read direct tree") || requests != 7 {
+		if err == nil || !strings.Contains(err.Error(), "read cves tree") || requests != 4 {
 			t.Fatalf("err=%v requests=%d", err, requests)
 		}
 	})
+	content, err := os.ReadFile(output)
+	if err != nil || string(content) != "CVE-2025-0001\n" {
+		t.Fatalf("previous output=%q err=%v", content, err)
+	}
+}
+
+func TestCVEFileNamesTruncatedWholeTreePreservesOutput(t *testing.T) {
+	root := t.TempDir()
+	output := filepath.Join(root, "data", "tmp", "cve_data", "cves.txt")
+	if err := writeCVEFileNames(output, []string{"CVE-2025-0001"}, nil, context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	handler := NewCVEFileNamesHandler(root, nil, nil)
+	requests := 0
+	handler.clientFn = rateLimitedTestClient(rateLimitRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if filepath.Base(request.URL.Path) == "main" {
+			return githubTestTreeResponse(request)
+		}
+		if filepath.Base(request.URL.Path) != "cves-sha" || request.URL.Query().Get("recursive") != "1" {
+			t.Errorf("unexpected split request: %s", request.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"truncated":true,"tree":[{"path":"CVE-2026-9999.json","type":"blob"}]}`)), Request: request}, nil
+	}))
+	err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, nil)
+	if err == nil || !strings.Contains(err.Error(), "整树响应被截断") || requests != 2 {
+		t.Fatalf("err=%v requests=%d", err, requests)
+	}
 	content, err := os.ReadFile(output)
 	if err != nil || string(content) != "CVE-2025-0001\n" {
 		t.Fatalf("previous output=%q err=%v", content, err)

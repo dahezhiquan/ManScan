@@ -73,7 +73,7 @@ func NewGitHubTreeClient(token string) *GitHubTreeClient {
 	}
 }
 
-// ListCVEFileNamesWithProgress reports traversal, retries and long network waits.
+// ListCVEFileNamesWithProgress reports whole-tree retrieval, retries and long network waits.
 func (c *GitHubTreeClient) ListCVEFileNamesWithProgress(ctx context.Context, ref string, reporter service.ProgressReporter) ([]string, error) {
 	client := *c
 	client.progress = &githubTreeProgress{reporter: reporter, directory: "仓库根目录"}
@@ -94,95 +94,47 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 		return nil, errors.New("repository root tree response is truncated")
 	}
 
-	type directory struct{ sha, path string }
-	var stack []directory
-	queued := make(map[string]struct{})
+	var sha string
 	for _, entry := range root.Tree {
 		if entry.Type == "tree" && entry.Path == "cves" && entry.SHA != "" {
-			stack = append(stack, directory{entry.SHA, "cves"})
-			queued[entry.SHA] = struct{}{}
+			sha = entry.SHA
+			break
 		}
 	}
-	if len(stack) == 0 {
+	if sha == "" {
 		return nil, errors.New("repository tree does not contain a cves directory")
 	}
-
-	seenTrees := make(map[string]struct{})
-	seenNames := make(map[string]struct{})
 	if c.progress != nil {
 		c.progress.completed = 1
-		c.progress.pending = len(stack)
+		c.progress.directory = "cves"
 	}
-	if err := c.progress.report(ctx, "github_traversing", "已定位 CVE 目录，开始遍历"); err != nil {
+	if err := c.progress.report(ctx, "github_listing", "已定位 CVE 目录，开始整树读取"); err != nil {
 		return nil, err
 	}
-	for len(stack) > 0 {
-		last := len(stack) - 1
-		dir := stack[last]
-		sha := dir.sha
-		stack = stack[:last]
-		if _, seen := seenTrees[sha]; seen {
+	// Request the entire subtree once; never split it into directory requests.
+	tree, err := c.getTree(ctx, sha, true)
+	if err != nil {
+		return nil, fmt.Errorf("read cves tree %q: %w", sha, err)
+	}
+	if tree.Truncated {
+		return nil, errors.New("GitHub CVE 整树响应被截断，无法获取完整列表；已禁用子目录拆分读取，保留上一次成功文件")
+	}
+	seenNames := make(map[string]struct{})
+	for _, entry := range tree.Tree {
+		if entry.Type != "blob" {
 			continue
 		}
-		seenTrees[sha] = struct{}{}
-		if c.progress != nil {
-			c.progress.directory = dir.path
-			c.progress.pending = len(stack)
+		name := entry.Path
+		if slash := strings.LastIndexByte(name, '/'); slash >= 0 {
+			name = name[slash+1:]
 		}
-
-		// Large recursive responses can time out before GitHub's truncation flag
-		// arrives. Discard incomplete results and walk smaller subtrees instead.
-		recursive := true
-		tree, err := c.getTree(ctx, sha, recursive)
-		var exhausted *githubTreeRetryError
-		if err != nil && (ctx.Err() != nil || !errors.As(err, &exhausted)) {
-			return nil, fmt.Errorf("read tree %q: %w", sha, err)
+		if cveFileNamePattern.MatchString(name) {
+			seenNames[strings.TrimSuffix(name, ".json")] = struct{}{}
 		}
-		if err != nil || tree.Truncated {
-			reason := "递归结果被截断"
-			if err != nil {
-				reason = githubTreeRetryReason(err) + "，重试已耗尽"
-			}
-			if reportErr := c.progress.report(ctx, "github_fallback", reason+"，改为逐层读取目录"); reportErr != nil {
-				return nil, reportErr
-			}
-			recursive = false
-			tree, err = c.getTree(ctx, sha, recursive)
-			if err != nil {
-				return nil, fmt.Errorf("read direct tree %q: %w", sha, err)
-			}
-			if tree.Truncated {
-				return nil, fmt.Errorf("direct tree %q response is truncated; cannot guarantee a complete list", sha)
-			}
-		}
-
-		for _, entry := range tree.Tree {
-			switch entry.Type {
-			case "tree":
-				if !recursive && entry.SHA != "" {
-					if _, exists := queued[entry.SHA]; !exists {
-						stack = append(stack, directory{entry.SHA, dir.path + "/" + entry.Path})
-						queued[entry.SHA] = struct{}{}
-					}
-				}
-			case "blob":
-				name := entry.Path
-				if slash := strings.LastIndexByte(name, '/'); slash >= 0 {
-					name = name[slash+1:]
-				}
-				if cveFileNamePattern.MatchString(name) {
-					seenNames[strings.TrimSuffix(name, ".json")] = struct{}{}
-				}
-			}
-		}
-		if c.progress != nil {
-			c.progress.completed++
-			c.progress.pending = len(stack)
-			c.progress.found = len(seenNames)
-		}
-		if err := c.progress.report(ctx, "github_traversing", "当前目录读取完成"); err != nil {
-			return nil, err
-		}
+	}
+	if c.progress != nil {
+		c.progress.completed = 2
+		c.progress.found = len(seenNames)
 	}
 
 	names := make([]string, 0, len(seenNames))
@@ -211,9 +163,9 @@ func (c *GitHubTreeClient) getTree(ctx context.Context, ref string, recursive bo
 		if err := ctx.Err(); err != nil {
 			return treeResponse{}, err
 		}
-		mode := "非递归"
+		mode := "根目录"
 		if recursive {
-			mode = "递归"
+			mode = "整树"
 		}
 		var tree treeResponse
 		err := c.progress.run(ctx, "github_requesting", fmt.Sprintf("正在%s读取 GitHub 目录，第 %d/%d 次尝试", mode, attempt+1, githubTreeMaxAttempts), func(requestCtx context.Context) error {

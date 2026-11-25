@@ -34,8 +34,12 @@ func TestGitHubTreeProgressShowsWaitsRetriesAndCounts(t *testing.T) {
 				return nil
 			}
 		}
+		attempts := 0
 		client.HTTPClient.Transport = rateLimitRoundTripFunc(func(request *http.Request) (*http.Response, error) {
-			if filepath.Base(request.URL.Path) == "cves-sha" && request.URL.Query().Get("recursive") == "1" {
+			if filepath.Base(request.URL.Path) == "cves-sha" {
+				attempts++
+			}
+			if filepath.Base(request.URL.Path) == "cves-sha" && attempts < 3 {
 				response := githubTreeStalledResponse(request)
 				response.Body = io.NopCloser(io.MultiReader(strings.NewReader(`{"tree":[`+strings.Repeat(" ", 1024)), response.Body))
 				return response, nil
@@ -60,14 +64,14 @@ func TestGitHubTreeProgressShowsWaitsRetriesAndCounts(t *testing.T) {
 			case "github_retrying":
 				retrying = retrying || (strings.Contains(message, "请求超时") && strings.Contains(message, "第 3/3 次尝试"))
 			case "github_fallback":
-				fallback = strings.Contains(message, "重试已耗尽") && strings.Contains(message, "逐层读取")
+				fallback = true
 			case "github_finished":
-				finished = current == 3 && strings.Contains(message, "已发现 1 个 CVE") && strings.Contains(message, "待处理 0 个") && strings.Contains(message, "已发起 6 次请求") && strings.Contains(message, "cves/2026")
+				finished = current == 2 && strings.Contains(message, "已发现 1 个 CVE") && strings.Contains(message, "已完成 2/2 个读取步骤") && strings.Contains(message, "已发起 4 次请求") && strings.Contains(message, "cves")
 			}
 			return nil
 		})
 		names, err := client.ListCVEFileNamesWithProgress(context.Background(), "main", reporter)
-		if err != nil || len(names) != 1 || !waiting || !receiving || !retrying || !fallback || !finished {
+		if err != nil || len(names) != 1 || !waiting || !receiving || !retrying || fallback || !finished {
 			t.Fatalf("names=%v err=%v waiting=%t receiving=%t retry=%t fallback=%t finished=%t", names, err, waiting, receiving, retrying, fallback, finished)
 		}
 		if client.progress != nil {
@@ -162,7 +166,7 @@ func TestGitHubTreeProgressReachesScheduledJobs(t *testing.T) {
 			if mode == "incremental" {
 				prefix = "VulnX."
 			}
-			for _, phase := range []string{"github_requesting", "github_traversing", "github_fallback", "github_finished", "writing", "finished"} {
+			for _, phase := range []string{"github_requesting", "github_listing", "github_finished", "writing", "finished"} {
 				if !seen[prefix+phase] {
 					t.Errorf("missing phase %s", prefix+phase)
 				}

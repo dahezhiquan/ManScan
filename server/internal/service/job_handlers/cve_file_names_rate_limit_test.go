@@ -51,11 +51,10 @@ func githubTestTreeResponse(request *http.Request) (*http.Response, error) {
 	case "main":
 		body = `{"tree":[{"path":"cves","type":"tree","sha":"cves-sha"}]}`
 	case "cves-sha":
-		if request.URL.Query().Get("recursive") == "1" {
-			body = `{"truncated":true,"tree":[{"path":"CVE-2026-9999.json","type":"blob"}]}`
-		} else {
-			body = `{"tree":[{"path":"2026","type":"tree","sha":"year-sha"}]}`
+		if request.URL.Query().Get("recursive") != "1" {
+			return nil, errors.New("unexpected split directory request")
 		}
+		body = `{"tree":[{"path":"2026","type":"tree","sha":"year-sha"},{"path":"2026/0xxx/CVE-2026-0001.json","type":"blob"},{"path":"duplicate/CVE-2026-0001.json","type":"blob"},{"path":"README.md","type":"blob"}]}`
 	case "year-sha":
 		body = `{"tree":[{"path":"CVE-2026-0001.json","type":"blob"}]}`
 	default:
@@ -106,8 +105,8 @@ func TestCVEFileNamesConcurrentJobsShareAPIKeyLimit(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if len(requests) != 8 {
-					t.Fatalf("GitHub requests = %d, want 4 per job including truncation fallback", len(requests))
+				if len(requests) != 4 {
+					t.Fatalf("GitHub requests = %d, want 2 per job (root and whole cves tree)", len(requests))
 				}
 				sort.Slice(requests, func(i, j int) bool { return requests[i].Before(requests[j]) })
 				if limit == 0 {
