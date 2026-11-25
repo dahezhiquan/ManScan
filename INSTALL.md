@@ -102,10 +102,17 @@ systemctl reload nginx
 
 1、创建 /work/manscan 目录，将打包好的二进制文件传到目录中 /work/manscan/manscan
 
+2、将配置文件 config.yaml 和 prompt.yaml 上传到 /work/manscan 目录
 
-2、系统服务创建
+3、将 data 目录打包进 /work/manscan 目录
 
-`vim /etc/systemd/system/manscan.service`
+4、新建 manscan 日志目录
+
+`mkdir -p /var/log/manscan`
+
+4、系统服务创建
+
+`vi /etc/systemd/system/manscan.service`
 
 ```
 [Unit]
@@ -114,10 +121,32 @@ Description=Manscan Service
 [Service]
 User=root
 WorkingDirectory=/work/manscan
-ExecStart=/work/manscan/manscan
+ExecStart=/bin/bash -c 'exec /work/manscan/manscan >> /var/log/manscan/manscan.log 2>&1'
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+5、配置日志分片
+
+创建 `/etc/logrotate.d/manscan`，写入：
+
+```text
+/var/log/manscan/manscan.log {
+    daily
+    maxsize 100M
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+```
+
+
+6、服务启动
+
+`systemctl start manscan`
