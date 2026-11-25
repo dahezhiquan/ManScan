@@ -14,11 +14,12 @@ import (
 
 // githubTreeProgress belongs to one list operation, never to a shared client.
 type githubTreeProgress struct {
-	reporter         service.ProgressReporter
-	directory        string
-	completed, found int
-	requests         atomic.Int64
-	received         atomic.Int64
+	reporter                  service.ProgressReporter
+	directory                 string
+	completed, pending, found int
+	requests                  atomic.Int64
+	received                  atomic.Int64
+	receivedTotal             atomic.Int64
 }
 
 type githubTreeProgressError struct{ err error }
@@ -37,8 +38,8 @@ func (p *githubTreeProgress) report(ctx context.Context, phase, message string) 
 	if len(directory) > 160 {
 		directory = append(directory[:160], '…')
 	}
-	message = fmt.Sprintf("%s；目录 %q；已完成 %d/2 个读取步骤，已发现 %d 个 CVE，已发起 %d 次请求",
-		message, string(directory), p.completed, p.found, p.requests.Load())
+	message = fmt.Sprintf("%s；目录 %q；已处理 %d 个目录单元，另有 %d 个排队（不含当前），已收集 %d 个 CVE，请求 %d 次",
+		message, string(directory), p.completed, p.pending, p.found, p.requests.Load())
 	// Leave room for the composite task's source prefix in VARCHAR(512).
 	if runes := []rune(message); len(runes) > 480 {
 		message = string(runes[:479]) + "…"
@@ -71,7 +72,7 @@ func (p *githubTreeProgress) run(ctx context.Context, phase, message string, ope
 	status := func() string {
 		value := fmt.Sprintf("%s，已等待 %d 秒", message, int(time.Since(started)/time.Second))
 		if phase == "github_requesting" {
-			value += fmt.Sprintf("，已接收 %.1f KiB", float64(p.received.Load())/1024)
+			value += fmt.Sprintf("，本次已接收 %.1f KiB，累计 %.1f KiB（解压后）", float64(p.received.Load())/1024, float64(p.receivedTotal.Load())/1024)
 		}
 		return value
 	}
@@ -81,7 +82,7 @@ func (p *githubTreeProgress) run(ctx context.Context, phase, message string, ope
 			if err != nil {
 				return err
 			}
-			return p.report(ctx, phase, strings.Replace(status(), "已等待", "耗时", 1)+"，已完成")
+			return p.report(ctx, phase, strings.Replace(status(), "已等待", "耗时", 1)+"，本次操作已返回")
 		case <-ctx.Done():
 			cancel()
 			<-done
@@ -104,6 +105,7 @@ type githubTreeProgressReader struct {
 func (r githubTreeProgressReader) Read(data []byte) (int, error) {
 	n, err := r.reader.Read(data)
 	r.progress.received.Add(int64(n))
+	r.progress.receivedTotal.Add(int64(n))
 	return n, err
 }
 

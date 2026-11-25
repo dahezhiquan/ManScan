@@ -60,13 +60,13 @@ func TestGitHubTreeProgressShowsWaitsRetriesAndCounts(t *testing.T) {
 			case "github_waiting":
 				waiting = waiting || strings.Contains(message, "已等待 5 秒")
 			case "github_requesting":
-				receiving = receiving || (strings.Contains(message, "已等待 5 秒") && strings.Contains(message, "已接收 1.0 KiB"))
+				receiving = receiving || (strings.Contains(message, "已等待 5 秒") && strings.Contains(message, "本次已接收 1.0 KiB"))
 			case "github_retrying":
 				retrying = retrying || (strings.Contains(message, "请求超时") && strings.Contains(message, "第 3/3 次尝试"))
 			case "github_fallback":
 				fallback = true
 			case "github_finished":
-				finished = current == 2 && strings.Contains(message, "已发现 1 个 CVE") && strings.Contains(message, "已完成 2/2 个读取步骤") && strings.Contains(message, "已发起 4 次请求") && strings.Contains(message, "cves")
+				finished = current == 2 && strings.Contains(message, "已收集 1 个 CVE") && strings.Contains(message, "已处理 2 个目录单元") && strings.Contains(message, "请求 4 次") && strings.Contains(message, "cves")
 			}
 			return nil
 		})
@@ -172,5 +172,46 @@ func TestGitHubTreeProgressReachesScheduledJobs(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGitHubTreeTruncationSplitsWithClearProgress(t *testing.T) {
+	client := NewGitHubTreeClient("")
+	if client.HTTPClient.Timeout != 200*time.Second {
+		t.Fatalf("request timeout = %v", client.HTTPClient.Timeout)
+	}
+	requests, limits := 0, 0
+	client.beforeRequest = func(context.Context) error { limits++; return nil }
+	client.HTTPClient.Transport = rateLimitRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests++
+		if filepath.Base(request.URL.Path) != "cves-sha" {
+			return githubTestTreeResponse(request)
+		}
+		body := `{"truncated":true,"tree":[{"path":"CVE-2026-9999.json","type":"blob"}]}`
+		if request.URL.Query().Get("recursive") != "1" {
+			// Duplicate entries must not schedule duplicate subtree reads.
+			body = `{"tree":[{"path":"2026","type":"tree","sha":"year-sha"},{"path":"2026","type":"tree","sha":"year-sha"}]}`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
+	})
+	var fallback, queued, subtree, finished bool
+	reporter := githubProgressFunc(func(_ context.Context, current, total int64, phase, message string) error {
+		if total != 0 {
+			t.Errorf("unknown total reported as %d", total)
+		}
+		switch phase {
+		case "github_fallback":
+			fallback = strings.Contains(message, "被截断") && strings.Contains(message, "部分结果不计入")
+		case "github_traversing":
+			queued = queued || (strings.Contains(message, "新增 1 个子目录待处理") && strings.Contains(message, "不表示整个子树完成") && strings.Contains(message, "另有 1 个排队"))
+			subtree = subtree || (strings.Contains(message, "当前子树完整读取") && strings.Contains(message, "cves/2026"))
+		case "github_finished":
+			finished = current == 3 && strings.Contains(message, "共 1 个 CVE") && strings.Contains(message, "另有 0 个排队")
+		}
+		return nil
+	})
+	names, err := client.ListCVEFileNamesWithProgress(context.Background(), "main", reporter)
+	if err != nil || strings.Join(names, ",") != "CVE-2026-0001" || requests != 4 || limits != 4 || !fallback || !queued || !subtree || !finished {
+		t.Fatalf("names=%v err=%v requests=%d limits=%d fallback=%t queued=%t subtree=%t finished=%t", names, err, requests, limits, fallback, queued, subtree, finished)
 	}
 }

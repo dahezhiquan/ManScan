@@ -184,7 +184,7 @@ func TestCVEFileNamesExhaustedTreeRetriesPreserveOutput(t *testing.T) {
 	}
 }
 
-func TestCVEFileNamesTruncatedWholeTreePreservesOutput(t *testing.T) {
+func TestCVEFileNamesTruncatedDirectTreePreservesOutput(t *testing.T) {
 	root := t.TempDir()
 	output := filepath.Join(root, "data", "tmp", "cve_data", "cves.txt")
 	if err := writeCVEFileNames(output, []string{"CVE-2025-0001"}, nil, context.Background()); err != nil {
@@ -197,13 +197,13 @@ func TestCVEFileNamesTruncatedWholeTreePreservesOutput(t *testing.T) {
 		if filepath.Base(request.URL.Path) == "main" {
 			return githubTestTreeResponse(request)
 		}
-		if filepath.Base(request.URL.Path) != "cves-sha" || request.URL.Query().Get("recursive") != "1" {
+		if filepath.Base(request.URL.Path) != "cves-sha" {
 			t.Errorf("unexpected split request: %s", request.URL.Path)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"truncated":true,"tree":[{"path":"CVE-2026-9999.json","type":"blob"}]}`)), Request: request}, nil
 	}))
 	err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, nil)
-	if err == nil || !strings.Contains(err.Error(), "整树响应被截断") || requests != 2 {
+	if err == nil || !strings.Contains(err.Error(), "直接目录列表仍被截断") || requests != 3 {
 		t.Fatalf("err=%v requests=%d", err, requests)
 	}
 	content, err := os.ReadFile(output)
