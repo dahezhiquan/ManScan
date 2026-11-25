@@ -108,7 +108,7 @@ func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Conte
 			githubClient.beforeRequest = func(ctx context.Context) error { return h.rateLimiter.Wait(ctx, keyID) }
 		}
 		list = func(ctx context.Context) ([]string, error) {
-			return githubClient.ListCVEFileNames(ctx, "main")
+			return githubClient.ListCVEFileNamesWithProgress(ctx, "main", progress)
 		}
 	}
 	names, err := list(ctx)

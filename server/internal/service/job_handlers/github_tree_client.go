@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"ManScan/server/internal/service"
 )
 
 const (
@@ -52,6 +54,7 @@ type GitHubTreeClient struct {
 	Token      string
 
 	beforeRequest func(context.Context) error
+	progress      *githubTreeProgress
 }
 
 // NewGitHubTreeClient creates a client for the CVEProject/cvelistV5 repository.
@@ -70,6 +73,13 @@ func NewGitHubTreeClient(token string) *GitHubTreeClient {
 	}
 }
 
+// ListCVEFileNamesWithProgress reports traversal, retries and long network waits.
+func (c *GitHubTreeClient) ListCVEFileNamesWithProgress(ctx context.Context, ref string, reporter service.ProgressReporter) ([]string, error) {
+	client := *c
+	client.progress = &githubTreeProgress{reporter: reporter, directory: "仓库根目录"}
+	return client.ListCVEFileNames(ctx, ref)
+}
+
 // ListCVEFileNames returns sorted CVE names without the .json suffix.
 func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]string, error) {
 	if strings.TrimSpace(ref) == "" {
@@ -84,10 +94,13 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 		return nil, errors.New("repository root tree response is truncated")
 	}
 
-	var stack []string
+	type directory struct{ sha, path string }
+	var stack []directory
+	queued := make(map[string]struct{})
 	for _, entry := range root.Tree {
 		if entry.Type == "tree" && entry.Path == "cves" && entry.SHA != "" {
-			stack = append(stack, entry.SHA)
+			stack = append(stack, directory{entry.SHA, "cves"})
+			queued[entry.SHA] = struct{}{}
 		}
 	}
 	if len(stack) == 0 {
@@ -96,14 +109,26 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 
 	seenTrees := make(map[string]struct{})
 	seenNames := make(map[string]struct{})
+	if c.progress != nil {
+		c.progress.completed = 1
+		c.progress.pending = len(stack)
+	}
+	if err := c.progress.report(ctx, "github_traversing", "已定位 CVE 目录，开始遍历"); err != nil {
+		return nil, err
+	}
 	for len(stack) > 0 {
 		last := len(stack) - 1
-		sha := stack[last]
+		dir := stack[last]
+		sha := dir.sha
 		stack = stack[:last]
 		if _, seen := seenTrees[sha]; seen {
 			continue
 		}
 		seenTrees[sha] = struct{}{}
+		if c.progress != nil {
+			c.progress.directory = dir.path
+			c.progress.pending = len(stack)
+		}
 
 		// Large recursive responses can time out before GitHub's truncation flag
 		// arrives. Discard incomplete results and walk smaller subtrees instead.
@@ -114,6 +139,13 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 			return nil, fmt.Errorf("read tree %q: %w", sha, err)
 		}
 		if err != nil || tree.Truncated {
+			reason := "递归结果被截断"
+			if err != nil {
+				reason = githubTreeRetryReason(err) + "，重试已耗尽"
+			}
+			if reportErr := c.progress.report(ctx, "github_fallback", reason+"，改为逐层读取目录"); reportErr != nil {
+				return nil, reportErr
+			}
 			recursive = false
 			tree, err = c.getTree(ctx, sha, recursive)
 			if err != nil {
@@ -128,7 +160,10 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 			switch entry.Type {
 			case "tree":
 				if !recursive && entry.SHA != "" {
-					stack = append(stack, entry.SHA)
+					if _, exists := queued[entry.SHA]; !exists {
+						stack = append(stack, directory{entry.SHA, dir.path + "/" + entry.Path})
+						queued[entry.SHA] = struct{}{}
+					}
 				}
 			case "blob":
 				name := entry.Path
@@ -140,6 +175,14 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 				}
 			}
 		}
+		if c.progress != nil {
+			c.progress.completed++
+			c.progress.pending = len(stack)
+			c.progress.found = len(seenNames)
+		}
+		if err := c.progress.report(ctx, "github_traversing", "当前目录读取完成"); err != nil {
+			return nil, err
+		}
 	}
 
 	names := make([]string, 0, len(seenNames))
@@ -147,6 +190,9 @@ func (c *GitHubTreeClient) ListCVEFileNames(ctx context.Context, ref string) ([]
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	if err := c.progress.report(ctx, "github_finished", fmt.Sprintf("GitHub 列表获取完成，共 %d 个 CVE，准备写入文件", len(names))); err != nil {
+		return nil, err
+	}
 	return names, nil
 }
 
@@ -158,14 +204,23 @@ func (c *GitHubTreeClient) getTree(ctx context.Context, ref string, recursive bo
 		// Every actual attempt shares the key's quota. Configuration/limiter
 		// failures must stop immediately rather than become network retries.
 		if c.beforeRequest != nil {
-			if err := c.beforeRequest(ctx); err != nil {
+			if err := c.progress.run(ctx, "github_waiting", "正在等待 GitHub API Key 请求额度", c.beforeRequest); err != nil {
 				return treeResponse{}, err
 			}
 		}
 		if err := ctx.Err(); err != nil {
 			return treeResponse{}, err
 		}
-		tree, err := c.getTreeOnce(ctx, ref, recursive)
+		mode := "非递归"
+		if recursive {
+			mode = "递归"
+		}
+		var tree treeResponse
+		err := c.progress.run(ctx, "github_requesting", fmt.Sprintf("正在%s读取 GitHub 目录，第 %d/%d 次尝试", mode, attempt+1, githubTreeMaxAttempts), func(requestCtx context.Context) error {
+			var requestErr error
+			tree, requestErr = c.getTreeOnce(requestCtx, ref, recursive)
+			return requestErr
+		})
 		if ctx.Err() != nil {
 			return treeResponse{}, ctx.Err()
 		}
@@ -174,6 +229,9 @@ func (c *GitHubTreeClient) getTree(ctx context.Context, ref string, recursive bo
 		}
 		if attempt+1 >= githubTreeMaxAttempts {
 			return treeResponse{}, &githubTreeRetryError{err: err}
+		}
+		if reportErr := c.progress.report(ctx, "github_retrying", fmt.Sprintf("%s，%d 秒后进行第 %d/%d 次尝试", githubTreeRetryReason(err), 1<<attempt, attempt+2, githubTreeMaxAttempts)); reportErr != nil {
+			return treeResponse{}, reportErr
 		}
 		timer := time.NewTimer(time.Second << attempt)
 		select {
@@ -186,6 +244,10 @@ func (c *GitHubTreeClient) getTree(ctx context.Context, ref string, recursive bo
 }
 
 func retryableGitHubTreeError(err error) bool {
+	var progressError *githubTreeProgressError
+	if errors.As(err, &progressError) {
+		return false
+	}
 	var networkError net.Error
 	return (errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary())) ||
 		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
@@ -212,6 +274,9 @@ func (c *GitHubTreeClient) getTreeOnce(ctx context.Context, ref string, recursiv
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
+	if c.progress != nil {
+		c.progress.requests.Add(1)
+	}
 	response, err := httpClient.Do(request)
 	if err != nil {
 		return treeResponse{}, err
@@ -226,7 +291,11 @@ func (c *GitHubTreeClient) getTreeOnce(ctx context.Context, ref string, recursiv
 	}
 
 	var tree treeResponse
-	if err := json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(&tree); err != nil {
+	var reader io.Reader = response.Body
+	if c.progress != nil {
+		reader = githubTreeProgressReader{reader: reader, progress: c.progress}
+	}
+	if err := json.NewDecoder(io.LimitReader(reader, 32<<20)).Decode(&tree); err != nil {
 		return treeResponse{}, fmt.Errorf("decode GitHub tree response: %w", err)
 	}
 	if tree.Tree == nil {

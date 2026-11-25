@@ -76,7 +76,7 @@ func (h *CVEFileNamesHandler) Execute(ctx context.Context, job entity.ScheduledJ
 			return h.rateLimiter.Wait(ctx, apiKeyID)
 		}
 	}
-	names, err := client.ListCVEFileNames(ctx, ref)
+	names, err := client.ListCVEFileNamesWithProgress(ctx, ref, progress)
 	if err != nil {
 		return fmt.Errorf("获取 GitHub CVE 列表失败: %w", err)
 	}
@@ -139,7 +139,7 @@ func writeCVEFileNames(outputPath string, names []string, progress service.Progr
 			return fmt.Errorf("写入 CVE 文件名失败: %w", err)
 		}
 		if progress != nil && (index == 0 || (index+1)%1000 == 0 || index == len(names)-1) {
-			if err := reportProgress(ctx, progress, int64(index+1), int64(len(names)), "writing", "正在写入 CVE 列表"); err != nil {
+			if err := reportProgress(ctx, progress, int64(index+1), int64(len(names)), "writing", fmt.Sprintf("正在写入 CVE 列表：%d/%d", index+1, len(names))); err != nil {
 				return err
 			}
 		}
