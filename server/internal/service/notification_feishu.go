@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -203,31 +204,53 @@ func buildHighSeverityVulnerabilityCard(style string, event HighSeverityVulnerab
 		return nil, errors.New("漏洞等级不符合通知条件")
 	}
 	plain := func(value string) map[string]any { return map[string]any{"tag": "plain_text", "content": value} }
-	content := strings.Join([]string{
-		"ManScan 新增高危漏洞",
-		"等级：" + severity,
-		"漏洞：" + cardText(vulnerability.VulnerabilityName, 200),
-		"模板：" + cardText(vulnerability.TemplateID, 160),
-		"资产：" + cardText(entityString(vulnerability.AssetEndpoint), 300),
-		"扫描任务：" + cardText(event.TaskName, 160),
-		"任务 ID：" + cardText(strconv.FormatInt(event.TaskID, 10), 32),
-		"发现时间：" + vulnerability.LastFoundAt.Format(time.RFC3339),
-	}, "\n")
+	titleSeverity := "高危"
+	if severity == "CRITICAL" {
+		titleSeverity = "严重"
+	}
+	link := "[漏洞链接](" + vulnerabilityDetailURL(vulnerability.ID) + ")"
+	plainField := func(label, value string) map[string]any {
+		return map[string]any{"tag": "div", "text": plain(label + "\n" + value)}
+	}
 	card := map[string]any{
 		"msg_type": "interactive",
 		"card": map[string]any{
-			"header":   map[string]any{"template": normalizeNotificationStyle(style), "title": plain("新增" + severity + " 漏洞预警")},
-			"elements": []any{map[string]any{"tag": "div", "text": plain(content)}},
+			"config": map[string]any{"wide_screen_mode": true},
+			"header": map[string]any{"template": normalizeNotificationStyle(style), "title": plain("ManScan 新增" + titleSeverity + "漏洞")},
+			"elements": []any{
+				map[string]any{"tag": "div", "text": plain("ฅ^•ﻌ•^ฅ  ManScan 小猫发现了新的漏洞")},
+				plainField("🛡 漏洞", cardText(vulnerability.VulnerabilityName, 200)),
+				plainField("🧩 模板", cardText(vulnerability.TemplateID, 160)),
+				plainField("🎯 资产", notificationAssetEndpoint(vulnerability.AssetEndpoint)),
+				plainField("📋 扫描任务", cardText(event.TaskName, 160)),
+				plainField("🕒 发现时间", vulnerability.LastFoundAt.Format(time.RFC3339)),
+				map[string]any{"tag": "hr"},
+				map[string]any{"tag": "div", "text": map[string]any{"tag": "lark_md", "content": "🐾 点击查看漏洞详情 · " + link}},
+				map[string]any{"tag": "note", "elements": []any{plain("ฅ^•ﻌ•^ฅ 小猫已标记，请及时查看与处理")}},
+			},
 		},
 	}
 	return json.Marshal(card)
 }
 
-func entityString(value *string) string {
+func notificationAssetEndpoint(value *string) string {
 	if value == nil {
 		return "未记录"
 	}
-	return *value
+	return cardText(*value, 300)
+}
+
+const defaultVulnerabilityWebBaseURL = "http://manscan-zz.duxiaoman-int.com:6080"
+
+func vulnerabilityDetailURL(vulnerabilityID int64) string {
+	baseURL := defaultVulnerabilityWebBaseURL
+	if configured := strings.TrimSpace(os.Getenv("MANSCAN_PUBLIC_URL")); configured != "" {
+		parsed, err := url.Parse(configured)
+		if err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" && (parsed.Path == "" || parsed.Path == "/") {
+			baseURL = strings.TrimRight(parsed.String(), "/")
+		}
+	}
+	return baseURL + "/vulnerabilities/" + strconv.FormatInt(vulnerabilityID, 10)
 }
 
 func notificationSystemIPs() string {

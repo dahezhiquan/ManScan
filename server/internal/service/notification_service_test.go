@@ -374,6 +374,7 @@ func TestNotificationDispatchEnabledAndExplicitTest(t *testing.T) {
 }
 
 func TestHighSeverityVulnerabilityNotificationDispatch(t *testing.T) {
+	t.Setenv("MANSCAN_PUBLIC_URL", "http://manscan-zz.duxiaoman-int.com:6080")
 	s, _, sender := newNotificationTestService(t)
 	enabled := true
 	webhook := testNotificationWebhook
@@ -388,7 +389,7 @@ func TestHighSeverityVulnerabilityNotificationDispatch(t *testing.T) {
 	endpoint := "app.example.test:443"
 	event := HighSeverityVulnerabilityNotification{
 		TaskID: 17, TaskName: "nightly scan",
-		Vulnerability: entity.Vulnerability{Severity: "critical", VulnerabilityName: "远程代码执行", TemplateID: "CVE-demo", AssetEndpoint: &endpoint, LastFoundAt: time.Date(2026, 11, 26, 1, 2, 3, 0, time.UTC)},
+		Vulnerability: entity.Vulnerability{ID: 1998, Severity: "critical", VulnerabilityName: "远程代码执行", TemplateID: "CVE-demo", AssetEndpoint: &endpoint, LastFoundAt: time.Date(2026, 11, 26, 1, 2, 3, 0, time.UTC)},
 	}
 	if err := s.EnqueueHighSeverityVulnerability(context.Background(), event); err != nil {
 		t.Fatal(err)
@@ -397,13 +398,20 @@ func TestHighSeverityVulnerabilityNotificationDispatch(t *testing.T) {
 	if len(sender.payloads) != 1 {
 		t.Fatalf("delivered %d cards, want one", len(sender.payloads))
 	}
-	for _, want := range []string{"新增CRITICAL 漏洞预警", "远程代码执行", "CVE-demo", "app.example.test:443", "nightly scan", "17"} {
+	for _, want := range []string{"ManScan 新增严重漏洞", "ฅ^•ﻌ•^ฅ", "🛡 漏洞", "🧩 模板", "🎯 资产", "📋 扫描任务", "🕒 发现时间", "远程代码执行", "CVE-demo", "app.example.test:443", "nightly scan", "2026-11-26T01:02:03Z", "🐾 点击查看漏洞详情", "[漏洞链接](http://manscan-zz.duxiaoman-int.com:6080/vulnerabilities/1998)"} {
 		if !strings.Contains(string(sender.payloads[0]), want) {
 			t.Fatalf("card missing %q: %s", want, sender.payloads[0])
 		}
 	}
-	if strings.Contains(string(sender.payloads[0]), "request") || strings.Contains(string(sender.payloads[0]), "payload") {
-		t.Fatalf("card unexpectedly includes request details: %s", sender.payloads[0])
+	for _, unwanted := range []string{"等级：", "任务 ID", "request", "payload"} {
+		if strings.Contains(string(sender.payloads[0]), unwanted) {
+			t.Fatalf("card unexpectedly includes %q: %s", unwanted, sender.payloads[0])
+		}
+	}
+	event.Vulnerability.Severity = "high"
+	card, err := buildHighSeverityVulnerabilityCard("red", event)
+	if err != nil || !strings.Contains(string(card), "ManScan 新增高危漏洞") {
+		t.Fatalf("high severity card = %s, error = %v", card, err)
 	}
 }
 

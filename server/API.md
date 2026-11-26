@@ -3498,7 +3498,7 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 
 ### 通知事件和卡片字段
 
-当前事件包括 `scan_started` 和 `high_severity_vulnerability`。`scan_started`：扫描任务已成功入库并完成运行态初始化，即将启动扫描时触发。包含 `POST /api/v1/scans` 和 `POST /api/v1/scans/:id/rescan`；恢复暂停任务不会重复发送。创建失败和参数校验失败不会发送。此处“发起”不表示主扫描子进程已经加载完模版。`high_severity_vulnerability`：扫描结果首次插入漏洞表且等级为 `high` 或 `critical` 时触发；相同 `vuln_fingerprint` 的后续命中只更新记录，不重复预警。卡片包含漏洞名称、等级、模板 ID、资产端点、任务名称、任务 ID 和发现时间，不包含原始请求/响应、Payload 等详情。
+当前事件包括 `scan_started` 和 `high_severity_vulnerability`。`scan_started`：扫描任务已成功入库并完成运行态初始化，即将启动扫描时触发。包含 `POST /api/v1/scans` 和 `POST /api/v1/scans/:id/rescan`；恢复暂停任务不会重复发送。创建失败和参数校验失败不会发送。此处“发起”不表示主扫描子进程已经加载完模版。`high_severity_vulnerability`：扫描结果首次插入漏洞表且等级为 `high` 或 `critical` 时触发；相同 `vuln_fingerprint` 的后续命中只更新记录，不重复预警。标题按等级显示为“ManScan 新增高危漏洞”或“ManScan 新增严重漏洞”；正文保留漏洞名称、模板 ID、资产端点、扫描任务名称和发现时间，去掉等级和任务 ID，并添加可点击的“漏洞链接”。链接基址默认是 `http://manscan-zz.duxiaoman-int.com:6080`；可通过环境变量 `MANSCAN_PUBLIC_URL` 设置部署环境使用的前端站点 origin（仅接受 http/https origin，不含路径、查询或片段），链接路径为 `/vulnerabilities/{漏洞ID}`。
 
 | 卡片字段 | 取值口径 |
 | --- | --- |
@@ -3510,7 +3510,7 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 | 扫描 UA | custom_headers 中最后一个合法的 User-Agent；未指定时显示“引擎默认随机 UA（未指定固定 User-Agent）” |
 | 当前系统 IP | 服务进程所在机器/容器启用的非回环网卡 IPv4/IPv6 地址，去重排序；不是客户端 IP，也不通过外部网站探测公网出口 IP |
 
-卡片样式只控制标题栏颜色，不包含标题文案或独立主题。支持蓝、橙、紫、红、绿、黄、灰七种配色；标题由具体触发节点通过事件的 Title 字段传入，卡片渲染器不根据样式决定或硬编码业务标题。创建扫描任务节点（含重新扫描）传入“扫描任务已发起”，测试通知节点传入“通知测试”，正文保留小猫颜文字、猫咪图标和原有布局。历史样式 cat_blue、cat_orange、cat_purple 仍可提交和读取，分别映射为 blue、orange、purple；写入及接口响应统一返回颜色标识，无须修改现有数据库记录。动态内容采用 plain_text，输入中的 Markdown、HTML 和 @所有人语法不会作为卡片指令解析。不会发送目标明细、其他自定义 Header、代理凭证或 Interactsh Token。
+卡片样式只控制标题栏颜色，不包含独立主题。扫描发起卡片标题由触发节点传入，漏洞预警卡片按严重程度生成标题；两类卡片均使用 ManScan 小猫颜文字、图标和 note 结尾，漏洞信息按带图标的字段展示。历史样式 cat_blue、cat_orange、cat_purple 仍可提交和读取，分别映射为 blue、orange、purple；写入及接口响应统一返回颜色标识，无须修改现有数据库记录。漏洞卡片动态字段使用 plain_text；唯一的 lark_md 内容是服务端构造的固定标签“漏洞链接”和经校验的站点 origin、数据库漏洞 ID，不接受模板或扫描结果提供的 Markdown。不会发送目标明细、其他自定义 Header、代理凭证或 Interactsh Token。
 
 自动通知通过进程内队列异步发送：扫描发起事件队列容量 128，新增高危漏洞事件队列容量 512。单次请求超时 10 秒，数据库查询超时 5 秒。发送前重新检查开关；通知失败或队列满不影响扫描，日志仅记录任务 ID、通知 ID 和固定原因，不记录 webhook。当前为尽力发送：队列不持久化，进程退出会丢失待发事件，不自动重试，避免重复群消息。已开始的发送不能被之后的关闭操作撤回。
 
