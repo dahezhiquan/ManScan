@@ -29,7 +29,7 @@ func TestScanNotificationCreateRescanAndFailureIsolation(t *testing.T) {
 	launches := 0
 	svc.taskRunner = func(taskID int64, plan *normalizedTaskRequest, runtime *scanTaskRuntime) { launches++ }
 	ctx := WithScanInitiator(context.Background(), "authenticated-operator")
-	request := dto.CreateScanTaskRequest{Name: "巡检", CreatedBy: "client-supplied-name", Description: "说明", Targets: []string{"https://example.com/", "https://example.com"}, InlineTargetsList: "https://other.example.com", CustomHeaders: []string{"User-Agent: first", "user-agent: ScanAgent/2.0"}}
+	request := dto.CreateScanTaskRequest{Name: "巡检", CreatedBy: "client-supplied-name", Description: "说明", Targets: []string{"https://example.com/", "https://example.com"}, InlineTargetsList: "https://other.example.com", CustomHeaders: []string{"User-Agent: first", "user-agent: ScanAgent/2.0"}, NotifyOnStart: true}
 	result, err := svc.Create(ctx, request)
 	if err != nil {
 		t.Fatal(err)
@@ -53,6 +53,12 @@ func TestScanNotificationCreateRescanAndFailureIsolation(t *testing.T) {
 	}
 	if launches != 3 {
 		t.Fatal("scan not launched after notification failure")
+	}
+	if _, err = svc.Create(ctx, dto.CreateScanTaskRequest{Targets: []string{"https://silent.example.com"}}); err != nil {
+		t.Fatal("create without notification failed", err)
+	}
+	if len(notifier.events) != 3 || launches != 4 {
+		t.Fatal("notification was enqueued when notify_on_start was disabled")
 	}
 	repo.createErr = errors.New("db failed")
 	if _, err = svc.Create(ctx, request); err == nil {

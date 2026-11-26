@@ -215,6 +215,7 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 		InputFileMode:                 firstNonEmpty(strings.TrimSpace(request.InputFileMode), "list"),
 		NewTemplates:                  request.NewTemplates,
 		AutomaticScan:                 request.AutomaticScan,
+		NotifyOnStart:                 request.NotifyOnStart,
 		PreflightFingerprint:          request.PreflightFingerprint,
 		ScreenshotCapture:             request.ScreenshotCapture,
 		DAST:                          request.DAST,
@@ -764,6 +765,9 @@ func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, run
 		return
 	}
 	state := runtime.state
+	if s.logger != nil {
+		state.SetDiagnosticLogger(s.logger)
+	}
 	if runtime.IsCancelRequested() {
 		s.finishCancelledTask(taskID, runtime, nil)
 		return
@@ -1567,6 +1571,7 @@ func normalizedTaskRequestFromTask(task *entity.ScanTask) (*normalizedTaskReques
 		InputFileMode:                 task.InputFileMode,
 		NewTemplates:                  task.NewTemplates,
 		AutomaticScan:                 task.AutomaticScan,
+		NotifyOnStart:                 task.NotifyOnStart,
 		PreflightFingerprint:          task.PreflightFingerprint,
 		ScreenshotCapture:             task.ScreenshotCapture,
 		DAST:                          task.DAST,

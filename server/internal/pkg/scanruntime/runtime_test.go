@@ -10,6 +10,85 @@ import (
 	"time"
 )
 
+type diagnosticLogEntry struct {
+	message string
+	fields  map[string]interface{}
+}
+
+type diagnosticLoggerStub struct {
+	entries []diagnosticLogEntry
+}
+
+func (l *diagnosticLoggerStub) Error(message string, fields ...interface{}) {
+	entry := diagnosticLogEntry{message: message, fields: make(map[string]interface{})}
+	for i := 0; i+1 < len(fields); i += 2 {
+		entry.fields[fields[i].(string)] = fields[i+1]
+	}
+	l.entries = append(l.entries, entry)
+}
+
+func TestScannerDiagnosticsLoggedAndHiddenFromFrontend(t *testing.T) {
+	t.Parallel()
+
+	state, err := NewState(550, "task-550", "diagnostics", 1, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	logger := &diagnosticLoggerStub{}
+	state.SetDiagnosticLogger(logger)
+	state.Append("info", "task_started", "扫描任务开始执行")
+
+	StreamCommandOutput(strings.NewReader("[FTL] Could not run scan: no templates provided\n"), state, "stdout", true)
+	StreamCommandOutput(strings.NewReader("[ERR] template compilation failed\ncmd/nuclei/main.go:10: undefined: missing\n[WRN] template warning\n[INF] ordinary info\n"), state, "stderr", false)
+	if err := os.WriteFile(state.ErrorLogFilePath, []byte(`{"template-id":"test-template","type":"http","address":"https://example.com","error":"connection refused"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	state.SyncScannerErrors()
+	state.SyncScannerErrors()
+
+	wantDiagnostics := []string{
+		"[FTL] Could not run scan: no templates provided",
+		"[ERR] template compilation failed",
+		"cmd/nuclei/main.go:10: undefined: missing",
+		"connection refused",
+	}
+	if len(logger.entries) != len(wantDiagnostics) {
+		t.Fatalf("server log entries = %+v, want %d", logger.entries, len(wantDiagnostics))
+	}
+	persisted, err := os.ReadFile(state.LogFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range wantDiagnostics {
+		entry := logger.entries[i]
+		diagnostic, ok := entry.fields["diagnostic"].(string)
+		if entry.message != "scan task scanner error" || entry.fields["task_id"] != int64(550) || !ok || !strings.Contains(diagnostic, want) {
+			t.Fatalf("server log entry = %+v, want task 550 diagnostic %q", entry, want)
+		}
+		if !strings.Contains(string(persisted), want) {
+			t.Fatalf("persisted events missing %q", want)
+		}
+	}
+	if events := FilterFrontendLogEvents(state.EventsSince(0, 100).Events); len(events) != 1 || events[0].Type != "task_started" {
+		t.Fatalf("frontend events = %+v, want only task_started", events)
+	}
+	if progress := state.SnapshotProgress(); progress.LastMessage != "扫描任务开始执行" {
+		t.Fatalf("scanner diagnostics leaked into progress: %+v", progress)
+	}
+	progressData, err := os.ReadFile(state.ProgressFilePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var progress TaskProgressSnapshot
+	if err := json.Unmarshal(progressData, &progress); err != nil {
+		t.Fatal(err)
+	}
+	if progress.LastMessage != "扫描任务开始执行" {
+		t.Fatalf("persisted progress contains scanner diagnostics: %+v", progress)
+	}
+}
+
 func TestShouldHideFrontendLogEvent(t *testing.T) {
 	t.Parallel()
 

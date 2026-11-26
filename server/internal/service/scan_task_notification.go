@@ -23,7 +23,7 @@ func scanInitiator(ctx context.Context, fallback string) string {
 }
 
 func (s *scanTaskService) notifyScanStarted(ctx context.Context, task *entity.ScanTask, plan *normalizedTaskRequest, state *scanruntime.State) {
-	if s.notifier == nil {
+	if s.notifier == nil || !plan.Raw.NotifyOnStart {
 		return
 	}
 	userAgent := assetDomainProbeUserAgent(plan.Raw.CustomHeaders)

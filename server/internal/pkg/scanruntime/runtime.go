@@ -203,6 +203,11 @@ type scannerErrorLogEntry struct {
 
 type ResultHandler func(payload map[string]interface{})
 
+// DiagnosticLogger receives scanner errors for the server log.
+type DiagnosticLogger interface {
+	Error(message string, fields ...interface{})
+}
+
 // State 保存单个扫描任务的运行时状态。
 type State struct {
 	ID               int64
@@ -217,6 +222,7 @@ type State struct {
 	MatchLogFile     *os.File
 
 	mu                             sync.RWMutex
+	diagnosticLogger               DiagnosticLogger
 	events                         []TaskLogEvent
 	nextSeq                        int64
 	progress                       TaskProgressSnapshot
@@ -350,6 +356,13 @@ func (s *State) AppendResult(message string, tags []string, metadata ...ResultLo
 	s.AppendEvent(event)
 }
 
+// SetDiagnosticLogger connects scanner diagnostics to the server logger.
+func (s *State) SetDiagnosticLogger(logger DiagnosticLogger) {
+	s.mu.Lock()
+	s.diagnosticLogger = logger
+	s.mu.Unlock()
+}
+
 func (s *State) AppendEvent(event TaskLogEvent) {
 	if event.Time.IsZero() {
 		event.Time = time.Now()
@@ -367,7 +380,10 @@ func (s *State) AppendEvent(event TaskLogEvent) {
 	}
 	s.progress.LastEventSeq = event.Seq
 	s.progress.LastUpdatedAt = event.Time
-	s.progress.LastMessage = event.Message
+	// Hidden diagnostics must not reach the frontend through progress.last_message.
+	if !ShouldHideFrontendLogEvent(event) {
+		s.progress.LastMessage = event.Message
+	}
 	if s.LogFile != nil {
 		if encoded, err := json.Marshal(event); err == nil {
 			writeLogLine(s.LogFile, encoded)
@@ -382,13 +398,28 @@ func (s *State) AppendEvent(event TaskLogEvent) {
 	for ch := range s.subscribers {
 		subscribers = append(subscribers, ch)
 	}
+	logger := s.diagnosticLogger
 	s.mu.Unlock()
+
+	if logger != nil && strings.EqualFold(event.Level, "error") && isScannerDiagnostic(event.Type) {
+		// The logger deliberately hides fields named "error"; diagnostics use a dedicated field.
+		logger.Error("scan task scanner error", "task_id", s.ID, "event_type", event.Type, "diagnostic", event.Message)
+	}
 
 	for _, ch := range subscribers {
 		select {
 		case ch <- event:
 		default:
 		}
+	}
+}
+
+func isScannerDiagnostic(eventType string) bool {
+	switch eventType {
+	case "stdout", "stderr", "scanner_error", "stdout_scan_error", "stderr_scan_error":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1204,6 +1235,9 @@ func StreamCommandOutputWithResultHandler(reader io.Reader, state *State, stream
 			if level == "warn" || level == "error" {
 				state.Append(level, stream, message)
 			}
+		} else if stream == "stderr" {
+			// Compiler errors, flag parsing failures and panic stacks have no scanner prefix.
+			state.Append("error", stream, strings.TrimSpace(ansiLogPattern.ReplaceAllString(line, "")))
 		}
 
 		if !parseResultJSON {

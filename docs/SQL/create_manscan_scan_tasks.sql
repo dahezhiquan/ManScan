@@ -31,6 +31,7 @@ CREATE TABLE `manscan_scan_tasks` (
     -- =========================
                                       `new_templates` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '仅运行新增模板，对应 -nt/--new-templates',
                                       `automatic_scan` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '自动模板映射扫描，对应 -as/--automatic-scan',
+                                      `notify_on_start` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否发送扫描任务发起通知',
                                       `preflight_fingerprint` TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用前置主动指纹探测，不影响存活探测、Wappalyzer和自动模板映射',
                                       `screenshot_capture` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否在扫描前HTTP存活探测后独立采集页面截图',
                                       `enable_code_templates` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '启用Code协议模板，对应 -code/--code',

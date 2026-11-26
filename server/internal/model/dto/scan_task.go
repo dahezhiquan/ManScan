@@ -18,6 +18,7 @@ type CreateScanTaskRequest struct {
 	InputFileMode                 string   `json:"input_file_mode"`
 	NewTemplates                  bool     `json:"new_templates"`
 	AutomaticScan                 bool     `json:"automatic_scan"`
+	NotifyOnStart                 bool     `json:"notify_on_start"`
 	PreflightFingerprint          *bool    `json:"preflight_fingerprint"`
 	ScreenshotCapture             bool     `json:"screenshot_capture"`
 	DAST                          bool     `json:"dast"`

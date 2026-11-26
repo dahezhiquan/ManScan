@@ -2266,9 +2266,12 @@ func TestRunTaskRecordsFailureReason(t *testing.T) {
 		blockWrite bool
 		wantReason string
 		wantStatus string
+		diagnostic string
 	}{
 		{name: "start failure", script: "#!/nonexistent-manscan-test-interpreter\n", wantReason: "启动扫描子进程失败: fork/exec", wantStatus: "failed"},
 		{name: "exit failure", script: "#!/bin/sh\nexit 7\n", wantReason: "扫描子进程退出异常: exit status 7", wantStatus: "failed"},
+		{name: "scanner failure", script: "#!/bin/sh\necho '[FTL] no templates provided for scan' >&2\nexit 1\n", wantReason: "扫描子进程退出异常: exit status 1", wantStatus: "failed", diagnostic: "[FTL] no templates provided for scan"},
+		{name: "compiler failure", script: "#!/bin/sh\necho 'cmd/nuclei/main.go:10: undefined: missing' >&2\nexit 1\n", wantReason: "扫描子进程退出异常: exit status 1", wantStatus: "failed", diagnostic: "cmd/nuclei/main.go:10: undefined: missing"},
 		{name: "target write failure", script: "#!/bin/sh\nexit 0\n", blockWrite: true, wantReason: "写入扫描目标文件失败: open", wantStatus: "failed"},
 		{name: "success", script: "#!/bin/sh\nexit 0\n", wantStatus: "success"},
 		{name: "cancelled", script: "#!/bin/sh\nexit 7\n", wantStatus: "cancelled"},
@@ -2338,6 +2341,19 @@ func TestRunTaskRecordsFailureReason(t *testing.T) {
 			}
 			if !strings.Contains(string(data), test.wantReason) {
 				t.Fatalf("persisted events missing reason %q", test.wantReason)
+			}
+			if test.diagnostic != "" {
+				if !strings.Contains(string(data), test.diagnostic) {
+					t.Fatalf("persisted events missing diagnostic %q", test.diagnostic)
+				}
+				if strings.Contains(state.SnapshotProgress().LastMessage, test.diagnostic) {
+					t.Fatal("scanner diagnostic leaked into final progress")
+				}
+				for _, event := range scanruntime.FilterFrontendLogEvents(state.EventsSince(0, 100).Events) {
+					if strings.Contains(event.Message, test.diagnostic) {
+						t.Fatalf("scanner diagnostic leaked into frontend event: %+v", event)
+					}
+				}
 			}
 		})
 	}

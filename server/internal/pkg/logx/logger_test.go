@@ -27,3 +27,13 @@ func TestLoggerHidesErrorDetails(t *testing.T) {
 		t.Fatalf("missing failure reason: %s", logged)
 	}
 }
+
+func TestLoggerPreservesScannerDiagnostic(t *testing.T) {
+	var output bytes.Buffer
+	core := zapcore.NewCore(zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()), zapcore.AddSync(&output), zapcore.InfoLevel)
+	logger := &Logger{raw: zap.New(core)}
+	logger.Error("scan task scanner error", "task_id", int64(550), "event_type", "stderr", "diagnostic", "[FTL] no templates provided for scan")
+	if logged := output.String(); !strings.Contains(logged, `"diagnostic":"[FTL] no templates provided for scan"`) || !strings.Contains(logged, `"task_id":550`) {
+		t.Fatalf("missing scanner diagnostic: %s", logged)
+	}
+}

@@ -19,6 +19,7 @@ type ScanTask struct {
 	InputFileMode                 string     `gorm:"column:input_file_mode"`
 	NewTemplates                  bool       `gorm:"column:new_templates"`
 	AutomaticScan                 bool       `gorm:"column:automatic_scan"`
+	NotifyOnStart                 bool       `gorm:"column:notify_on_start;not null;default:false"`
 	PreflightFingerprint          *bool      `gorm:"column:preflight_fingerprint;not null;default:true"`
 	ScreenshotCapture             bool       `gorm:"column:screenshot_capture;not null;default:false"`
 	DAST                          bool       `gorm:"column:dast"`

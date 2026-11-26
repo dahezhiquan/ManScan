@@ -1024,6 +1024,7 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `severities`          | `string[]` | 否  | 严重级别过滤             |
 | `protocols`           | `string[]` | 否  | 协议类型过滤，口径与模板协议选项一致 |
 | `automatic_scan`      | `bool`     | 否  | 自动模版映射，默认关闭，对应 `-as` |
+| `notify_on_start`     | `bool`     | 否  | 是否发送扫描任务发起通知，默认 `false`；仅为 `true` 时入队发送通知 |
 | `preflight_fingerprint` | `bool`   | 否  | 是否前置指纹探测，默认 `true`；设置为 `false` 仅跳过扫描前主动指纹模板阶段，保留存活探测、Wappalyzer 被动识别和自动模版映射 |
 | `screenshot_capture` | `bool` | 否 | 是否在扫描前 HTTP 存活探测后独立采集页面截图，默认 `false` |
 | `dast`                | `bool`     | 否  | 启用 DAST/fuzzable 模板，对应 `-dast` |
@@ -1047,6 +1048,8 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 `screenshot_capture=true` 时，服务端在存活探测与原有前置主动指纹阶段完成后，仅对 HTTP 存活目标启动独立的 `screenshot` Headless 子阶段；通常随后继续原有主扫描。如果同时满足 `automatic_scan=false` 且没有其他模板选择条件，任务会在截图后跳过主扫描，并将 `plugin_count` 按 `screenshot` 计为 1；是否开启 `preflight_fingerprint` 只决定截图前是否执行主动指纹探测，不影响主扫描跳过判断。截图阶段不继承主扫描的自动映射、模板 ID、标签、严重级别和协议筛选。截图失败会记录 warning 并继续原有扫描，取消或暂停任务会终止截图子进程。该字段不能与 `offline_http=true` 或 `disable_http_probe=true` 同时使用。为兼容历史调用方，`include_ids` 中的 `screenshot` 会迁移为 `screenshot_capture=true` 并从持久化模板 ID 中移除。
 
 已有数据库部署需先执行 `docs/SQL/alter_manscan_scan_tasks_preflight_fingerprint.sql`，历史任务默认开启；新建数据库使用更新后的建表脚本。
+
+已有数据库部署需执行 `docs/SQL/alter_manscan_scan_tasks_add_notify_on_start.sql`，历史任务默认关闭发起通知；新建数据库使用更新后的建表脚本。
 
 独立截图功能部署还需执行 `docs/SQL/alter_manscan_scan_tasks_add_preflight_screenshot.sql`；历史任务默认不截图。
 
@@ -1086,6 +1089,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans" \
   -d '{
     "name": "demo-scan",
     "targets": ["https://example.com"],
+    "notify_on_start": true,
     "preflight_fingerprint": false,
     "tags": ["cve"],
     "severities": ["high"],
@@ -1189,6 +1193,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
       "severities": ["high"],
       "protocols": ["http"],
       "automatic_scan": false,
+      "notify_on_start": true,
       "preflight_fingerprint": true,
       "screenshot_capture": true,
       "dast": false,
@@ -1208,7 +1213,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
 ```
 
 - 说明：
-  - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的目标、模板筛选、协议筛选、并发、限速、代理、截图采集、headless、DAST、Code/File 模板开关等扫描配置，用于前端回填“重新创建扫描任务”表单。
+  - 该接口会读取原任务在 `manscan_scan_tasks` 中保存的目标、模板筛选、协议筛选、并发、限速、代理、通知开关、截图采集、headless、DAST、Code/File 模板开关等扫描配置，用于前端回填“重新创建扫描任务”表单。
   - `config` 字段使用创建扫描任务接口的请求结构，前端可在用户确认或调整后提交给 `POST /api/v1/scans`。
   - 该接口只读取配置，不创建新任务，不恢复任务，也不会继承原任务的运行日志、进度快照或结果统计。
 
@@ -1494,7 +1499,8 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
   - `direction=forward` 用于按序向后读取增量日志，返回 `seq > offset` 的事件；`next_offset` 表示本次已处理的最大 `seq`，下一次请求可直接作为 `offset` 传回。
   - `direction=before` 用于向前翻旧日志，返回 `seq < offset` 的最近一页可见事件；当 `offset=0` 时返回当前尾部最近一页；`next_offset` 表示本页最早可见事件的 `seq`，下一次请求可直接作为 `offset` 继续翻更早日志。
   - 运行中任务也支持 `direction=before`，可用于浏览器刷新后从尾部向前回补历史日志。
-  - 扫描执行失败时，`level=error`、`type=task_failed` 事件的 `message` 包含失败阶段和返回的原因，例如 `扫描任务执行失败: 扫描子进程退出异常: exit status 7`；结束时的 `progress.last_message` 同步保留该原因。子进程内部的具体报错仍需结合此前的 stderr 事件及原始日志查看；历史任务不会补写原因。
+  - 扫描执行失败时，原始日志中的 `level=error`、`type=task_failed` 事件包含失败阶段和返回的原因，例如 `扫描任务执行失败: 扫描子进程退出异常: exit status 7`；结束时的 `progress.last_message` 保留该失败摘要。日志查询接口过滤 `warn/error` 事件，扫描器错误详情也不会覆盖运行中的 `progress.last_message`。
+  - 扫描器错误会同时写入任务原始日志和服务端结构化日志，后者的 `msg` 为 `scan task scanner error`，通过 `task_id` 关联任务，`event_type` 标识来源，`diagnostic` 保存具体报错。支持 stdout/stderr 中的错误级别消息、无标准前缀的 stderr（例如编译错误、panic 堆栈）和 `error.log` 中的扫描请求错误。原始日志可通过下载接口获取；历史任务不会补写服务端诊断日志。
   - `result` 类型事件可能包含 `tags`、`result_key`、`template_id`、`severity` 字段：`tags` 用于记录该命中结果的模板标签；`result_key` 为后端生成的不透明结构化去重键，前端只应作为稳定标识使用，不应解析其内部格式；`template_id` 和 `severity` 分别表示命中模板 ID 与严重级别。
   - 目标命中 `exclude_targets` 禁扫规则时，会在任何前置探测前产生 `level=info`、`type=target_excluded` 的事件，`message` 包含被跳过的目标和首次命中的规则。被排除目标不参与扫描前 HTTP/Wappalyzer 探测、截图采集或主扫描；全部目标被排除时跳过执行并将实际插件数量设为 `0`。
   - 当任务开启 `matcher_status` 时，模板匹配失败会以 `level=info`、`type=match_failure` 输出为调试日志；这类事件不计入 `progress.matched`，不写入漏洞结果。
@@ -1532,7 +1538,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=
   - `result` 类型事件中的 `event.result_key` 为后端生成的不透明结构化去重键，历史统计恢复、实时日志去重和续传补发均以该字段为准；`event.template_id` 与 `event.severity` 用于结构化统计分类。
   - 开启 `matcher_status` 后产生的 `match_failure` 事件只用于展示匹配失败调试信息，不会触发漏洞命中统计刷新
   - 任务结束后发送 `complete`
-  - 扫描执行失败时推送 `task_failed` 事件，`message` 包含失败阶段及原因，结束时 `progress.last_message` 使用相同内容，与日志查询接口一致。
+  - SSE 过滤 `warn/error` 事件，包括 `task_failed`，不推送扫描器具体报错；`complete` 消息不包含诊断详情。扫描执行失败后，可通过任务详情或日志查询接口的 `progress.last_message` 获取失败阶段及退出原因摘要；扫描器诊断详情只记录在服务端日志与任务原始日志中。
 
 - `snapshot` 示例：
 

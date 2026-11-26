@@ -52,6 +52,32 @@ func TestScanTaskRepositoryPersistsPreflightFingerprint(t *testing.T) {
 	}
 }
 
+func TestScanTaskRepositoryPersistsNotifyOnStart(t *testing.T) {
+	t.Parallel()
+
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "notify.db")), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&entity.ScanTask{}); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewScanTaskRepository(db)
+	task := &entity.ScanTask{TaskNo: "notify-enabled", Name: "notify-enabled", NotifyOnStart: true}
+	if err := repo.Create(context.Background(), task); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.FindByID(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.NotifyOnStart {
+		t.Fatal("NotifyOnStart was not persisted")
+	}
+}
+
 func TestScanTaskRepositoryDeleteRemovesTaskAndResult(t *testing.T) {
 	t.Parallel()
 
