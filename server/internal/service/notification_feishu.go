@@ -193,6 +193,43 @@ func buildScanStartedCard(style string, event ScanStartedNotification, templateC
 	return json.Marshal(payload)
 }
 
+func buildHighSeverityVulnerabilityCard(style string, event HighSeverityVulnerabilityNotification) ([]byte, error) {
+	if !validNotificationStyle(style) {
+		return nil, errors.New("不支持的通知样式")
+	}
+	vulnerability := event.Vulnerability
+	severity := strings.ToUpper(strings.TrimSpace(vulnerability.Severity))
+	if severity != "HIGH" && severity != "CRITICAL" {
+		return nil, errors.New("漏洞等级不符合通知条件")
+	}
+	plain := func(value string) map[string]any { return map[string]any{"tag": "plain_text", "content": value} }
+	content := strings.Join([]string{
+		"ManScan 新增高危漏洞",
+		"等级：" + severity,
+		"漏洞：" + cardText(vulnerability.VulnerabilityName, 200),
+		"模板：" + cardText(vulnerability.TemplateID, 160),
+		"资产：" + cardText(entityString(vulnerability.AssetEndpoint), 300),
+		"扫描任务：" + cardText(event.TaskName, 160),
+		"任务 ID：" + cardText(strconv.FormatInt(event.TaskID, 10), 32),
+		"发现时间：" + vulnerability.LastFoundAt.Format(time.RFC3339),
+	}, "\n")
+	card := map[string]any{
+		"msg_type": "interactive",
+		"card": map[string]any{
+			"header":   map[string]any{"template": normalizeNotificationStyle(style), "title": plain("新增" + severity + " 漏洞预警")},
+			"elements": []any{map[string]any{"tag": "div", "text": plain(content)}},
+		},
+	}
+	return json.Marshal(card)
+}
+
+func entityString(value *string) string {
+	if value == nil {
+		return "未记录"
+	}
+	return *value
+}
+
 func notificationSystemIPs() string {
 	interfaces, err := net.Interfaces()
 	if err != nil {

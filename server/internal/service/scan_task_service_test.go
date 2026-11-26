@@ -48,6 +48,37 @@ func TestCollectTargetsNormalizesTrailingSlash(t *testing.T) {
 	}
 }
 
+func TestResolveManScanCommandUsesDedicatedScannerBinary(t *testing.T) {
+	t.Setenv("MANSCAN_SCANNER_BIN", "")
+	rootDir := t.TempDir()
+	manscanPath := filepath.Join(rootDir, "manscan")
+	if err := os.WriteFile(manscanPath, []byte("server binary"), 0o755); err != nil {
+		t.Fatalf("write server binary: %v", err)
+	}
+
+	executable, args := resolveManScanCommand(rootDir)
+	if executable != "go" {
+		t.Fatalf("expected go fallback when only server binary exists, got %q", executable)
+	}
+	if strings.Join(args, " ") != "run ./cmd/nuclei" {
+		t.Fatalf("unexpected fallback args: %v", args)
+	}
+}
+
+func TestResolveManScanCommandUsesConfiguredScannerBinary(t *testing.T) {
+	rootDir := t.TempDir()
+	scannerPath := filepath.Join(rootDir, "scanner")
+	if err := os.WriteFile(scannerPath, []byte("scanner binary"), 0o755); err != nil {
+		t.Fatalf("write scanner binary: %v", err)
+	}
+	t.Setenv("MANSCAN_SCANNER_BIN", scannerPath)
+
+	executable, args := resolveManScanCommand(rootDir)
+	if executable != scannerPath || args != nil {
+		t.Fatalf("expected configured scanner %q, got executable %q and args %v", scannerPath, executable, args)
+	}
+}
+
 func TestBuildScanCLIArgsUsesTaskScopedStoreResponseDir(t *testing.T) {
 	t.Parallel()
 

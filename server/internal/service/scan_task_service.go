@@ -1684,11 +1684,29 @@ func normalizeTarget(value string) string {
 }
 
 func resolveManScanCommand(rootDir string) (string, []string) {
-	binaryPath := filepath.Join(rootDir, "manscan")
-	if info, err := os.Stat(binaryPath); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
-		return binaryPath, nil
+	if configuredPath := strings.TrimSpace(os.Getenv("MANSCAN_SCANNER_BIN")); configuredPath != "" {
+		if !filepath.IsAbs(configuredPath) {
+			configuredPath = filepath.Join(rootDir, configuredPath)
+		}
+		if isExecutableFile(configuredPath) {
+			return configuredPath, nil
+		}
+	}
+
+	for _, binaryPath := range []string{
+		filepath.Join(rootDir, "bin", "nuclei"),
+		filepath.Join(rootDir, "nuclei"),
+	} {
+		if isExecutableFile(binaryPath) {
+			return binaryPath, nil
+		}
 	}
 	return "go", []string{"run", "./cmd/nuclei"}
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir() && info.Mode()&0o111 != 0
 }
 
 func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, resumeFile, storeResponseDir string, excludeFingerprintTemplates ...bool) []string {

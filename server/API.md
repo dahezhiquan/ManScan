@@ -3498,7 +3498,7 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 
 ### 通知事件和卡片字段
 
-当前事件为 `scan_started`：扫描任务已成功入库并完成运行态初始化，即将启动扫描时触发。包含 `POST /api/v1/scans` 和 `POST /api/v1/scans/:id/rescan`；恢复暂停任务不会重复发送。创建失败和参数校验失败不会发送。此处“发起”不表示主扫描子进程已经加载完模版。
+当前事件包括 `scan_started` 和 `high_severity_vulnerability`。`scan_started`：扫描任务已成功入库并完成运行态初始化，即将启动扫描时触发。包含 `POST /api/v1/scans` 和 `POST /api/v1/scans/:id/rescan`；恢复暂停任务不会重复发送。创建失败和参数校验失败不会发送。此处“发起”不表示主扫描子进程已经加载完模版。`high_severity_vulnerability`：扫描结果首次插入漏洞表且等级为 `high` 或 `critical` 时触发；相同 `vuln_fingerprint` 的后续命中只更新记录，不重复预警。卡片包含漏洞名称、等级、模板 ID、资产端点、任务名称、任务 ID 和发现时间，不包含原始请求/响应、Payload 等详情。
 
 | 卡片字段 | 取值口径 |
 | --- | --- |
@@ -3512,7 +3512,7 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 
 卡片样式只控制标题栏颜色，不包含标题文案或独立主题。支持蓝、橙、紫、红、绿、黄、灰七种配色；标题由具体触发节点通过事件的 Title 字段传入，卡片渲染器不根据样式决定或硬编码业务标题。创建扫描任务节点（含重新扫描）传入“扫描任务已发起”，测试通知节点传入“通知测试”，正文保留小猫颜文字、猫咪图标和原有布局。历史样式 cat_blue、cat_orange、cat_purple 仍可提交和读取，分别映射为 blue、orange、purple；写入及接口响应统一返回颜色标识，无须修改现有数据库记录。动态内容采用 plain_text，输入中的 Markdown、HTML 和 @所有人语法不会作为卡片指令解析。不会发送目标明细、其他自定义 Header、代理凭证或 Interactsh Token。
 
-自动通知通过容量 128 的进程内队列异步发送，单次请求超时 10 秒，数据库查询超时 5 秒。发送前重新检查开关；通知失败或队列满不影响扫描，日志仅记录任务 ID、通知 ID 和固定原因，不记录 webhook。当前为尽力发送：队列不持久化，进程退出会丢失待发事件，不自动重试，避免重复群消息。已开始的发送不能被之后的关闭操作撤回。
+自动通知通过进程内队列异步发送：扫描发起事件队列容量 128，新增高危漏洞事件队列容量 512。单次请求超时 10 秒，数据库查询超时 5 秒。发送前重新检查开关；通知失败或队列满不影响扫描，日志仅记录任务 ID、通知 ID 和固定原因，不记录 webhook。当前为尽力发送：队列不持久化，进程退出会丢失待发事件，不自动重试，避免重复群消息。已开始的发送不能被之后的关闭操作撤回。
 
 仅支持 `https://open.feishu.cn/open-apis/bot/v2/hook/<UUID>`；不允许自定义主机、端口、查询参数、凭据或重定向。发送器直接连接飞书，拒绝解析到回环/私网/链路本地等地址，不使用环境 HTTP 代理。不支持机器人签名密钥；若机器人启用了签名校验，需要先调整机器人安全配置。可使用飞书侧 IP 白名单，关键词应与卡片中的固定文本（例如 ManScan）一致。
 
@@ -3527,7 +3527,7 @@ cli 模式单次任务执行最长 24 小时；每次 AI Force 请求最长 5 �
 | description | string | 否 | 通知策略描述，最多 500 字符，去除首尾空白；省略或 null 默认为空字符串 |
 | enabled | boolean | 是 | true 开启自动通知，false 关闭；不能省略 |
 | webhook | string | 是 | 飞书自定义机器人完整 webhook，最大 512 字符；不会明文返回 |
-| event | string | 否 | 当前仅 scan_started，默认 scan_started |
+| event | string | 否 | scan_started 或 high_severity_vulnerability，默认 scan_started |
 | style | string | 否 | blue、orange、purple、red、green、yellow、grey，仅控制标题栏颜色，默认 blue |
 
 - 响应格式：

@@ -138,6 +138,7 @@ auth:
 
 - `MANSCAN_CONFIG_FILE`：指定服务端配置文件路径
 - `MANSCAN_SERVER_ADDR`：覆盖默认监听地址，默认值为 `:8686`
+- `MANSCAN_SCANNER_BIN`：指定扫描任务使用的 CLI 可执行文件路径；未设置时依次查找 `bin/nuclei`、`nuclei`
 - `MANSCAN_TEMPLATES_DIR`：覆盖服务端模板目录
 - `NUCLEI_TEMPLATES_DIR`：作为模板目录回退来源之一
 - `MANSCAN_JWT_SECRET`：覆盖登录鉴权 JWT 密钥，长度至少 32 个字符

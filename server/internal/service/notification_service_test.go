@@ -373,6 +373,40 @@ func TestNotificationDispatchEnabledAndExplicitTest(t *testing.T) {
 	}
 }
 
+func TestHighSeverityVulnerabilityNotificationDispatch(t *testing.T) {
+	s, _, sender := newNotificationTestService(t)
+	enabled := true
+	webhook := testNotificationWebhook
+	description := "新增高危漏洞时通知测试群"
+	_, err := s.Create(context.Background(), dto.SaveNotificationRequest{
+		Name: "严重漏洞预警", Description: &description, Enabled: &enabled,
+		Event: NotificationEventHighSeverityVulnerability, Webhook: &webhook, Style: "red",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "app.example.test:443"
+	event := HighSeverityVulnerabilityNotification{
+		TaskID: 17, TaskName: "nightly scan",
+		Vulnerability: entity.Vulnerability{Severity: "critical", VulnerabilityName: "远程代码执行", TemplateID: "CVE-demo", AssetEndpoint: &endpoint, LastFoundAt: time.Date(2026, 11, 26, 1, 2, 3, 0, time.UTC)},
+	}
+	if err := s.EnqueueHighSeverityVulnerability(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	s.dispatchHighSeverityVulnerability(context.Background(), <-s.vulnerabilityQueue)
+	if len(sender.payloads) != 1 {
+		t.Fatalf("delivered %d cards, want one", len(sender.payloads))
+	}
+	for _, want := range []string{"新增CRITICAL 漏洞预警", "远程代码执行", "CVE-demo", "app.example.test:443", "nightly scan", "17"} {
+		if !strings.Contains(string(sender.payloads[0]), want) {
+			t.Fatalf("card missing %q: %s", want, sender.payloads[0])
+		}
+	}
+	if strings.Contains(string(sender.payloads[0]), "request") || strings.Contains(string(sender.payloads[0]), "payload") {
+		t.Fatalf("card unexpectedly includes request details: %s", sender.payloads[0])
+	}
+}
+
 func TestNotificationQueueCopiesSelectionAndHasBound(t *testing.T) {
 	s, _, _ := newNotificationTestService(t)
 	event := ScanStartedNotification{Title: "触发节点标题", TemplateSelection: dto.CreateScanTaskRequest{IncludeIDs: []string{"one"}, InteractshToken: "must-not-be-queued"}}

@@ -15,6 +15,7 @@ import (
 )
 
 const NotificationEventScanStarted = "scan_started"
+const NotificationEventHighSeverityVulnerability = "high_severity_vulnerability"
 
 var (
 	ErrInvalidNotification   = errors.New("通知参数不合法")
@@ -41,6 +42,18 @@ type ScanStartNotifier interface {
 	EnqueueScanStarted(ctx context.Context, event ScanStartedNotification) error
 }
 
+// HighSeverityVulnerabilityNotifier queues newly inserted high or critical scan findings.
+type HighSeverityVulnerabilityNotifier interface {
+	EnqueueHighSeverityVulnerability(ctx context.Context, event HighSeverityVulnerabilityNotification) error
+}
+
+// HighSeverityVulnerabilityNotification is a snapshot of a newly inserted finding.
+type HighSeverityVulnerabilityNotification struct {
+	TaskID        int64
+	TaskName      string
+	Vulnerability entity.Vulnerability
+}
+
 // NotificationService manages subscriptions and dispatches accepted scan events.
 type NotificationService interface {
 	ScanStartNotifier
@@ -55,16 +68,17 @@ type NotificationService interface {
 }
 
 type notificationService struct {
-	repository repository.NotificationRepository
-	logger     *logx.Logger
-	templates  repository.TemplateRepository
-	sender     FeishuSender
-	queue      chan ScanStartedNotification
+	repository         repository.NotificationRepository
+	logger             *logx.Logger
+	templates          repository.TemplateRepository
+	sender             FeishuSender
+	queue              chan ScanStartedNotification
+	vulnerabilityQueue chan HighSeverityVulnerabilityNotification
 }
 
 // NewNotificationService creates a notification service using plaintext webhooks.
 func NewNotificationService(repo repository.NotificationRepository, templates repository.TemplateRepository, sender FeishuSender, logger *logx.Logger) NotificationService {
-	return &notificationService{repository: repo, templates: templates, sender: sender, logger: logger, queue: make(chan ScanStartedNotification, 128)}
+	return &notificationService{repository: repo, templates: templates, sender: sender, logger: logger, queue: make(chan ScanStartedNotification, 128), vulnerabilityQueue: make(chan HighSeverityVulnerabilityNotification, 512)}
 }
 
 // Create validates and stores the plaintext webhook before inserting a subscription.
@@ -108,7 +122,7 @@ func (s *notificationService) applyRequest(item *entity.Notification, request dt
 	if style == "" {
 		style = "blue"
 	}
-	if name == "" || utf8.RuneCountInString(name) > 100 || request.Enabled == nil || event != NotificationEventScanStarted || !validNotificationStyle(style) {
+	if name == "" || utf8.RuneCountInString(name) > 100 || request.Enabled == nil || !validNotificationEvent(event) || !validNotificationStyle(style) {
 		return ErrInvalidNotification
 	}
 	if request.Description != nil && utf8.RuneCountInString(*request.Description) > 500 {
@@ -191,6 +205,11 @@ func (s *notificationService) Test(ctx context.Context, id int64, initiator stri
 		return notificationReadError(err)
 	}
 	event := ScanStartedNotification{Title: "通知测试", Name: "ManScan 猫咪通知测试", Initiator: initiator, TargetCount: 0, Description: "这是一条通知连通性测试，未发起真实扫描。", UserAgent: "未发起扫描"}
+	if item.Event == NotificationEventHighSeverityVulnerability {
+		endpoint := "example.test"
+		vulnerability := entity.Vulnerability{Severity: "high", VulnerabilityName: "通知连通性测试漏洞", TemplateID: "notification-test", LastFoundAt: time.Now(), AssetEndpoint: &endpoint}
+		return s.deliverHighSeverityVulnerability(ctx, *item, HighSeverityVulnerabilityNotification{TaskID: 0, TaskName: "通知测试（未发起扫描）", Vulnerability: vulnerability})
+	}
 	return s.deliver(ctx, *item, event, "0（通知测试）")
 }
 
@@ -222,6 +241,23 @@ func (s *notificationService) EnqueueScanStarted(ctx context.Context, event Scan
 	}
 }
 
+// EnqueueHighSeverityVulnerability queues a newly inserted finding for asynchronous delivery.
+func (s *notificationService) EnqueueHighSeverityVulnerability(ctx context.Context, event HighSeverityVulnerabilityNotification) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	severity := strings.ToLower(strings.TrimSpace(event.Vulnerability.Severity))
+	if severity != "high" && severity != "critical" {
+		return ErrInvalidNotification
+	}
+	select {
+	case s.vulnerabilityQueue <- event:
+		return nil
+	default:
+		return ErrNotificationQueueFull
+	}
+}
+
 // Run processes a bounded in-memory queue; shutdown cancels network requests.
 func (s *notificationService) Run(ctx context.Context) {
 	for {
@@ -233,8 +269,73 @@ func (s *notificationService) Run(ctx context.Context) {
 			return
 		case event := <-s.queue:
 			s.dispatch(ctx, event)
+		case event := <-s.vulnerabilityQueue:
+			s.dispatchHighSeverityVulnerability(ctx, event)
 		}
 	}
+}
+
+func (s *notificationService) dispatchHighSeverityVulnerability(ctx context.Context, event HighSeverityVulnerabilityNotification) {
+	var afterID int64
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		items, err := s.repository.FindEnabled(queryCtx, NotificationEventHighSeverityVulnerability, afterID, 100)
+		cancel()
+		if err != nil {
+			s.logFailure(event.TaskID, 0, "read_configuration")
+			return
+		}
+		if len(items) == 0 {
+			return
+		}
+		for _, item := range items {
+			afterID = item.ID
+			queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			current, err := s.repository.FindByID(queryCtx, item.ID)
+			cancel()
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				continue
+			}
+			if err != nil {
+				s.logFailure(event.TaskID, item.ID, "read_configuration")
+				continue
+			}
+			if !current.Enabled || current.Event != NotificationEventHighSeverityVulnerability {
+				continue
+			}
+			if err = s.deliverHighSeverityVulnerability(ctx, *current, event); err != nil {
+				s.logFailure(event.TaskID, item.ID, "send_failed")
+			} else if s.logger != nil {
+				s.logger.Info("high severity vulnerability notification delivered", "task_id", event.TaskID, "notification_id", item.ID)
+			}
+		}
+		if len(items) < 100 {
+			return
+		}
+	}
+}
+
+func (s *notificationService) deliverHighSeverityVulnerability(ctx context.Context, item entity.Notification, event HighSeverityVulnerabilityNotification) error {
+	if s.sender == nil || !validNotificationStyle(item.Style) || !validFeishuWebhook(item.Webhook) {
+		return ErrNotificationDelivery
+	}
+	payload, err := buildHighSeverityVulnerabilityCard(item.Style, event)
+	if err != nil {
+		return ErrNotificationDelivery
+	}
+	sendCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err = s.sender.Send(sendCtx, item.Webhook, payload); err != nil {
+		return ErrNotificationDelivery
+	}
+	return nil
+}
+
+func validNotificationEvent(event string) bool {
+	return event == NotificationEventScanStarted || event == NotificationEventHighSeverityVulnerability
 }
 
 func (s *notificationService) dispatch(ctx context.Context, event ScanStartedNotification) {

@@ -18,6 +18,11 @@ MacOS先安装 FiloSottile/musl-cross/musl-cross:
 
 `CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC=clang CXX=clang++ go build -trimpath -o manscan`
 
+扫描器 CLI 需要单独构建，cd 到 `cmd/nuclei` 下，按照上面的操作系统配置执行如下命令（以 要部署到 linux amd64 系统 为例）：
+
+`CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ go build -trimpath -o nuclei`
+
+
 #### 部署机器环境准备
 
 1、根据机器类型执行下面的命令，安装交叉编译环境
@@ -102,15 +107,17 @@ systemctl reload nginx
 
 1、创建 /work/manscan 目录，将打包好的二进制文件传到目录中 /work/manscan/manscan
 
-2、将配置文件 config.yaml 和 prompt.yaml 上传到 /work/manscan 目录
+2、将扫描器 CLI 上传到 `/work/manscan/bin/nuclei`
 
-3、将 data 目录打包进 /work/manscan 目录
+3、将配置文件 config.yaml 和 prompt.yaml 上传到 /work/manscan 目录
 
-4、新建 manscan 日志目录
+4、将 data 目录打包进 /work/manscan 目录
+
+5、新建 manscan 日志目录
 
 `mkdir -p /var/log/manscan`
 
-4、系统服务创建
+6、系统服务创建
 
 `vi /etc/systemd/system/manscan.service`
 
