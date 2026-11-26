@@ -12,11 +12,11 @@ MacOS先安装 FiloSottile/musl-cross/musl-cross:
 
 如果要部署到 linux amd64 系统， cd 到 `server/cmd/server` 下，执行：
 
-`CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ go build -o manscan`
+`CGO_ENABLED=1 GOOS=linux GOARCH=amd64 CC=x86_64-linux-musl-gcc CXX=x86_64-linux-musl-g++ go build -trimpath -o manscan`
 
 如果要部署到 MacOS arm64 系统， cd 到 `server/cmd/server` 下，执行：
 
-`CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC=clang CXX=clang++ go build -o manscan`
+`CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 CC=clang CXX=clang++ go build -trimpath -o manscan`
 
 #### 部署机器环境准备
 

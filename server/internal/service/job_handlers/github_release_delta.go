@@ -23,6 +23,8 @@ const githubReleaseDeltaMaxBytes = 256 << 20
 type githubReleaseResponse struct {
 	TagName string `json:"tag_name"`
 	Assets  []struct {
+		ID                 int64  `json:"id"`
+		URL                string `json:"url"`
 		Name               string `json:"name"`
 		Size               int64  `json:"size"`
 		BrowserDownloadURL string `json:"browser_download_url"`
@@ -52,7 +54,7 @@ func (c *GitHubTreeClient) ListCVEDeltaIDs(ctx context.Context, releaseHour time
 	if release.TagName != tag {
 		return nil, fmt.Errorf("GitHub Release 标签不匹配: 期望 %q，收到 %q", tag, release.TagName)
 	}
-	var assetURL string
+	var assetURL, assetAPIURL string
 	for _, asset := range release.Assets {
 		if asset.Name != assetName {
 			continue
@@ -61,6 +63,10 @@ func (c *GitHubTreeClient) ListCVEDeltaIDs(ctx context.Context, releaseHour time
 			return nil, fmt.Errorf("CVE Release 增量包大小无效或超过限制: %d 字节", asset.Size)
 		}
 		assetURL = asset.BrowserDownloadURL
+		expectedAPIURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/assets/%d", c.Owner, c.Repository, asset.ID)
+		if asset.ID > 0 && asset.URL == expectedAPIURL {
+			assetAPIURL = asset.URL
+		}
 		break
 	}
 	if assetURL == "" {
@@ -71,28 +77,58 @@ func (c *GitHubTreeClient) ListCVEDeltaIDs(ctx context.Context, releaseHour time
 		return nil, errors.New("GitHub Release 增量文件地址与预期不匹配")
 	}
 
-	var archivePath string
-	err := c.runReleaseRequest(ctx, "正在下载 GitHub CVE Release 增量 ZIP", func(requestCtx context.Context) error {
-		var downloadErr error
-		archivePath, downloadErr = c.downloadReleaseAssetOnce(requestCtx, assetURL)
-		return downloadErr
-	})
-	if err != nil {
-		if archivePath != "" {
-			_ = os.Remove(archivePath)
-		}
-		return nil, fmt.Errorf("下载 GitHub Release 增量文件失败: %w", err)
+	var ids []string
+	apiErr := errors.New("Release 缺少有效的官方资产 API 地址")
+	if assetAPIURL != "" {
+		ids, apiErr = c.readReleaseDelta(ctx, assetAPIURL, true)
 	}
-	defer os.Remove(archivePath)
-	ids, err := cveIDsFromDeltaZip(archivePath)
-	if err != nil {
-		return nil, fmt.Errorf("解析 GitHub Release 增量 ZIP 失败: %w", err)
+	if apiErr != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var progressErr *githubTreeProgressError
+		if errors.Is(apiErr, context.Canceled) || errors.As(apiErr, &progressErr) {
+			return nil, apiErr
+		}
+		if err := c.progress.report(ctx, "github_fallback", "GitHub 资产 API 下载未成功，正在切换到 Release 下载链接"); err != nil {
+			return nil, err
+		}
+		var err error
+		ids, err = c.readReleaseDelta(ctx, assetURL, false)
+		if err != nil {
+			return nil, fmt.Errorf("GitHub Release 增量获取失败；资产 API: %w；下载链接: %w", apiErr, err)
+		}
 	}
 	if c.progress != nil {
 		c.progress.found = len(ids)
 		if err := c.progress.report(ctx, "github_finished", fmt.Sprintf("前一小时 Release 增量读取完成，共 %d 个 CVE", len(ids))); err != nil {
 			return nil, err
 		}
+	}
+	return ids, nil
+}
+
+// readReleaseDelta validates each downloaded ZIP before accepting a download source.
+func (c *GitHubTreeClient) readReleaseDelta(ctx context.Context, assetURL string, useAPI bool) ([]string, error) {
+	message := "正在通过 Release 下载链接下载 CVE 增量 ZIP"
+	if useAPI {
+		message = "正在通过 GitHub 资产 API 下载 CVE 增量 ZIP"
+	}
+	var archivePath string
+	err := c.runReleaseRequest(ctx, message, func(requestCtx context.Context) error {
+		var downloadErr error
+		archivePath, downloadErr = c.downloadReleaseAssetOnce(requestCtx, assetURL, useAPI)
+		return downloadErr
+	})
+	if archivePath != "" {
+		defer os.Remove(archivePath)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("下载 GitHub Release 增量文件失败: %w", err)
+	}
+	ids, err := cveIDsFromDeltaZip(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("解析 GitHub Release 增量 ZIP 失败: %w", err)
 	}
 	return ids, nil
 }
@@ -177,9 +213,13 @@ func (c *GitHubTreeClient) getReleaseOnce(ctx context.Context, tag string) (gith
 	return release, nil
 }
 
-func (c *GitHubTreeClient) downloadReleaseAssetOnce(ctx context.Context, assetURL string) (string, error) {
+func (c *GitHubTreeClient) downloadReleaseAssetOnce(ctx context.Context, assetURL string, useAPI bool) (string, error) {
+	expectedHost := "github.com"
+	if useAPI {
+		expectedHost = "api.github.com"
+	}
 	parsed, err := url.Parse(assetURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host != "github.com" || parsed.User != nil {
+	if err != nil || parsed.Scheme != "https" || parsed.Host != expectedHost || parsed.User != nil {
 		return "", errors.New("GitHub Release 增量文件地址无效")
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, assetURL, nil)
@@ -188,6 +228,13 @@ func (c *GitHubTreeClient) downloadReleaseAssetOnce(ctx context.Context, assetUR
 	}
 	request.Header.Set("Accept", "application/zip")
 	request.Header.Set("User-Agent", "manscan-cve-release-delta")
+	if useAPI {
+		request.Header.Set("Accept", "application/octet-stream")
+		request.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+		if c.Token != "" {
+			request.Header.Set("Authorization", "Bearer "+c.Token)
+		}
+	}
 	baseClient := c.HTTPClient
 	if baseClient == nil {
 		baseClient = http.DefaultClient
@@ -197,12 +244,16 @@ func (c *GitHubTreeClient) downloadReleaseAssetOnce(ctx context.Context, assetUR
 		if len(via) >= 10 {
 			return errors.New("GitHub Release 下载重定向次数过多")
 		}
-		if request.URL.Scheme != "https" {
+		if request.URL.Scheme != "https" || request.URL.User != nil {
 			return errors.New("GitHub Release 下载拒绝非 HTTPS 重定向")
 		}
-		host := request.URL.Hostname()
-		if !allowedGitHubReleaseRedirect(host) {
+		host := request.URL.Host
+		if !allowedGitHubReleaseRedirect(host) && !(useAPI && host == "api.github.com") {
 			return fmt.Errorf("GitHub Release 下载拒绝重定向到未允许的主机 %q", host)
+		}
+		// The token is only needed by the API, never by public asset hosts.
+		if host != "api.github.com" {
+			request.Header.Del("Authorization")
 		}
 		return nil
 	}
