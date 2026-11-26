@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/repository"
@@ -59,6 +61,7 @@ type VulnxVulnerabilityUpdateHandler struct {
 	githubClientFn func(string) *GitHubTreeClient
 	fetchFn        func(context.Context, string) (*repository.VulnerabilityIntelligenceBundle, error)
 	listFn         func(context.Context) ([]string, error)
+	deltaFn        func(context.Context, time.Time) ([]string, error)
 }
 
 // NewVulnxVulnerabilityUpdateHandler 创建 VulnX 新增漏洞更新任务处理器。
@@ -96,17 +99,84 @@ func (h *VulnxVulnerabilityUpdateHandler) Execute(ctx context.Context, job entit
 }
 
 // ExecuteWithGitHubKey uses the CVE-list job credential for GitHub and the job credential for VulnX.
-func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Context, job entity.ScheduledJob, _ entity.ScheduledJobRun, progress service.ProgressReporter, githubKeyID *int64) error {
+func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Context, job entity.ScheduledJob, run entity.ScheduledJobRun, progress service.ProgressReporter, githubKeyID *int64) error {
+	return h.executeWithGitHubKey(ctx, job, run, progress, githubKeyID, false)
+}
+
+// ExecuteIncrementalWithGitHubKey uses the preceding UTC hourly release for the composite incremental job.
+func (h *VulnxVulnerabilityUpdateHandler) ExecuteIncrementalWithGitHubKey(ctx context.Context, job entity.ScheduledJob, run entity.ScheduledJobRun, progress service.ProgressReporter, githubKeyID *int64) error {
+	return h.executeWithGitHubKey(ctx, job, run, progress, githubKeyID, true)
+}
+
+func cveReleaseSelection(run entity.ScheduledJobRun, timezone string, now time.Time) (bool, time.Time, error) {
+	if strings.TrimSpace(timezone) == "" {
+		timezone = "Asia/Shanghai"
+	}
+	location, err := time.LoadLocation(timezone)
+	if err != nil {
+		return false, time.Time{}, fmt.Errorf("加载漏洞情报增量任务时区 %q 失败: %w", timezone, err)
+	}
+	var firedAt time.Time
+	if run.TriggerType == "schedule" {
+		parts := strings.Split(run.FireKey, ":")
+		if len(parts) >= 3 {
+			unixSeconds, parseErr := strconv.ParseInt(parts[len(parts)-1], 10, 64)
+			if parseErr == nil {
+				firedAt = time.Unix(unixSeconds, 0).UTC()
+			}
+		}
+		if firedAt.IsZero() && !run.CreatedAt.IsZero() {
+			firedAt = run.CreatedAt
+		}
+		if firedAt.IsZero() {
+			return false, time.Time{}, errors.New("定时执行记录缺少有效的计划触发时间")
+		}
+	} else if !run.CreatedAt.IsZero() {
+		firedAt = run.CreatedAt
+	} else if !now.IsZero() {
+		firedAt = now
+	} else {
+		firedAt = time.Now()
+	}
+	localTime := firedAt.In(location)
+	if run.TriggerType == "schedule" && localTime.Hour() == 0 && localTime.Minute() == 0 {
+		return true, time.Time{}, nil
+	}
+	return false, firedAt.UTC().Truncate(time.Hour).Add(-time.Hour), nil
+}
+
+func (h *VulnxVulnerabilityUpdateHandler) executeWithGitHubKey(ctx context.Context, job entity.ScheduledJob, run entity.ScheduledJobRun, progress service.ProgressReporter, githubKeyID *int64, incremental bool) error {
 	if err := h.Validate(json.RawMessage(job.ConfigJSON)); err != nil {
 		return err
 	}
 	if h.repository == nil {
 		return errors.New("VulnX 漏洞更新仓储不可用")
 	}
-	if err := reportProgress(ctx, progress, 0, 0, "listing", "正在获取最新完整 CVE 列表"); err != nil {
+	useDelta := false
+	var releaseHour time.Time
+	if incremental {
+		fullList, previousHour, err := cveReleaseSelection(run, job.Timezone, time.Now())
+		if err != nil {
+			return err
+		}
+		useDelta = !fullList
+		releaseHour = previousHour
+	}
+	listingMessage := "正在获取最新完整 CVE 列表"
+	if useDelta {
+		listingMessage = fmt.Sprintf("正在读取 UTC %s Release 增量", releaseHour.Format("2006-01-02 15:04"))
+	}
+	if err := reportProgress(ctx, progress, 0, 0, "listing", listingMessage); err != nil {
 		return err
 	}
-	list := h.listFn
+	var list func(context.Context) ([]string, error)
+	if useDelta {
+		if h.deltaFn != nil {
+			list = func(ctx context.Context) ([]string, error) { return h.deltaFn(ctx, releaseHour) }
+		}
+	} else {
+		list = h.listFn
+	}
 	if list == nil {
 		githubKey, keyErr := h.githubToken(ctx, githubKeyID)
 		if keyErr != nil {
@@ -120,12 +190,21 @@ func (h *VulnxVulnerabilityUpdateHandler) ExecuteWithGitHubKey(ctx context.Conte
 			keyID := *githubKeyID
 			githubClient.beforeRequest = func(ctx context.Context) error { return h.rateLimiter.Wait(ctx, keyID) }
 		}
-		list = func(ctx context.Context) ([]string, error) {
-			return githubClient.ListCVEFileNamesWithProgress(ctx, "main", progress)
+		if useDelta {
+			list = func(ctx context.Context) ([]string, error) {
+				return githubClient.ListCVEDeltaIDsWithProgress(ctx, releaseHour, progress)
+			}
+		} else {
+			list = func(ctx context.Context) ([]string, error) {
+				return githubClient.ListCVEFileNamesWithProgress(ctx, "main", progress)
+			}
 		}
 	}
 	names, err := list(ctx)
 	if err != nil {
+		if useDelta {
+			return fmt.Errorf("获取前一小时 CVE Release 增量失败: %w", err)
+		}
 		return fmt.Errorf("获取最新完整 CVE 列表失败: %w", err)
 	}
 	ids := normalizeCVEIDs(names)
