@@ -302,6 +302,130 @@ func TestVulnxUpdateHandlerRemovesRecoveredFailuresAfterRetry(t *testing.T) {
 	}
 }
 
+func TestVulnxUpdateHandlerSeparatesNotFoundFromFailures(t *testing.T) {
+	temporary := errors.New("VulnX API 返回 HTTP 500")
+	rateLimited := errors.New("VulnX API 返回 HTTP 429")
+	for _, tc := range []struct {
+		name      string
+		responses map[string][]error
+		wantCalls map[string]int
+		failedID  string
+		notFound  int
+		saved     int
+	}{
+		{
+			name:      "only not found",
+			responses: map[string][]error{"CVE-2026-0001": {errVulnxNotFound}},
+			wantCalls: map[string]int{"CVE-2026-0001": 1},
+			notFound:  1,
+		},
+		{
+			name: "mixed outcomes",
+			responses: map[string][]error{
+				"CVE-2026-0001": {errVulnxNotFound},
+				"CVE-2026-0002": {temporary, temporary, temporary, rateLimited},
+				"CVE-2026-0003": {temporary, temporary, temporary, nil},
+				"CVE-2026-0004": {temporary, temporary, temporary, fmt.Errorf("lookup: %w", errVulnxNotFound)},
+				"CVE-2026-0005": {nil},
+			},
+			wantCalls: map[string]int{"CVE-2026-0001": 1, "CVE-2026-0002": 6, "CVE-2026-0003": 4, "CVE-2026-0004": 4, "CVE-2026-0005": 1},
+			failedID:  "CVE-2026-0002", notFound: 2, saved: 2,
+		},
+		{
+			name:      "not found after a transient failure",
+			responses: map[string][]error{"CVE-2026-0001": {temporary, errVulnxNotFound}},
+			wantCalls: map[string]int{"CVE-2026-0001": 2},
+			notFound:  1,
+		},
+		{
+			name:      "no missing CVEs",
+			responses: map[string][]error{},
+			wantCalls: map[string]int{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			repo := &vulnxRepositoryStub{}
+			handler := NewVulnxVulnerabilityUpdateHandler(root, vulnxTestJobs(nil), nil, nil, repo)
+			handler.listFn = func(context.Context) ([]string, error) {
+				var ids []string
+				for id := range tc.responses {
+					ids = append(ids, id)
+				}
+				return ids, nil
+			}
+			calls := make(map[string]int)
+			var mu sync.Mutex
+			handler.fetchFn = func(_ context.Context, id string) (*repository.VulnerabilityIntelligenceBundle, error) {
+				mu.Lock()
+				defer mu.Unlock()
+				responses := tc.responses[id]
+				err := responses[min(calls[id], len(responses)-1)]
+				calls[id]++
+				if err != nil {
+					return nil, err
+				}
+				return &repository.VulnerabilityIntelligenceBundle{Record: &entity.VulnerabilityIntelligenceRecord{Source: "vulnx", VulnerabilityID: id}}, nil
+			}
+			progress := &incrementalProgressStub{}
+			err := handler.Execute(context.Background(), entity.ScheduledJob{ConfigJSON: "{}"}, entity.ScheduledJobRun{}, progress)
+			failed := 0
+			if tc.failedID != "" {
+				failed = 1
+				var partial *vulnxPartialFailureError
+				if !errors.As(err, &partial) || partial.count != failed {
+					t.Fatalf("Execute() error = %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(progress.message, fmt.Sprintf("请求失败 %d 次，VulnX 未收录 %d 次", failed, tc.notFound)) {
+				t.Fatalf("final message = %q", progress.message)
+			}
+			for id, want := range tc.wantCalls {
+				if calls[id] != want {
+					t.Errorf("%s calls = %d, want %d", id, calls[id], want)
+				}
+			}
+			if len(repo.bundles) != tc.saved {
+				t.Fatalf("saved = %d, want %d", len(repo.bundles), tc.saved)
+			}
+			wantFiles := map[string]string{"vulnXerror.txt": "", "vulnXerrorDetail.log": ""}
+			if tc.failedID != "" {
+				wantFiles["vulnXerror.txt"] = tc.failedID + "\n"
+				wantFiles["vulnXerrorDetail.log"] = tc.failedID + ": " + rateLimited.Error() + "\n"
+			}
+			dir := filepath.Join(root, "data", "tmp", "cve_data")
+			for name, want := range wantFiles {
+				data, err := os.ReadFile(filepath.Join(dir, name))
+				if err != nil || string(data) != want {
+					t.Fatalf("%s = %q, err %v; want %q", name, data, err, want)
+				}
+			}
+			archive, err := zip.OpenReader(filepath.Join(dir, "vulnXerror.zip"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer archive.Close()
+			if len(archive.File) != len(wantFiles) {
+				t.Fatalf("archive entries = %d", len(archive.File))
+			}
+			for _, file := range archive.File {
+				content, err := file.Open()
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, readErr := io.ReadAll(content)
+				closeErr := content.Close()
+				want, ok := wantFiles[file.Name]
+				if !ok || readErr != nil || closeErr != nil || string(data) != want {
+					t.Fatalf("archive %s = %q, read err %v, close err %v", file.Name, data, readErr, closeErr)
+				}
+			}
+		})
+	}
+}
+
 func TestVulnxUpdateHandlerProcessesCVEsConcurrently(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "data", "tmp", "cve_data")

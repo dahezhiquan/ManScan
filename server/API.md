@@ -2946,7 +2946,7 @@ curl -L -OJ \
 - `config_json`：可选 `{"ref":"main"}`，用于指定 GitHub 分支、标签或提交 SHA；为空时使用 `main`。
 - 输出：成功获取完整列表后，使用临时文件原子替换 `data/tmp/cve_data/cves.txt`，失败时保留上一次成功文件。
 - 获取方式：先读取仓库根目录定位 `cves` 的 SHA，再以 `recursive=1` 请求完整子树。仅当 GitHub 成功响应明确标记 `truncated=true` 时，丢弃该部分结果，读取当前目录的直接列表，将未处理子目录加入队列，再逐个尝试获取完整子树。成功且未截断的子树不会再请求其内部子目录；目录按 SHA 去重，CVE 编号去重排序。直接目录列表仍被截断时任务失败，保留旧文件。
-- 请求恢复：GitHub Tree 单次请求超时为 200 秒（包含响应体读取）。网络超时、临时网络错误或响应体提前结束时，同一请求最多尝试 3 次，重试前分别等待 1 秒、2 秒；每次尝试均参与 API Key 共享限流。重试耗尽后停止任务，不因网络失败拆分子目录。鉴权、HTTP 限流、其他 HTTP 错误、非截断类 JSON 格式错误和本地限流配置错误均停止任务。任务取消或总超时立即中止请求及退避等待。独立 VulnX 与综合增量任务获取 GitHub CVE 列表时复用此策略。
+- 请求恢复：GitHub Tree 单次请求超时为 200 秒（包含响应体读取）。网络超时、临时网络错误、响应体提前结束，或 HTTP/2 数据流被重置为 `CANCEL`、`REFUSED_STREAM`、`INTERNAL_ERROR` 时，同一请求最多尝试 3 次（含首次），重试前分别等待 1 秒、2 秒；每次尝试均参与 API Key 共享限流。HTTP/2 重试覆盖请求阶段及响应体读取阶段，进度消息显示具体流错误码；失败响应中的部分数据不用于更新 CVE 列表。其他 HTTP/2 错误码（如协议错误或 `ENHANCE_YOUR_CALM`）不触发此重试。重试耗尽后停止任务，不因网络失败拆分子目录。鉴权、HTTP 限流、其他 HTTP 错误、非截断类 JSON 格式错误和本地限流配置错误均停止任务。任务取消或总超时立即中止请求及退避等待。独立 VulnX 与综合增量任务获取 GitHub CVE 列表时复用此策略。
 - 详细进度：复用执行记录的 `progress_phase`、`progress_message` 和 `progress_updated_at`。GitHub 阶段为 `github_waiting`（等待 API Key 额度）、`github_requesting`（请求及读取响应）、`github_retrying`（重试退避）、`github_listing`（已定位 CVE 目录）、`github_fallback`（GitHub 截断，改为直接目录列表）、`github_traversing`（当前目录单元已处理）和 `github_finished`（全部 CVE 列表获取完成，准备写文件）。说明明确区分“仅完成直接列表读取，子目录尚待处理”与“当前子树完整读取，无需再请求子目录”。包含当前位置、已处理目录单元数、排队目录数（不含当前目录）、已去重 CVE 数及实际请求次数；目录单元包含仓库根目录，重试及截断回退不会重复计数。
 - 接收量及刷新：长请求和额度等待每 5 秒更新状态，请求说明包含尝试次数、耗时、本次已接收 KiB 及本次任务累计接收 KiB。接收量按解压后的响应体统计，累计量包括截断结果、失败请求已读部分和重试，不代表有效 CVE 数据量；本次接收量在每次请求开始时归零。重试说明包含原因和下次等待秒数。
 - 进度口径：GitHub 获取期间 `progress_current` 为已处理目录单元数，`progress_total=0`，未知总量时不预估百分比；只从成功且未截断的响应收集 CVE。写文件阶段为 `writing`，当前值和总量切换为已写入/全部 CVE 数，并在说明中展示。最终任务完成阶段仍为 `finished`。独立 VulnX 任务沿用上述 GitHub 阶段；综合增量任务在阶段及说明前添加 `VulnX` 来源标识，当前值和总量保持原有三渠道加权口径，GitHub 获取时整体百分比不递增，读取状态持续刷新。进度上报失败会停止本次处理，不当作 GitHub 网络错误重试。
@@ -2970,7 +2970,8 @@ curl -L -OJ \
   - `manscan_vulnerability_intelligence_articles`：`citations[]` 的添加时间、来源和 URL。
   - `manscan_vulnerability_intelligence_pocs`：`pocs[]` 的添加时间、来源和 URL。
   - `manscan_vulnerability_intelligence_shodan_exposures`：`exposure.values[]` 的产品 ID、暴露主机数和 Shodan 查询语句。
-- 失败策略：单个 CVE 查询、解析或写库失败后最多尝试 3 次（首次请求 + 2 次重试），然后继续处理剩余 CVE；最终仍失败的 CVE 的编号写入服务根目录下 `data/tmp/cve_data/vulnXerror.txt`，具体错误写入 `data/tmp/cve_data/vulnXerrorDetail.log`，两个文件每次运行开始时清空。首轮全部处理后，再对失败清单中的 CVE 各补偿重试最多 3 次；成功写入数据库的编号会从失败清单和详情日志移除，仍失败的编号及原错误详情保持不变。最终清单打包为 `data/tmp/cve_data/vulnXerror.zip`，可通过执行记录的产出下载接口下载。任务进度按处理与补偿重试阶段推进；独立任务在补偿重试后仍有失败项时标记 `failed`，错误信息包含首个失败 CVE。取消或超时会立即停止后续请求。
+- 结果分类与计数：VulnX 详情 API 明确返回 HTTP `404` 时，计为“VulnX 未收录”，当前运行不再重试、不写库，也不写入失败产物；下次运行仍按数据库缺失编号重新查询。其他非成功 HTTP 状态（包括 `401`、`403`、`429`、`5xx`）、网络错误、无效 JSON、成功响应缺少漏洞编号或写库失败均计入可重试错误，不能视为未收录。完成提示使用 `请求失败 N 次，VulnX 未收录 M 次`，两个计数均按去重 CVE 的最终结果计数，每个 CVE 至多计一次；“请求失败”包含查询、解析和写库失败，不累加中间重试次数，重试成功不计失败。
+- 失败策略：单个 CVE 查询、解析或写库失败后最多尝试 3 次（首次请求 + 2 次重试），然后继续处理剩余 CVE；仍失败的 CVE 的编号写入服务根目录下 `data/tmp/cve_data/vulnXerror.txt`，具体错误写入 `data/tmp/cve_data/vulnXerrorDetail.log`，两个文件每次运行开始时清空。首轮全部处理后，再对失败清单中的 CVE 各补偿重试最多 3 次；成功写入数据库或明确返回 `404` 的编号会从失败清单和详情日志移除，其中 `404` 改计为未收录；仍失败的编号及最后一次错误详情保留。最终清单打包为 `data/tmp/cve_data/vulnXerror.zip`，只包含最终请求失败项，可通过执行记录的产出下载接口下载。任务进度按处理与补偿重试阶段推进；独立任务在补偿重试后仍有失败项时标记 `failed`，错误信息包含首个失败 CVE，仅存在未收录项时仍成功。取消或超时会立即停止后续请求。
 
 ### 内置任务：长亭漏洞情报全量同步
 
@@ -3008,8 +3009,8 @@ curl -L -OJ \
 - 长亭与阿里云：按各自来源和漏洞编号匹配现有记录；新编号插入，字段有变化时更新映射字段，参考链接按来源同步差异。其他来源和关联表不受影响。
 - VulnX：先获取最新完整 CVE 列表，再按 1000 个编号一批检查 `source=vulnx`。只对不存在的编号请求详情并新增完整情报快照，已有 CVE 不进行重复 API 请求。
 - API Key：综合任务和独立 VulnX 任务均从数据库读取 `cve_file_names.sync`（“全量 CVE 列表获取”）的 `api_key_id` 用于 GitHub 列表请求，从 `vulnx_vulnerability.sync`（“全量 VulnX 漏洞更新（长耗时）”）读取 `api_key_id` 用于 VulnX 详情请求。两种请求分别使用对应 Key 的共享限流；综合任务自身的 `api_key_id` 不参与这两种请求。综合任务进入 VulnX 阶段时才读取这两项配置；缺失或读取失败记为 VulnX 渠道失败，不影响长亭和阿里云执行。独立 VulnX 任务仍直接失败。列表任务未绑定 Key 时 GitHub 请求回退到 `GITHUB_TOKEN`，VulnX 任务未绑定 Key 时详情请求回退到 `PDCP_API_KEY`。
-- 下载产出：本次阿里云和 VulnX 渠道均完成后（允许 VulnX 单个 CVE 部分失败），将阿里云 `no_cve_vulnerabilities.json` 与 VulnX 的 `vulnXerror.zip` 放入按执行记录 ID 命名的 `data/tmp/vulnerability_intelligence/incremental_outputs_<run_id>.zip`，并登记为本次执行的 `output_path`。在执行记录的“下载产出”按钮或 `GET /api/v1/scheduled-job-runs/:run_id/output` 下载。VulnX 压缩包包含 `vulnXerror.txt` 和 `vulnXerrorDetail.log`，无失败时两个文件为空。长亭和 VulnX 正常同步结果写入数据库。阿里云或 VulnX 渠道整体失败时不生成本次汇总 ZIP，避免打包固定路径上残留的历史文件；仅长亭失败而另外两个渠道完成时仍生成产出，可通过原下载接口获取。旧执行记录不会补生成汇总 ZIP。
-- 部分失败状态：综合任务中单个 CVE 经重试后仍查询、解析或写库失败时，将编号和错误写入 VulnX 失败清单并继续处理其他 CVE；只要三个渠道整体流程及汇总产物生成成功，综合任务仍标记成功，进度消息会显示失败数量，可下载汇总 ZIP 查看详情。来源列表获取、数据库查询和渠道处理器缺失等错误只结束当前渠道，后续渠道继续执行。三渠道结束后仍尝试预警补偿推送，产物生成失败也不跳过补偿；最终存在整体错误时任务标记失败并汇总所有错误。任务取消或总超时立即停止后续渠道。独立 `vulnx_vulnerability.sync` 任务保持“存在单个失败 CVE 即标记失败”的行为。
+- 下载产出：本次阿里云和 VulnX 渠道均完成后（允许 VulnX 单个 CVE 部分失败），将阿里云 `no_cve_vulnerabilities.json` 与 VulnX 的 `vulnXerror.zip` 放入按执行记录 ID 命名的 `data/tmp/vulnerability_intelligence/incremental_outputs_<run_id>.zip`，并登记为本次执行的 `output_path`。在执行记录的“下载产出”按钮或 `GET /api/v1/scheduled-job-runs/:run_id/output` 下载。VulnX 压缩包包含 `vulnXerror.txt` 和 `vulnXerrorDetail.log`，仅保留最终请求失败的 CVE 编号及最后一次错误，不包含未收录的 CVE 或未收录次数；无请求失败时两个文件为空。长亭和 VulnX 正常同步结果写入数据库。阿里云或 VulnX 渠道整体失败时不生成本次汇总 ZIP，避免打包固定路径上残留的历史文件；仅长亭失败而另外两个渠道完成时仍生成产出，可通过原下载接口获取。旧执行记录不会补生成汇总 ZIP。
+- 部分失败状态：综合任务中单个 CVE 经重试后仍查询、解析或写库失败时，将编号和错误写入 VulnX 失败清单并继续处理其他 CVE；VulnX 明确返回 `404` 只计为未收录，不计请求失败，不继续重试。只要三个渠道整体流程及汇总产物生成成功，综合任务仍标记成功，进度消息分别展示 `请求失败 N 次，VulnX 未收录 M 次`（按去重 CVE 最终结果计数，不累加重试次数），有请求失败时追加产出文件提示。例如：`三个渠道漏洞情报增量更新完成，请求失败 2 次，VulnX 未收录 45 次，请求失败详情见产出文件；本次已成功推送到处理接口 0 条`。来源列表获取、数据库查询和渠道处理器缺失等错误只结束当前渠道，后续渠道继续执行。三渠道结束后仍尝试预警补偿推送，产物生成失败也不跳过补偿；最终存在整体错误时任务标记失败并汇总所有错误，VulnX 已完成时仍保留两项计数。任务取消或总超时立即停止后续渠道。独立 `vulnx_vulnerability.sync` 任务保持“存在单个请求失败 CVE 即标记失败”的行为，仅存在未收录项时成功。旧执行记录与已生成产物不回写。
 
 综合增量任务还会自动推送新增漏洞预警（独立全量同步任务不触发推送）：
 

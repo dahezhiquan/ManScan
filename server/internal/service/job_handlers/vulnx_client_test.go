@@ -2,11 +2,44 @@ package job_handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestVulnxClientDistinguishesNotFound(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   int
+		body     string
+		notFound bool
+	}{
+		{name: "not collected", status: http.StatusNotFound, body: `{"message":"not found"}`, notFound: true},
+		{name: "unauthorized", status: http.StatusUnauthorized},
+		{name: "forbidden", status: http.StatusForbidden},
+		{name: "rate limited", status: http.StatusTooManyRequests},
+		{name: "server failure", status: http.StatusInternalServerError},
+		{name: "invalid JSON", status: http.StatusOK, body: `invalid`},
+		{name: "missing identifier", status: http.StatusOK, body: `{"data":{}}`},
+		{name: "empty response", status: http.StatusOK},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			client := NewVulnxClient("")
+			client.BaseURL = server.URL
+			bundle, err := client.Fetch(context.Background(), "CVE-2024-3094")
+			if bundle != nil || err == nil || errors.Is(err, errVulnxNotFound) != tc.notFound {
+				t.Fatalf("Fetch() = %v, %v; want notFound=%t", bundle, err, tc.notFound)
+			}
+		})
+	}
+}
 
 func TestVulnxClientFetchMapsResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

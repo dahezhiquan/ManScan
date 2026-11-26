@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"ManScan/server/internal/service"
+
+	"golang.org/x/net/http2"
 )
 
 // githubTreeProgress belongs to one list operation, never to a shared client.
@@ -115,6 +117,10 @@ func githubTreeRetryReason(err error) string {
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return "响应体提前结束"
+	}
+	var streamError http2.StreamError
+	if errors.As(err, &streamError) {
+		return fmt.Sprintf("HTTP/2 数据流中断（%s）", streamError.Code)
 	}
 	return "临时网络错误"
 }

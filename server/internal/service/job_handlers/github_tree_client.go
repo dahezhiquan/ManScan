@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"ManScan/server/internal/service"
+
+	"golang.org/x/net/http2"
 )
 
 const (
@@ -240,6 +242,20 @@ func retryableGitHubTreeError(err error) bool {
 	var progressError *githubTreeProgressError
 	if errors.As(err, &progressError) {
 		return false
+	}
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	// Go 的标准 HTTP 客户端也支持将内部流错误 As 为 http2.StreamError。
+	// 只重试可能恢复的流重置，协议错误及服务端要求降低负载等情况直接停止。
+	var streamError http2.StreamError
+	if errors.As(err, &streamError) {
+		switch streamError.Code {
+		case http2.ErrCodeCancel, http2.ErrCodeRefusedStream, http2.ErrCodeInternal:
+			return true
+		default:
+			return false
+		}
 	}
 	var networkError net.Error
 	return (errors.As(err, &networkError) && (networkError.Timeout() || networkError.Temporary())) ||

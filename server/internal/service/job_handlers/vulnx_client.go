@@ -20,6 +20,8 @@ const defaultVulnxAPIBaseURL = "https://api.projectdiscovery.io"
 
 var cveIDPattern = regexp.MustCompile(`^CVE-[0-9]{4}-[0-9]+$`)
 
+var errVulnxNotFound = errors.New("VulnX 未收录该 CVE（HTTP 404）")
+
 type vulnxAPIResponse struct {
 	Data vulnxVulnerability `json:"data"`
 }
@@ -162,6 +164,9 @@ func (c *VulnxClient) Fetch(ctx context.Context, cveID string) (*repository.Vuln
 		return nil, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return nil, errVulnxNotFound
+	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("VulnX API 返回 HTTP %d", response.StatusCode)
 	}
