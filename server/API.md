@@ -1494,6 +1494,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1"
   - `direction=forward` 用于按序向后读取增量日志，返回 `seq > offset` 的事件；`next_offset` 表示本次已处理的最大 `seq`，下一次请求可直接作为 `offset` 传回。
   - `direction=before` 用于向前翻旧日志，返回 `seq < offset` 的最近一页可见事件；当 `offset=0` 时返回当前尾部最近一页；`next_offset` 表示本页最早可见事件的 `seq`，下一次请求可直接作为 `offset` 继续翻更早日志。
   - 运行中任务也支持 `direction=before`，可用于浏览器刷新后从尾部向前回补历史日志。
+  - 扫描执行失败时，`level=error`、`type=task_failed` 事件的 `message` 包含失败阶段和返回的原因，例如 `扫描任务执行失败: 扫描子进程退出异常: exit status 7`；结束时的 `progress.last_message` 同步保留该原因。子进程内部的具体报错仍需结合此前的 stderr 事件及原始日志查看；历史任务不会补写原因。
   - `result` 类型事件可能包含 `tags`、`result_key`、`template_id`、`severity` 字段：`tags` 用于记录该命中结果的模板标签；`result_key` 为后端生成的不透明结构化去重键，前端只应作为稳定标识使用，不应解析其内部格式；`template_id` 和 `severity` 分别表示命中模板 ID 与严重级别。
   - 目标命中 `exclude_targets` 禁扫规则时，会在任何前置探测前产生 `level=info`、`type=target_excluded` 的事件，`message` 包含被跳过的目标和首次命中的规则。被排除目标不参与扫描前 HTTP/Wappalyzer 探测、截图采集或主扫描；全部目标被排除时跳过执行并将实际插件数量设为 `0`。
   - 当任务开启 `matcher_status` 时，模板匹配失败会以 `level=info`、`type=match_failure` 输出为调试日志；这类事件不计入 `progress.matched`，不写入漏洞结果。
@@ -1531,6 +1532,7 @@ curl "http://127.0.0.1:8686/api/v1/scans/1/logs?direction=before&offset=0&limit=
   - `result` 类型事件中的 `event.result_key` 为后端生成的不透明结构化去重键，历史统计恢复、实时日志去重和续传补发均以该字段为准；`event.template_id` 与 `event.severity` 用于结构化统计分类。
   - 开启 `matcher_status` 后产生的 `match_failure` 事件只用于展示匹配失败调试信息，不会触发漏洞命中统计刷新
   - 任务结束后发送 `complete`
+  - 扫描执行失败时推送 `task_failed` 事件，`message` 包含失败阶段及原因，结束时 `progress.last_message` 使用相同内容，与日志查询接口一致。
 
 - `snapshot` 示例：
 

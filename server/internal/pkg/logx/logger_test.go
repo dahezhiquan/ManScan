@@ -14,7 +14,7 @@ func TestLoggerHidesErrorDetails(t *testing.T) {
 	var output bytes.Buffer
 	core := zapcore.NewCore(zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()), zapcore.AddSync(&output), zapcore.InfoLevel)
 	logger := &Logger{raw: zap.New(core)}
-	logger.Error("database write failed", "task_id", int64(42), "error", errors.New("INSERT INTO assets VALUES ('secret-response')"))
+	logger.Error("database write failed", "task_id", int64(42), "error", errors.New("INSERT INTO assets VALUES ('secret-response')"), "failure_reason", "扫描子进程退出异常: exit status 7")
 
 	logged := output.String()
 	if strings.Contains(logged, "secret-response") || strings.Contains(logged, "INSERT INTO") {
@@ -22,5 +22,8 @@ func TestLoggerHidesErrorDetails(t *testing.T) {
 	}
 	if !strings.Contains(logged, `"task_id":42`) || !strings.Contains(logged, `"error":"details hidden"`) {
 		t.Fatalf("missing safe log fields: %s", logged)
+	}
+	if !strings.Contains(logged, `"failure_reason":"扫描子进程退出异常: exit status 7"`) {
+		t.Fatalf("missing failure reason: %s", logged)
 	}
 }

@@ -814,7 +814,7 @@ func (s *scanTaskService) runTask(taskID int64, plan *normalizedTaskRequest, run
 			s.finishPausedTask(taskID, runtime, &startedAt)
 			return
 		}
-		s.finishFailedTask(taskID, runtime, startedAt)
+		s.finishFailedTask(taskID, runtime, startedAt, err)
 		return
 	}
 
@@ -848,7 +848,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	}
 	excludeFingerprintTemplates := s.shouldExcludeAssetDomainFingerprintTemplates(plan.Raw, preflightTargets)
 	if err := s.syncAliveAssetDomainsBeforeScan(cmdCtx, plan.Raw, preflightTargets, state, fingerprintCachePath, preflightCachePath, runtime.assetDomainServiceAssetQueue, runtime); err != nil {
-		return err
+		return fmt.Errorf("扫描前资产处理失败: %w", err)
 	}
 	if runtime.IsPauseRequested() {
 		return errScanTaskPausedBeforeProcess
@@ -860,7 +860,7 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	}
 	targetsFile := filepath.Join(taskDir, "targets.txt")
 	if err := os.WriteFile(targetsFile, []byte(strings.Join(preflightTargets, "\n")+"\n"), 0o644); err != nil {
-		return err
+		return fmt.Errorf("写入扫描目标文件失败: %w", err)
 	}
 	resumeFile := s.resumeFilePath(state.ID)
 	storeResponseDir := s.storeResponseDir(state.ID)
@@ -883,18 +883,18 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return fmt.Errorf("创建扫描标准输出管道失败: %w", err)
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return err
+		return fmt.Errorf("创建扫描标准错误管道失败: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
 		if errors.Is(cmdCtx.Err(), context.Canceled) {
 			return context.Canceled
 		}
-		return err
+		return fmt.Errorf("启动扫描子进程失败: %w", err)
 	}
 	if !runtime.AttachInterrupt(func() {
 		_ = interruptTaskCommand(cmd)
@@ -931,7 +931,10 @@ func (s *scanTaskService) executeTaskPlan(plan *normalizedTaskRequest, runtime *
 	if errors.Is(cmdCtx.Err(), context.Canceled) {
 		return context.Canceled
 	}
-	return waitErr
+	if waitErr != nil {
+		return fmt.Errorf("扫描子进程退出异常: %w", waitErr)
+	}
+	return nil
 }
 
 func (s *scanTaskService) shouldExcludeAssetDomainFingerprintTemplates(request dto.CreateScanTaskRequest, targets []string) bool {
@@ -943,7 +946,7 @@ func (s *scanTaskService) shouldExcludeAssetDomainFingerprintTemplates(request d
 		!request.DisableHTTPProbe
 }
 
-func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntime, startedAt time.Time) {
+func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntime, startedAt time.Time, cause error) {
 	if runtime == nil || runtime.state == nil || !runtime.TryFinalize() {
 		return
 	}
@@ -952,9 +955,17 @@ func (s *scanTaskService) finishFailedTask(taskID int64, runtime *scanTaskRuntim
 
 	state := runtime.state
 	finishedAt := time.Now()
-	state.Append("error", "task_failed", "扫描任务执行失败")
+	message := "扫描任务执行失败"
+	if cause != nil {
+		message += ": " + cause.Error()
+	}
+	if s.logger != nil {
+		// 使用独立诊断字段，避免 error 字段被日志封装统一隐藏；不输出命令参数或环境变量。
+		s.logger.Error("scan task execution failed", "task_id", taskID, "failure_reason", message)
+	}
+	state.Append("error", "task_failed", message)
 	_ = s.repository.UpsertResult(context.Background(), toScanTaskResult(taskID, state.TaskName, &startedAt, finishedAt, state.SnapshotResultSummary()))
-	state.MarkFinished("failed", finishedAt, "扫描任务执行失败")
+	state.MarkFinished("failed", finishedAt, message)
 	_ = s.repository.UpdateStatus(context.Background(), taskID, "failed", nil, &finishedAt)
 	s.cleanupResumeFile(taskID)
 	s.releaseState(taskID, runtime)

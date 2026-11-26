@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -2253,6 +2254,92 @@ func TestResumePausedTaskRejectsDuplicateResume(t *testing.T) {
 	}
 	if len(repo.prepareForResumeCalls) != 1 {
 		t.Fatalf("prepareForResumeCalls = %d, want 1", len(repo.prepareForResumeCalls))
+	}
+}
+
+func TestRunTaskRecordsFailureReason(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		script     string
+		blockWrite bool
+		wantReason string
+		wantStatus string
+	}{
+		{name: "start failure", script: "#!/nonexistent-manscan-test-interpreter\n", wantReason: "启动扫描子进程失败: fork/exec", wantStatus: "failed"},
+		{name: "exit failure", script: "#!/bin/sh\nexit 7\n", wantReason: "扫描子进程退出异常: exit status 7", wantStatus: "failed"},
+		{name: "target write failure", script: "#!/bin/sh\nexit 0\n", blockWrite: true, wantReason: "写入扫描目标文件失败: open", wantStatus: "failed"},
+		{name: "success", script: "#!/bin/sh\nexit 0\n", wantStatus: "success"},
+		{name: "cancelled", script: "#!/bin/sh\nexit 7\n", wantStatus: "cancelled"},
+		{name: "paused", script: "#!/bin/sh\nexit 7\n", wantStatus: "paused"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			rootDir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(rootDir, "manscan"), []byte(test.script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			runtimeDir := filepath.Join(rootDir, "data", "runtime")
+			state, err := scanruntime.NewState(30, "task-30", "failure-test", 1, runtimeDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer state.Close()
+			if test.blockWrite {
+				if err := os.Mkdir(filepath.Join(runtimeDir, "30", "targets.txt"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runtime := newScanTaskRuntime(state)
+			if test.wantStatus == "cancelled" {
+				runtime.RequestCancel()
+			} else if test.wantStatus == "paused" {
+				runtime.RequestPause()
+			}
+			repo := &scanTaskRepositoryStub{tasks: map[int64]*entity.ScanTask{
+				30: {ID: 30, TaskNo: "task-30", Name: "failure-test", Status: "pending"},
+			}}
+			svc := &scanTaskService{
+				repository: repo,
+				rootDir:    rootDir,
+				runtimeDir: runtimeDir,
+				states:     map[int64]*scanTaskRuntime{30: runtime},
+			}
+			svc.runTask(30, &normalizedTaskRequest{CollectedTargets: []string{"https://example.com"}}, runtime)
+			if repo.tasks[30].Status != test.wantStatus {
+				t.Fatalf("status = %q, want %q", repo.tasks[30].Status, test.wantStatus)
+			}
+			failedEvents := 0
+			for _, event := range state.EventsSince(0, 100).Events {
+				if event.Type != "task_failed" {
+					continue
+				}
+				failedEvents++
+				if event.Level != "error" || !strings.Contains(event.Message, test.wantReason) {
+					t.Fatalf("failure event = %+v, want reason %q", event, test.wantReason)
+				}
+			}
+			if test.wantStatus != "failed" {
+				if failedEvents != 0 {
+					t.Fatalf("non-failed task has %d failure events", failedEvents)
+				}
+				return
+			}
+			if failedEvents != 1 {
+				t.Fatalf("failure events = %d, want 1", failedEvents)
+			}
+			if progress := state.SnapshotProgress(); !strings.Contains(progress.LastMessage, test.wantReason) {
+				t.Fatalf("last message = %q, want reason %q", progress.LastMessage, test.wantReason)
+			}
+			data, err := os.ReadFile(state.LogFilePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(data), test.wantReason) {
+				t.Fatalf("persisted events missing reason %q", test.wantReason)
+			}
+		})
 	}
 }
 
