@@ -15,7 +15,11 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"github.com/rs/xid"
+	"gorm.io/gorm"
 )
+
+// VulnerabilityIncrementalJobType 标识三渠道漏洞情报增量更新任务。
+const VulnerabilityIncrementalJobType = "vulnerability_intelligence.incremental"
 
 const (
 	ScheduledJobStatusQueued  = "queued"
@@ -151,11 +155,16 @@ func (s *schedulerManager) addJob(job entity.ScheduledJob) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var entryID cron.EntryID
 	entryID, err := s.cron.AddFunc(schedule, func() {
+		// 使用 Cron 的计划触发时间，避免数据库等待或回调延迟改变去重标识。
+		s.mu.Lock()
+		firedAt := s.cron.Entry(entryID).Prev
+		s.mu.Unlock()
 		if err := s.refreshNextRunAt(job.ID); err != nil && s.logger != nil {
 			s.logger.Error("update scheduled job next run failed", "job_id", job.ID, "error", err)
 		}
-		_, triggerErr := s.Trigger(context.Background(), job.ID, "schedule")
+		_, triggerErr := s.trigger(context.Background(), job.ID, "schedule", firedAt)
 		if triggerErr != nil && s.logger != nil {
 			s.logger.Error("scheduled job trigger failed", "job_id", job.ID, "error", triggerErr)
 		}
@@ -194,6 +203,10 @@ func (s *schedulerManager) updateNextRunAt(ctx context.Context, jobID int64, ent
 }
 
 func (s *schedulerManager) Trigger(ctx context.Context, jobID int64, triggerType string) (*entity.ScheduledJobRun, error) {
+	return s.trigger(ctx, jobID, triggerType, time.Now())
+}
+
+func (s *schedulerManager) trigger(ctx context.Context, jobID int64, triggerType string, firedAt time.Time) (*entity.ScheduledJobRun, error) {
 	// 创建执行记录与登记取消函数必须原子完成，停止请求才能覆盖刚排队的执行。
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
@@ -204,26 +217,24 @@ func (s *schedulerManager) Trigger(ctx context.Context, jobID int64, triggerType
 	if triggerType == "schedule" && !job.Enabled {
 		return nil, errors.New("定时任务未启用")
 	}
-	if job.ConcurrencyPolicy == "" {
-		job.ConcurrencyPolicy = "forbid"
-	}
-	if job.ConcurrencyPolicy == "forbid" {
-		running, checkErr := s.runs.HasRunning(ctx, jobID)
-		if checkErr != nil {
-			return nil, checkErr
-		}
-		if running {
-			now := time.Now()
-			run := &entity.ScheduledJobRun{JobID: jobID, TriggerType: triggerType, FireKey: xid.New().String(), Status: ScheduledJobStatusSkipped, ProgressUpdatedAt: &now, ErrorMessage: "已有执行中的任务"}
-			if err := s.runs.Create(ctx, run); err != nil {
-				return nil, err
-			}
-			return run, nil
-		}
-	}
 	run := &entity.ScheduledJobRun{JobID: jobID, TriggerType: triggerType, FireKey: xid.New().String(), Status: ScheduledJobStatusQueued}
-	if err := s.runs.Create(ctx, run); err != nil {
-		return nil, err
+	if triggerType == "schedule" {
+		if firedAt.IsZero() {
+			firedAt = time.Now()
+		}
+		prefix := "schedule"
+		if job.JobType == VulnerabilityIncrementalJobType {
+			// 保留增量任务已有的标识，避免升级后重复执行同一轮计划。
+			prefix = "incremental"
+		}
+		run.FireKey = fmt.Sprintf("%s:%d:%d", prefix, jobID, firedAt.Unix())
+	}
+	existing, createErr := s.createRun(ctx, run)
+	if createErr != nil {
+		return nil, createErr
+	}
+	if existing != nil {
+		return existing, nil
 	}
 	runCtx, cancel := context.WithCancel(context.Background())
 	s.registerRun(jobID, run.ID, cancel)
@@ -232,6 +243,27 @@ func (s *schedulerManager) Trigger(ctx context.Context, jobID int64, triggerType
 		s.execute(runCtx, *job, *run)
 	}()
 	return run, nil
+}
+
+// createRun 将去重检查和创建放在同一个数据库锁内，覆盖多进程触发。
+// 同一计划时间已执行（包括失败）或任务尚未结束时复用旧记录，不新增 skipped。
+func (s *schedulerManager) createRun(ctx context.Context, run *entity.ScheduledJobRun) (*entity.ScheduledJobRun, error) {
+	var existing *entity.ScheduledJobRun
+	err := s.runs.WithJobLock(ctx, run.JobID, func(runs repository.ScheduledJobRunRepository) error {
+		var err error
+		if run.TriggerType == "schedule" {
+			existing, err = runs.FindByFireKey(ctx, run.JobID, run.FireKey)
+			if err == nil || !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+		}
+		existing, err = runs.FindRunning(ctx, run.JobID)
+		if err == nil || !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		return runs.Create(ctx, run)
+	})
+	return existing, err
 }
 
 func (s *schedulerManager) registerRun(jobID, runID int64, cancel context.CancelFunc) {

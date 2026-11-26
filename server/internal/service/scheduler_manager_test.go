@@ -10,6 +10,8 @@ import (
 
 	"ManScan/server/internal/model/entity"
 	"ManScan/server/internal/repository"
+
+	"gorm.io/gorm"
 )
 
 type nextRunJobRepository struct {
@@ -48,9 +50,9 @@ type nextRunRepository struct {
 	repository.ScheduledJobRunRepository
 }
 
-func (r *nextRunRepository) HasRunning(context.Context, int64) (bool, error) {
+func (r *nextRunRepository) WithJobLock(context.Context, int64, func(repository.ScheduledJobRunRepository) error) error {
 	// 模拟触发失败，验证刷新计划不依赖业务执行结果。
-	return false, errors.New("execution unavailable")
+	return errors.New("execution unavailable")
 }
 
 type cancellableRunRepository struct {
@@ -68,8 +70,12 @@ func (r *cancellableRunRepository) Create(_ context.Context, run *entity.Schedul
 	return nil
 }
 
-func (r *cancellableRunRepository) HasRunning(context.Context, int64) (bool, error) {
-	return false, nil
+func (r *cancellableRunRepository) WithJobLock(_ context.Context, _ int64, fn func(repository.ScheduledJobRunRepository) error) error {
+	return fn(r)
+}
+
+func (r *cancellableRunRepository) FindRunning(context.Context, int64) (*entity.ScheduledJobRun, error) {
+	return nil, gorm.ErrRecordNotFound
 }
 
 func (r *cancellableRunRepository) UpdateFields(_ context.Context, _ int64, fields map[string]interface{}) error {

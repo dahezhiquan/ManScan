@@ -2870,7 +2870,7 @@ curl -G "http://127.0.0.1:8686/api/v1/domain-assets/screenshots" \
 ### 新增定时任务
 
 - 请求方法和路径：`POST /api/v1/scheduled-jobs`
-- 请求参数：JSON body。必填 `name`、`job_type`、`cron_expr`、`config_json`；可选 `description`、`output_description`（任务产出内容描述，最长 512 字符，默认空字符串）、`timezone`（默认 `Asia/Shanghai`）、`enabled`（默认 true）、`api_key_id`、`concurrency_policy`（`forbid`/`allow`，默认 `forbid`）、`timeout_seconds`（整数，0-2592000 秒，最多 30 天，默认 0，0 表示不限制单次任务执行时长）。`config_json` 必须是合法 JSON，最大 1 MiB。Cron 使用 5 段格式（分钟、小时、日、月、星期）。
+- 请求参数：JSON body。必填 `name`、`job_type`、`cron_expr`、`config_json`；可选 `description`、`output_description`（任务产出内容描述，最长 512 字符，默认空字符串）、`timezone`（默认 `Asia/Shanghai`）、`enabled`（默认 true）、`api_key_id`、`concurrency_policy`（兼容保留 `forbid`/`allow`，默认 `forbid`；所有任务统一防止重复执行，`allow` 不再放开同一任务的并行执行）、`timeout_seconds`（整数，0-2592000 秒，最多 30 天，默认 0，0 表示不限制单次任务执行时长）。`config_json` 必须是合法 JSON，最大 1 MiB。Cron 使用 5 段格式（分钟、小时、日、月、星期）。
 - 响应格式：HTTP 200，`data` 为新任务对象。
 - 错误码：`40001` 参数、Cron、时区、并发策略或任务配置不合法；`40101` 未登录；`40301` 非管理员；`50001` 保存或注册失败。
 - 使用示例：
@@ -2903,16 +2903,16 @@ curl -X POST -H 'Authorization: Bearer <access_token>' -H 'Content-Type: applica
 ### 立即触发定时任务
 
 - 请求方法和路径：`POST /api/v1/scheduled-jobs/:id/trigger`
-- 请求参数：无；仅管理员可调用。接口只创建执行记录并异步执行，不等待任务完成。
-- 响应格式：HTTP 202，`data.run` 为执行记录，初始状态通常为 `queued`；若 `forbid` 且已有执行，则记录为 `skipped`。
-- 错误码：`40001` ID 不合法；`40101` 未登录；`40301` 非管理员；`40401` 任务不存在；`50001` 创建执行记录失败。
+- 请求参数：无；仅管理员可调用。接口创建或复用执行记录；仅新创建的记录异步执行，不等待任务完成。
+- 响应格式：HTTP 202，`data.run` 为新建或复用的执行记录。新建记录初始状态通常为 `queued`；所有任务无论配置 `forbid` 还是 `allow`，同一任务 ID 已有 `queued`/`running` 时直接返回该执行记录及其当前状态，不新增记录、不再次执行；结束后可手动触发重试。重复请求成功返回表示已复用当前执行，不表示启动了第二次执行。
+- 错误码：`40001` ID 不合法；`40101` 未登录；`40301` 非管理员；`40401` 任务不存在；`50001` 读取、锁定或创建执行记录失败。
 - 使用示例：`curl -X POST -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1/trigger'`
 
 ### 查询任务执行记录和进度
 
 - 请求方法和路径：`GET /api/v1/scheduled-jobs/:id/runs`、`GET /api/v1/scheduled-job-runs/:run_id`。
 - 请求参数：列表接口支持 `page`、`page_size`；详情接口使用正整数 `run_id`。
-- 响应格式：执行记录包含 `status`（`queued`、`running`、`success`、`failed`、`timeout`、`skipped`、`cancelled`）、`progress_current`、`progress_total`、`progress_percent`、`progress_phase`、`progress_message`、`output_path`、时间字段、错误信息及预留的结果引用字段。`progress_total=0` 时百分比为空，表示任务尚未提供可计算总量。`output_path` 是相对于服务根目录的产出文件路径，没有产出时为空。
+- 响应格式：执行记录包含 `status`（`queued`、`running`、`success`、`failed`、`timeout`、`skipped`、`cancelled`；`skipped` 兼容历史记录，重复触发不再生成该状态）、`progress_current`、`progress_total`、`progress_percent`、`progress_phase`、`progress_message`、`output_path`、时间字段、错误信息及预留的结果引用字段。`progress_total=0` 时百分比为空，表示任务尚未提供可计算总量。`output_path` 是相对于服务根目录的产出文件路径，没有产出时为空。
 - 错误码：`40001` 参数不合法；`40101` 未登录；`40401` 任务或执行记录不存在；`50001` 查询失败。
 - 使用示例：`curl -H 'Authorization: Bearer <access_token>' 'http://127.0.0.1:8686/api/v1/scheduled-jobs/1/runs?page=1&page_size=10'`
 - 数据库升级：已有数据库需执行 `docs/SQL/alter_manscan_scheduled_job_runs_add_output_path.sql`；新建数据库使用更新后的 `docs/SQL/create_manscan_scheduled_job_runs.sql`。
@@ -2932,6 +2932,8 @@ curl -L -OJ \
 ```
 
 ### 任务处理器扩展约定
+
+所有内置和自定义任务统一防止重复执行：以任务 ID 为范围，排队或运行期间的定时及手动触发均复用已有记录，不新增 `skipped`。同一计划触发时间使用固定 `fire_key`，该轮已有记录时不再次执行，包括已成功、失败、超时或取消的情况；下一轮计划及任务结束后的手动重试仍正常执行。不同任务 ID 互不影响。数据库事务锁定任务行后检查并创建记录，覆盖连接同一 MySQL 数据库的多个服务实例。`concurrency_policy` 为兼容现有客户端保留接收和返回，但 `allow` 不再允许同一任务并行执行。无需新增字段或数据库升级；所有服务实例需更新至此版本。原增量任务的计划标识保持兼容，其他任务旧版本生成的随机 `fire_key` 不追溯改写，历史重复记录不清理。
 
 服务启动时从数据库加载 `enabled=1` 的任务。业务代码通过 `JobHandlerRegistry.Register` 注册具体处理器；处理器实现 `Type`、`Validate` 和 `Execute`，在 `Execute` 中通过 `ProgressReporter.Report` 写入阶段、当前值、总量和说明。API Key 仅保存关联 ID，具体处理器按需通过现有 API Key 服务读取并解密，不在定时任务表中保存明文密钥。
 
@@ -2996,6 +2998,8 @@ curl -L -OJ \
 - 数据库升级：已有数据库执行 `docs/SQL/alter_manscan_vulnerability_intelligence_avd_timestamp_defaults.sql`，以便 records.`updated_at` 和 articles.`added_at` 在任务省略这些字段时由数据库默认生成。
 
 ### 内置任务：漏洞情报增量更新（三渠道）
+
+- 重复触发限制：遵守所有定时任务统一的重复执行保护，详见上文“任务处理器扩展约定”中的规则。
 
 - `job_type`：`vulnerability_intelligence.incremental`
 - 初始化 SQL：`docs/SQL/insert_manscan_scheduled_job_vulnerability_incremental.sql`，默认每天 02:00 执行，按 `job_type` 判断后可重复执行。默认超时 21600 秒；任务顺序执行三个渠道。
