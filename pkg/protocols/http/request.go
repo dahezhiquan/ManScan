@@ -61,7 +61,7 @@ const (
 )
 
 var (
-	MaxBodyRead = 10 * unitutils.Mega
+	MaxBodyRead = 5 * unitutils.Mega
 	// ErrMissingVars is error occurred when variables are missing
 	ErrMissingVars = errkit.New("stop execution due to unresolved variables").SetKind(nucleierr.ErrTemplateLogic).Build()
 	// ErrHttpEngineRequestDeadline is error occurred when request deadline set by http request engine is exceeded
@@ -1035,7 +1035,7 @@ func (request *Request) executeRequest(input *contextargs.Context, generatedRequ
 	duration := time.Since(timeStart)
 
 	// define max body read limit
-	maxBodylimit := MaxBodyRead // 10MB
+	maxBodylimit := MaxBodyRead // 5MB
 	if request.MaxSize > 0 {
 		maxBodylimit = request.MaxSize
 	}

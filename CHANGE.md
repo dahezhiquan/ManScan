@@ -1,3 +1,10 @@
+## 2026-11-27 15:58 调整 HTTP 响应默认读取上限
+
+- 变动目录：`pkg/protocols/http/`、`pkg/types/`。
+- `pkg/protocols/http/request.go`：将 HTTP 模板请求的默认响应体读取上限从 10 MiB 调整为 5 MiB；模板 `max-size` 和显式全局读取上限仍按原有优先级生效。
+- `pkg/types/types.go`：将 SDK 默认选项中的响应读取上限同步调整为 5 MiB，保持不同入口的默认值一致。
+- 修改目的或影响：降低未显式指定上限时读取大型 HTTP 响应的资源消耗；超过上限的响应内容无法参与匹配。
+
 ## 2026-11-10 18:36 自动映射过滤 DNS 元标签
 
 - 变动目录：`pkg/protocols/common/automaticscan/`、`docs/`，并同步更新根目录变更记录。
