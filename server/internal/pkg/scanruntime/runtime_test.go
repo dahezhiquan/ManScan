@@ -41,7 +41,7 @@ func TestScannerDiagnosticsLoggedAndHiddenFromFrontend(t *testing.T) {
 	state.Append("info", "task_started", "扫描任务开始执行")
 
 	StreamCommandOutput(strings.NewReader("[FTL] Could not run scan: no templates provided\n"), state, "stdout", true)
-	StreamCommandOutput(strings.NewReader("[ERR] template compilation failed\ncmd/nuclei/main.go:10: undefined: missing\n[WRN] template warning\n[INF] ordinary info\n"), state, "stderr", false)
+	StreamCommandOutput(strings.NewReader("[ERR] template compilation failed\ncmd/nuclei/main.go:10: undefined: missing\n[WRN] template warning\n[INF] ordinary info\n[VER] [2026-11-27T11:01:05+08:00] [CVE-2022-36553] Sent HTTP request to https://example.com\n"), state, "stderr", false)
 	if err := os.WriteFile(state.ErrorLogFilePath, []byte(`{"template-id":"test-template","type":"http","address":"https://example.com","error":"connection refused"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

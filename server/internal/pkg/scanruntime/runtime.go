@@ -1697,6 +1697,8 @@ func ClassifyScannerLogLine(line string) (string, string, bool) {
 		return "warn", message, true
 	case strings.HasPrefix(upper, "[ERR]"), strings.HasPrefix(upper, "[ERROR]"), strings.HasPrefix(upper, "[FTL]"), strings.HasPrefix(upper, "[FATAL]"):
 		return "error", message, true
+	case strings.HasPrefix(upper, "[VER]"):
+		return "verbose", message, true
 	case strings.HasPrefix(upper, "[INF]"), strings.HasPrefix(upper, "[INFO]"):
 		return "info", message, true
 	default:
