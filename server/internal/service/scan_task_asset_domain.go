@@ -490,12 +490,23 @@ func buildAssetDomainScreenshotCLIArgs(request dto.CreateScanTaskRequest, taskDi
 }
 
 func assetDomainProbeHostCounts(result assetDomainLivenessProbeResult) (int, int) {
-	aliveCount := len(result.Observations)
-	notAliveCount := len(result.CheckedDomains) - aliveCount
-	if notAliveCount < 0 {
-		notAliveCount = 0
+	// A fallback from HTTPS to HTTP is still one input target. Keep successful
+	// results when repeated targets or cached and fresh probe results overlap.
+	aliveByTarget := make(map[string]bool, len(result.TargetResults))
+	for _, target := range result.TargetResults {
+		key := assetDomainPreflightTargetKey(target.Target)
+		if key == "" || (len(target.CheckedDomains) == 0 && len(target.Observations) == 0) {
+			continue
+		}
+		aliveByTarget[key] = aliveByTarget[key] || len(target.Observations) > 0
 	}
-	return aliveCount, notAliveCount
+	aliveCount := 0
+	for _, alive := range aliveByTarget {
+		if alive {
+			aliveCount++
+		}
+	}
+	return aliveCount, len(aliveByTarget) - aliveCount
 }
 
 func (s *scanTaskService) syncAliveAssetHostPortsFromDomainObservations(ctx context.Context, observations []repository.AssetDomainObservation, networkRegions []assetDomainNetworkRegion, state *scanruntime.State) error {
@@ -565,7 +576,18 @@ func (s *scanTaskService) syncAssetServiceAssets(ctx context.Context, observatio
 	checkedDomains = filterDomainServiceAssetCheckedDomains(ctx, checkedDomains, httpObservations)
 	shouldSyncDomainAssets := len(domainObservations) > 0 || len(checkedDomains) > 0 || emptyPreScanSync
 	if s.assetDomainRepository != nil && shouldSyncDomainAssets {
-		if err := s.assetDomainRepository.SyncServiceAssets(ctx, domainObservations, checkedDomains, observedAt); err != nil {
+		missingDomains := make([]repository.AssetDomainObservation, 0)
+		for _, observation := range domainObservations {
+			endpoint, ok := assetHostPortEndpointFromAssetEndpoint(observation.Domain)
+			if observation.NonHTTPService && ok && endpoint.IsDomain {
+				missingDomains = append(missingDomains, repository.AssetDomainObservation{
+					Domain: observation.Domain,
+					Title:  "非 HTTP 服务",
+					Region: assetDomainRegion(endpoint.Host, networkRegions),
+				})
+			}
+		}
+		if err := s.assetDomainRepository.SyncServiceAssets(ctx, domainObservations, checkedDomains, uniqueAssetDomainObservations(missingDomains), observedAt); err != nil {
 			return err
 		}
 	}
@@ -1862,6 +1884,7 @@ func uniqueAssetDomainServiceAssetObservations(values []repository.AssetDomainSe
 		// One endpoint can expose the same service over both TCP and UDP.
 		key := value.Domain + "\x00" + value.AppName + "\x00" + value.PortProtocol
 		if index, ok := seen[key]; ok {
+			result[index].NonHTTPService = result[index].NonHTTPService || value.NonHTTPService
 			if result[index].AppVersion == "" && value.AppVersion != "" {
 				result[index].AppVersion = value.AppVersion
 			}

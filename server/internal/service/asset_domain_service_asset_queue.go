@@ -394,7 +394,11 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayloadWithResolver(c
 		scanruntime.AsString(payload["host"]),
 	)
 	domain := vulnerabilityAssetEndpoint(parseVulnerabilityAsset(payload, matchedAt))
-	if resolver != nil {
+	nonHTTPService := assetDomainFingerprintIsNonHTTPService(payload, templateDetail, tags, matchedAt)
+	if nonHTTPService {
+		// The probe cache describes HTTP endpoints; it must not replace a service's port.
+		domain = vulnerabilityAssetEndpoint(parseVulnerabilityAsset(nil, matchedAt))
+	} else if resolver != nil {
 		if originalDomain := resolver.Resolve(payload); originalDomain != "" {
 			domain = originalDomain
 		}
@@ -408,21 +412,46 @@ func (s *scanTaskService) buildAssetDomainServiceAssetsFromPayloadWithResolver(c
 	versionsByName := assetDomainFingerprintExtractedVersions(payload, componentNames, templateDetail)
 	for _, componentName := range componentNames {
 		components = append(components, repository.AssetDomainServiceAssetObservation{
-			Domain:       domain,
-			AppName:      componentName,
-			AppVersion:   versionsByName[componentName],
-			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, tags, matchedAt, domain, componentName),
+			Domain:         domain,
+			AppName:        componentName,
+			AppVersion:     versionsByName[componentName],
+			PortProtocol:   assetDomainFingerprintPortProtocol(payload, templateDetail, tags, matchedAt, domain, componentName),
+			NonHTTPService: nonHTTPService,
 		})
 	}
 	if software, version, ok := strings.Cut(versionsByName["ssh"], " "); ok && strings.EqualFold(software, "openssh") {
 		components = append(components, repository.AssetDomainServiceAssetObservation{
-			Domain:       domain,
-			AppName:      "openssh",
-			AppVersion:   version,
-			PortProtocol: assetDomainFingerprintPortProtocol(payload, templateDetail, tags, matchedAt, domain, "openssh"),
+			Domain:         domain,
+			AppName:        "openssh",
+			AppVersion:     version,
+			PortProtocol:   assetDomainFingerprintPortProtocol(payload, templateDetail, tags, matchedAt, domain, "openssh"),
+			NonHTTPService: nonHTTPService,
 		})
 	}
 	return uniqueAssetDomainServiceAssetObservations(components), nil
+}
+
+func assetDomainFingerprintIsNonHTTPService(payload map[string]interface{}, detail *dto.TemplateDetail, tags []string, matchedAt string) bool {
+	endpoint, ok := assetHostPortEndpointFromValue(matchedAt)
+	if !ok || endpoint.IsHTTP {
+		return false
+	}
+	protocol := templateprotocol.Normalize(scanruntime.AsString(payload["type"]))
+	if protocol == "" && detail != nil && len(detail.Protocols) == 1 {
+		protocol = templateprotocol.Normalize(detail.Protocols[0])
+	}
+	switch protocol {
+	case "tcp", "ssl", "javascript", "code":
+		return true
+	case "":
+		for _, tag := range tags {
+			switch strings.ToLower(strings.TrimSpace(tag)) {
+			case "network", "tcp", "udp", "ssl", "tls":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func assetDomainFingerprintPortProtocol(payload map[string]interface{}, templateDetail *dto.TemplateDetail, tags []string, matchedAt, domain, componentName string) string {

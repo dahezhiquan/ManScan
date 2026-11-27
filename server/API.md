@@ -1416,7 +1416,9 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/resume"
   - `progress.total_requests` 表示本次任务按模板和目标、过滤结果以及模板聚类后的逻辑请求总数，同时包含扫描前 Wappalyzer 直连探测以及主动指纹模板阶段产生的逻辑请求；前置探测中的每次实际请求尝试都会计入最终总量，但在 scanner 给出确定可执行总量前不会单独提前返回。
   - `progress.pre_cluster_total_requests` 表示同一执行范围在模板聚类前的预估逻辑请求总数，仅用于请求节省量统计，不参与 `progress.percent` 计算。
   - `progress.percent` 表示逻辑扫描完成度，不直接用 `requests / total_requests` 计算，因此缓存或聚类节省大量请求时，进度仍会按扫描执行进度平滑推进。
-  - `task.alive_hosts` 和 `task.unresponsive_hosts` 表示扫描前资产存活探测结果；探测完成后会立即通过任务详情、日志接口和 SSE 推送，已探测到的 `0` 也会明确返回。
+  - `task.alive_hosts` 和 `task.unresponsive_hosts` 按实际参与扫描前 HTTP/HTTPS 探测的原始输入目标去重计数，不按探测端口数计数。一个目标任一 HTTP/HTTPS 端点探测成功即计入 `alive_hosts`；全部端点探测失败才计入 `unresponsive_hosts`，两者互斥。探测成功指获得有效 HTTP 响应，不要求状态码为 2xx；“无响应”不代表其他协议服务不可用。
+  - 例如 10 个域名中，5 个 HTTPS 成功、1 个 HTTPS 失败但 HTTP 成功、4 个 HTTP/HTTPS 均失败，返回 `alive_hosts: 6`、`unresponsive_hosts: 4`。两者之和为实际已探测的唯一目标数；禁扫排除或未执行 HTTP/HTTPS 探测的目标不计入。显式不同端口或 URL 的输入仍按独立目标处理。
+  - 存活统计在探测完成后立即通过任务详情、日志接口和 SSE 推送，已探测到的 `0` 也会明确返回；复用前置探测缓存时采用相同口径。已完成历史任务保存的旧统计不会自动重算。
   - `progress.alive_hosts` 和 `progress.unresponsive_hosts` 是同一组存活探测统计的进度快照字段；探测尚未完成时字段不返回。
   - 自动模版映射的指纹识别阶段中，`progress_status` 为 `calculating`，此时 `total_requests` 和 `percent` 不返回，`last_message` 仍为“扫描进度更新”；全部目标完成指纹识别并得到映射模版后，`progress_status` 变为 `running`，再开始返回稳定的预估总请求数和完成度。单个目标完成映射后，其漏洞模版可以先行执行。
   - 非自动模版映射任务的扫描前存活探测和主动指纹识别阶段会先累计实际请求数，但不提前公开阶段性 `total_requests`；主漏洞 scanner 发布选中漏洞模版的确定总量后，再一次性返回“存活探测 + 主动指纹识别 + 选中漏洞模版”的总请求数。
@@ -2347,6 +2349,7 @@ curl -X DELETE "http://127.0.0.1:8686/api/v1/asset-config-centers/1" \
 
 - 说明：
   - 域名资产在扫描前 HTTP 探测完成后同步存活状态：成功取得响应的地址设为 `is_alive=true`，本次已检查但未取得响应的已有地址设为 `is_alive=false`；任务成功结束时不再重复同步域名存活状态。
+  - 非 HTTP 服务指纹命中明确的域名端口（例如 `rjy-f3l-vcse.duxiaoman.com:5060`）时，组件表和域名主表均使用完整的 `域名:端口`；HTTP 前置缓存不会覆盖该服务端口。主记录缺失时，与组件在同一事务中补建，`title` 固定为 `非 HTTP 服务`，`is_alive=true`，首次及最近存活时间为补建时间，HTTP 状态码、请求和响应不填充；已有主记录的标题、探测信息和时间不被补建操作覆盖。此类服务命中不改变任务的 HTTP 存活/无响应目标统计，纯 IP 服务仍归入主机及端口资产。
   - `first_alive_at` 记录首次探测存活的同步时间，已有值不覆盖；`last_alive_at` 记录最近一次探测存活的扫描前同步时间。探测不存活时保留两个时间字段的原值。
   - `request`、`response` 分别表示该域名资产最近一次探测保存的请求与响应原文；没有记录时返回空字符串。
   - `has_form`、`has_upload`、`has_admin`、`has_uc_login`、`has_baidu_login` 为可空布尔值；数据库值为 `NULL` 时接口返回 `null`，`false` 表示已确认不存在。
@@ -2454,7 +2457,7 @@ curl -H "Authorization: Bearer YOUR_ACCESS_TOKEN" -o domain-assets.xlsx "http://
 ```
 
 - 说明：
-  - `is_alive`、`first_alive_at`、`last_alive_at` 与域名资产清单采用相同的扫描前探测同步口径；任务结束时不再重写 `last_alive_at`。
+  - `is_alive`、`first_alive_at`、`last_alive_at` 与域名资产清单采用相同的扫描前探测及非 HTTP 服务补建口径；任务结束时不再重写 `last_alive_at`。非 HTTP 服务补建记录以完整 `域名:端口` 查询，标题为 `非 HTTP 服务`，组件按相同端点关联。
   - `service_assets` 来自 `manscan_asset_domain_service_assets`，按当前域名精确匹配 `domain` 字段。
   - `service_assets[].first_found_at` 仅记录首次发现时间；`last_found_at` 在扫描前被动识别或后续指纹结果写入时更新。新识别到的组件立即设为 `is_alive=true`；启用主动指纹识别或自动模板映射时，每个目标的指纹识别完成后，立即将该地址本次未识别到的旧组件设为 `is_alive=false`，但保留两个发现时间。未启用这两类识别时不执行旧组件失活检查；任务成功结束时不再重复同步或改写 `last_found_at`。
   - `service_assets[].app_version` 为可空字符串；未识别到版本时返回 `null`。

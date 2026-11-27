@@ -19,7 +19,7 @@ type AssetDomainRepository interface {
 	UpdateManualNote(ctx context.Context, domain string, manualNote *string) error
 	ListNetworkItems(ctx context.Context) ([]AssetDomainNetworkItem, error)
 	SyncObservations(ctx context.Context, observations []AssetDomainObservation, checkedDomains []string, observedAt time.Time) error
-	SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error
+	SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, missingDomains []AssetDomainObservation, observedAt time.Time) error
 	MarkServiceAssetsInactive(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error
 }
 
@@ -42,10 +42,11 @@ type AssetDomainNetworkItem struct {
 }
 
 type AssetDomainServiceAssetObservation struct {
-	Domain       string
-	AppName      string
-	AppVersion   string
-	PortProtocol string
+	Domain         string
+	AppName        string
+	AppVersion     string
+	PortProtocol   string
+	NonHTTPService bool
 }
 
 type AssetDomainListRecord struct {
@@ -150,7 +151,7 @@ func normalizeAssetDomainObservationText(values []AssetDomainObservation) []Asse
 	return result
 }
 
-func (r *assetDomainRepository) SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error {
+func (r *assetDomainRepository) SyncServiceAssets(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, missingDomains []AssetDomainObservation, observedAt time.Time) error {
 	observations = uniqueAssetDomainServiceAssetObservations(observations)
 	checkedDomains = uniqueNonEmptyAssetDomains(checkedDomains)
 	if len(observations) == 0 && len(checkedDomains) == 0 {
@@ -161,11 +162,43 @@ func (r *assetDomainRepository) SyncServiceAssets(ctx context.Context, observati
 	}
 
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := createMissingAssetDomains(ctx, tx, missingDomains, observedAt); err != nil {
+			return err
+		}
 		if err := upsertAssetDomainServiceAssets(ctx, tx, observations, observedAt); err != nil {
 			return err
 		}
 		return markStaleAssetDomainServiceAssets(ctx, tx, observations, checkedDomains, observedAt)
 	})
+}
+
+// createMissingAssetDomains inserts parent records without changing existing assets.
+func createMissingAssetDomains(ctx context.Context, db *gorm.DB, observations []AssetDomainObservation, observedAt time.Time) error {
+	observations = uniqueAssetDomainObservations(normalizeAssetDomainObservationText(observations))
+	items := make([]map[string]interface{}, 0, len(observations))
+	for _, observation := range observations {
+		var region interface{}
+		if observation.Region != "" {
+			region = observation.Region
+		}
+		items = append(items, map[string]interface{}{
+			"domain":         observation.Domain,
+			"title":          observation.Title,
+			"region":         region,
+			"is_alive":       true,
+			"first_alive_at": observedAt,
+			"last_alive_at":  observedAt,
+		})
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return db.WithContext(ctx).Table("manscan_asset_domain").
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "domain"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{"domain": gorm.Expr("domain")}),
+		}).
+		CreateInBatches(&items, 500).Error
 }
 
 func (r *assetDomainRepository) MarkServiceAssetsInactive(ctx context.Context, observations []AssetDomainServiceAssetObservation, checkedDomains []string, observedAt time.Time) error {

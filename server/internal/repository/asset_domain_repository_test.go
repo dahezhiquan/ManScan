@@ -1033,12 +1033,12 @@ func TestAssetDomainRepositorySyncServiceAssets(t *testing.T) {
 		{Domain: "app.example.com:443", AppName: "nginx", AppVersion: "1.24.0"},
 		{Domain: "api.example.com:8443", AppName: "spring", AppVersion: "6.1.0"},
 		{Domain: "api.example.com:8443", AppName: "unknown-version"},
-	}, []string{"app.example.com:443", "api.example.com:8443"}, observedAt); err != nil {
+	}, []string{"app.example.com:443", "api.example.com:8443"}, nil, observedAt); err != nil {
 		t.Fatalf("SyncServiceAssets() error = %v", err)
 	}
 	if err := repo.SyncServiceAssets(context.Background(), []AssetDomainServiceAssetObservation{
 		{Domain: "app.example.com:443", AppName: "nginx"},
-	}, nil, observedAt.Add(time.Hour)); err != nil {
+	}, nil, nil, observedAt.Add(time.Hour)); err != nil {
 		t.Fatalf("SyncServiceAssets() second error = %v", err)
 	}
 

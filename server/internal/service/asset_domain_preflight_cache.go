@@ -231,7 +231,7 @@ func (t assetDomainPreflightTarget) completeFor(request dto.CreateScanTaskReques
 }
 
 func (t assetDomainPreflightTarget) result() assetDomainLivenessProbeResult {
-	return assetDomainLivenessProbeResult{
+	result := assetDomainLivenessProbeResult{
 		Observations:                   uniqueAssetDomainObservations(t.Observations),
 		CheckedDomains:                 uniqueNonEmptyStrings(t.CheckedDomains),
 		ServiceAssets:                  uniqueAssetDomainServiceAssetObservations(append(append([]repository.AssetDomainServiceAssetObservation(nil), t.WappalyzerServiceAssets...), t.ActiveFingerprintServiceAssets...)),
@@ -239,6 +239,16 @@ func (t assetDomainPreflightTarget) result() assetDomainLivenessProbeResult {
 		FingerprintTargets:             uniqueAssetDomainFingerprintTargets(t.FingerprintTargets),
 		UnresponsiveFingerprintTargets: uniqueAssetDomainFingerprintTargets(t.UnresponsiveFingerprintTargets),
 	}
+	result.TargetResults = []assetDomainProbeTargetResult{{
+		Target:                         t.Target,
+		Observations:                   result.Observations,
+		CheckedDomains:                 result.CheckedDomains,
+		ServiceAssets:                  result.ServiceAssets,
+		Fingerprints:                   result.Fingerprints,
+		FingerprintTargets:             result.FingerprintTargets,
+		UnresponsiveFingerprintTargets: result.UnresponsiveFingerprintTargets,
+	}}
+	return result
 }
 
 func (t assetDomainPreflightTarget) hasDomain(domain string) bool {

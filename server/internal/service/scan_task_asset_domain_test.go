@@ -936,20 +936,90 @@ func TestAssetDomainProbeFinishedMessage(t *testing.T) {
 func TestAssetDomainProbeHostCounts(t *testing.T) {
 	t.Parallel()
 
-	alive, notAlive := assetDomainProbeHostCounts(assetDomainLivenessProbeResult{
-		Observations:   []repository.AssetDomainObservation{{Domain: "a.example.com"}, {Domain: "b.example.com"}},
-		CheckedDomains: []string{"a.example.com", "b.example.com", "c.example.com"},
-	})
-	if alive != 2 || notAlive != 1 {
-		t.Fatalf("assetDomainProbeHostCounts() = (%d, %d), want (2, 1)", alive, notAlive)
+	alive := func(target string, domains ...string) assetDomainProbeTargetResult {
+		return assetDomainProbeTargetResult{
+			Target: target, CheckedDomains: domains,
+			Observations: []repository.AssetDomainObservation{{Domain: domains[len(domains)-1], HTTPStatusCode: http.StatusForbidden}},
+		}
 	}
+	down := func(target string, domains ...string) assetDomainProbeTargetResult {
+		return assetDomainProbeTargetResult{Target: target, CheckedDomains: domains}
+	}
+	tests := []struct {
+		name                string
+		targets             []assetDomainProbeTargetResult
+		wantAlive, wantDown int
+	}{
+		{name: "empty"},
+		{name: "https failed http succeeded", targets: []assetDomainProbeTargetResult{alive("a.example.com", "a.example.com:443", "a.example.com:80")}, wantAlive: 1},
+		{name: "both protocols failed", targets: []assetDomainProbeTargetResult{down("a.example.com", "a.example.com:443", "a.example.com:80")}, wantDown: 1},
+		{name: "duplicate observations", targets: []assetDomainProbeTargetResult{{
+			Target: "a.example.com", CheckedDomains: []string{"a.example.com:443", "a.example.com:80"},
+			Observations: []repository.AssetDomainObservation{{Domain: "a.example.com:443"}, {Domain: "a.example.com:80"}, {Domain: "a.example.com:80"}},
+		}}, wantAlive: 1},
+		{name: "duplicate target success wins", targets: []assetDomainProbeTargetResult{
+			down(" A.EXAMPLE.COM ", "a.example.com:443"), alive("a.example.com", "a.example.com:80"), down("a.example.com", "a.example.com:443"),
+		}, wantAlive: 1},
+		{name: "explicit endpoints remain separate", targets: []assetDomainProbeTargetResult{
+			alive("a.example.com:80", "a.example.com:80"), down("a.example.com:443", "a.example.com:443"),
+		}, wantAlive: 1, wantDown: 1},
+		{name: "unprobed and empty targets ignored", targets: []assetDomainProbeTargetResult{
+			{Target: "a.example.com"}, down(" ", "a.example.com:80"),
+		}},
+		{name: "ten targets fifteen endpoints", targets: []assetDomainProbeTargetResult{
+			alive("a.example.com", "a.example.com:443"), alive("b.example.com", "b.example.com:443"),
+			alive("c.example.com", "c.example.com:443"), alive("d.example.com", "d.example.com:443"),
+			alive("e.example.com", "e.example.com:443"), alive("f.example.com", "f.example.com:443", "f.example.com:80"),
+			down("g.example.com", "g.example.com:443", "g.example.com:80"), down("h.example.com", "h.example.com:443", "h.example.com:80"),
+			down("i.example.com", "i.example.com:443", "i.example.com:80"), down("j.example.com", "j.example.com:443", "j.example.com:80"),
+		}, wantAlive: 6, wantDown: 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := assetDomainLivenessProbeResult{TargetResults: tt.targets}
+			for _, target := range tt.targets {
+				result.Observations = append(result.Observations, target.Observations...)
+				result.CheckedDomains = append(result.CheckedDomains, target.CheckedDomains...)
+			}
+			gotAlive, gotDown := assetDomainProbeHostCounts(result)
+			if gotAlive != tt.wantAlive || gotDown != tt.wantDown {
+				t.Fatalf("assetDomainProbeHostCounts() = (%d, %d), want (%d, %d)", gotAlive, gotDown, tt.wantAlive, tt.wantDown)
+			}
+		})
+	}
+}
 
-	alive, notAlive = assetDomainProbeHostCounts(assetDomainLivenessProbeResult{
-		Observations:   []repository.AssetDomainObservation{{Domain: "a.example.com"}, {Domain: "a.example.com"}},
-		CheckedDomains: []string{"a.example.com"},
-	})
-	if alive != 2 || notAlive != 0 {
-		t.Fatalf("assetDomainProbeHostCounts() negative remainder = (%d, %d), want (2, 0)", alive, notAlive)
+func TestAssetDomainProbeHostCountsWithCachedAndFreshResults(t *testing.T) {
+	t.Parallel()
+
+	cache := &assetDomainPreflightCache{Version: 1, Targets: []assetDomainPreflightTarget{
+		{Target: "a.example.com", ProbeDone: true, WappalyzerDone: true,
+			CheckedDomains: []string{"a.example.com:443", "a.example.com:80"},
+			Observations:   []repository.AssetDomainObservation{{Domain: "a.example.com:80", HTTPStatusCode: http.StatusOK}}},
+		{Target: "b.example.com", ProbeDone: true, WappalyzerDone: true,
+			CheckedDomains: []string{"b.example.com:443", "b.example.com:80"}},
+	}}
+	path := filepath.Join(t.TempDir(), "preflight.json")
+	if err := writeAssetDomainPreflightCache(path, cache); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := readAssetDomainPreflightCache(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, pending := restored.splitCompletedTargets([]string{"a.example.com", "b.example.com", "c.example.com"}, dto.CreateScanTaskRequest{AutomaticScan: true})
+	if !reflect.DeepEqual(pending, []string{"c.example.com"}) {
+		t.Fatalf("pending = %v", pending)
+	}
+	if alive, down := assetDomainProbeHostCounts(result); alive != 1 || down != 1 {
+		t.Fatalf("cached counts = (%d, %d), want (1, 1)", alive, down)
+	}
+	result.merge(assetDomainLivenessProbeResult{TargetResults: []assetDomainProbeTargetResult{{
+		Target: "c.example.com", CheckedDomains: []string{"c.example.com:443"},
+		Observations: []repository.AssetDomainObservation{{Domain: "c.example.com:443", HTTPStatusCode: http.StatusOK}},
+	}}})
+	if alive, down := assetDomainProbeHostCounts(result); alive != 2 || down != 1 {
+		t.Fatalf("merged counts = (%d, %d), want (2, 1)", alive, down)
 	}
 }
 
@@ -1833,6 +1903,7 @@ func waitForTestFile(t *testing.T, path string) {
 }
 
 type assetDomainRepositoryStub struct {
+	missingDomainObservations      [][]repository.AssetDomainObservation
 	networkItems                   []repository.AssetDomainNetworkItem
 	syncObservationValues          [][]repository.AssetDomainObservation
 	syncObservationCheckedDomains  [][]string
@@ -1869,7 +1940,8 @@ func (s *assetDomainRepositoryStub) SyncObservations(_ context.Context, observat
 	return nil
 }
 
-func (s *assetDomainRepositoryStub) SyncServiceAssets(_ context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, _ time.Time) error {
+func (s *assetDomainRepositoryStub) SyncServiceAssets(_ context.Context, observations []repository.AssetDomainServiceAssetObservation, checkedDomains []string, missingDomains []repository.AssetDomainObservation, _ time.Time) error {
+	s.missingDomainObservations = append(s.missingDomainObservations, append([]repository.AssetDomainObservation(nil), missingDomains...))
 	s.syncServiceAssetObservations = append(s.syncServiceAssetObservations, append([]repository.AssetDomainServiceAssetObservation(nil), observations...))
 	s.syncServiceAssetCheckedDomains = append(s.syncServiceAssetCheckedDomains, append([]string(nil), checkedDomains...))
 	return nil
