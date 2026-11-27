@@ -1126,7 +1126,7 @@ func interleaveAssetDomainProbeTargets(targets []string) []string {
 
 func assetDomainProbeRateLimit(rateLimit int) int {
 	if rateLimit <= 0 {
-		return 150
+		return defaultScanRateLimit
 	}
 	if uint64(rateLimit) > math.MaxUint32 {
 		return math.MaxUint32
@@ -1601,7 +1601,7 @@ func buildAssetDomainFingerprintTemplateCLIArgs(request dto.CreateScanTaskReques
 	appendBool(request.UseInstalledChrome, "-sc")
 	appendBool(request.ProxyInternal, "-pi")
 
-	appendInt(defaultInt(request.RateLimit, 150), "-rl")
+	appendInt(defaultInt(request.RateLimit, defaultScanRateLimit), "-rl")
 	if duration := defaultInt64(request.RateLimitDuration, 1000); duration > 0 {
 		args = append(args, "-rld", fmt.Sprintf("%dms", duration))
 	}

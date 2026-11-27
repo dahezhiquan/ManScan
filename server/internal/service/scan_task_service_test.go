@@ -111,6 +111,24 @@ func TestBuildScanCLIArgsUsesTaskScopedStoreResponseDir(t *testing.T) {
 	}
 }
 
+func TestScanRateLimitDefaultsAndOverrides(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		limit int
+		want  string
+	}{{0, "500"}, {42, "42"}} {
+		request := dto.CreateScanTaskRequest{RateLimit: tc.limit}
+		mainArgs := buildScanCLIArgs(request, "/tmp/task", "/tmp/targets", "/tmp/resume", "/tmp/responses")
+		fingerprintArgs := buildAssetDomainFingerprintTemplateCLIArgs(request, "/tmp/task", "/tmp/targets")
+		for _, args := range [][]string{mainArgs, fingerprintArgs} {
+			if got := flagValue(args, "-rl"); got != tc.want {
+				t.Fatalf("rate limit %d: -rl = %q, want %q", tc.limit, got, tc.want)
+			}
+		}
+	}
+}
+
 func TestBuildScanCLIArgsIncludesTemplateCapabilities(t *testing.T) {
 	t.Parallel()
 

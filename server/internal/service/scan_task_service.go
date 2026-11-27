@@ -57,6 +57,7 @@ var ErrScanTaskResponseArchiveNotFound = errors.New("请求/响应压缩包不�
 var ErrScanTaskRawLogArchiveNotFound = errors.New("扫描原始日志目录不存在")
 
 const maxBatchScanTaskIDs = 1000
+const defaultScanRateLimit = 500
 
 const (
 	logDirectionForward = "forward"
@@ -247,7 +248,7 @@ func (s *scanTaskService) createFromNormalizedPlan(ctx context.Context, plan *no
 		ResponseReadSize:              request.ResponseReadSize,
 		ResponseSaveSize:              defaultInt(request.ResponseSaveSize, 1048576),
 		TLSImpersonate:                request.TLSImpersonate,
-		RateLimit:                     defaultInt(request.RateLimit, 150),
+		RateLimit:                     defaultInt(request.RateLimit, defaultScanRateLimit),
 		RateLimitDuration:             defaultInt64(request.RateLimitDuration, 1000),
 		BulkSize:                      defaultInt(request.BulkSize, 25),
 		TemplateThreads:               defaultInt(request.TemplateThreads, 25),
@@ -1778,7 +1779,7 @@ func buildScanCLIArgs(request dto.CreateScanTaskRequest, taskDir, targetsFile, r
 	appendInt(request.MaxRedirects, "-mr")
 	appendInt(request.ResponseReadSize, "-rsr")
 	appendInt(defaultInt(request.ResponseSaveSize, 1048576), "-rss")
-	appendInt(defaultInt(request.RateLimit, 150), "-rl")
+	appendInt(defaultInt(request.RateLimit, defaultScanRateLimit), "-rl")
 	if duration := defaultInt64(request.RateLimitDuration, 1000); duration > 0 {
 		args = append(args, "-rld", fmt.Sprintf("%dms", duration))
 	}

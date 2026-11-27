@@ -129,7 +129,7 @@ func TestAssetDomainProbeUsesTaskUserAgent(t *testing.T) {
 
 func TestAssetDomainProbeRateLimitDefaultsAndBounds(t *testing.T) {
 	t.Parallel()
-	if got := assetDomainProbeRateLimit(0); got != 150 {
+	if got := assetDomainProbeRateLimit(0); got != 500 {
 		t.Fatalf("default rate limit = %d", got)
 	}
 	if got := assetDomainProbeRateLimit(int(^uint32(0)) + 1); uint64(got) != uint64(^uint32(0)) {

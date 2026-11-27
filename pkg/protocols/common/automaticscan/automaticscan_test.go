@@ -68,6 +68,12 @@ func TestFilterAutomaticScanExecutionTags(t *testing.T) {
 	require.Equal(t, []string{"python", "waf", "uvicorn"}, tags)
 }
 
+func TestAutomaticScanVulnerabilityTemplateTags(t *testing.T) {
+	require.Equal(t, []string{"nginx", "php", "daily", "daily_clustering"},
+		automaticScanVulnerabilityTemplateTags([]string{"nginx", "php", "daily"}))
+	require.Equal(t, []string{"daily_clustering", "daily"}, automaticScanVulnerabilityTemplateTags(nil))
+}
+
 func TestAutomaticFingerprintTagsMessage(t *testing.T) {
 	require.Equal(t, "nginx, php", automaticFingerprintTagsMessage([]string{"nginx", "php"}))
 	require.Equal(t,

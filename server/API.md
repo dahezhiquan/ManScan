@@ -1033,7 +1033,7 @@ curl "http://127.0.0.1:8686/api/v1/scans?page=1&page_size=10&keyword=demo&status
 | `interactsh_server`   | `string`   | 否  | 当前任务使用的 Interactsh 服务根地址，可填写主机名或 `http://`/`https://` 根地址，对应 `-interactsh-server` |
 | `interactsh_token`    | `string`   | 否  | 当前任务使用的 Interactsh 鉴权 Token，最长 255 个字符，对应 `-interactsh-token`；会随扫描配置获取接口原样返回 |
 | `no_interactsh`       | `bool`     | 否  | 禁用当前任务的 Interactsh/OOB 请求，对应 `-no-interactsh`，不能与上述两个字段同时配置 |
-| `rate_limit`          | `int`      | 否  | 速率限制               |
+| `rate_limit`          | `int`      | 否  | 每速率窗口请求数，未设置或不大于 0 时默认 500；窗口默认 1 秒 |
 | `template_threads`    | `int`      | 否  | 模板并发数              |
 | `timeout`             | `int`      | 否  | 请求超时，单位秒           |
 | `project`             | `bool`     | 否  | 启用 Project 请求缓存，对应 `--project` |
@@ -1202,7 +1202,7 @@ curl -X POST "http://127.0.0.1:8686/api/v1/scans/1/rescan"
       "interactsh_server": "https://oast.example.internal",
       "interactsh_token": "YOUR_TASK_TOKEN",
       "no_interactsh": false,
-      "rate_limit": 150,
+      "rate_limit": 500,
       "template_threads": 25,
       "timeout": 10,
       "headless": false,

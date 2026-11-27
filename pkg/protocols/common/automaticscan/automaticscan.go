@@ -340,12 +340,8 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 		}
 	}
 
-	if len(finalTags) == 0 {
-		gologger.Warning().Msgf("Skipping automatic scan since no vulnerability tags were found on %v\n", input.Input)
-		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
-	}
-
-	finalTemplates, loadStats, err := loadTemplatesWithTagsWithStats(s.ServiceOpts, s.templateDirs, finalTags, false, skipHTTPDetectionTemplates)
+	templateTags := automaticScanVulnerabilityTemplateTags(finalTags)
+	finalTemplates, loadStats, err := loadTemplatesWithTagsWithStats(s.ServiceOpts, s.templateDirs, templateTags, false, skipHTTPDetectionTemplates)
 	if err != nil {
 		gologger.Error().Msgf("%v Error loading templates: %s\n", input.Input, err)
 		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
@@ -362,6 +358,12 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 		usedCachedWappalyzer:       usedCachedWappalyzer,
 		skipHTTPDetectionTemplates: skipHTTPDetectionTemplates,
 	}
+}
+
+func automaticScanVulnerabilityTemplateTags(fingerprintTags []string) []string {
+	tags := append([]string(nil), fingerprintTags...)
+	tags = append(tags, "daily_clustering", "daily")
+	return sliceutil.Dedupe(tags)
 }
 
 func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
