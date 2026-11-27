@@ -168,6 +168,19 @@ func TestNotificationHandlerCRUDValidationAndAdmin(t *testing.T) {
 	if invalid.Code != 400 {
 		t.Fatalf("invalid color accepted: %s", invalid.Body.String())
 	}
+	for _, event := range []string{"scan_started", "high_severity_vulnerability"} {
+		changed := request("PUT", path, fmt.Sprintf("{\"name\":\"event-test\",\"enabled\":false,\"event\":\"%s\",\"style\":\"cat_purple\"}", event), "admin")
+		if changed.Code != 200 {
+			t.Fatalf("event %s rejected: %s", event, changed.Body.String())
+		}
+		var data struct{ Data struct{ Event string } }
+		if err := json.Unmarshal(changed.Body.Bytes(), &data); err != nil {
+			t.Fatal(err)
+		}
+		if data.Data.Event != event {
+			t.Fatalf("event=%s want %s", data.Data.Event, event)
+		}
+	}
 	styles := request("GET", "/notifications/styles", "", "admin")
 	var options struct {
 		Data struct{ Items []struct{ ID, Name string } }
