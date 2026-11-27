@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -86,6 +87,39 @@ func TestScannerDiagnosticsLoggedAndHiddenFromFrontend(t *testing.T) {
 	}
 	if progress.LastMessage != "扫描任务开始执行" {
 		t.Fatalf("persisted progress contains scanner diagnostics: %+v", progress)
+	}
+}
+
+func TestAppendEventConcurrentWithSubscriberClose(t *testing.T) {
+	state, err := NewState(551, "task-551", "subscriber close race", 1, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+
+	for iteration := 0; iteration < 100; iteration++ {
+		_, cancel := state.Subscribe()
+		panicCh := make(chan interface{}, 1)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					panicCh <- recovered
+				}
+			}()
+			for event := 0; event < 100; event++ {
+				state.Append("info", "progress", "running")
+			}
+		}()
+		cancel()
+		wg.Wait()
+		select {
+		case recovered := <-panicCh:
+			t.Fatalf("AppendEvent panicked while subscriber closed: %v", recovered)
+		default:
+		}
 	}
 }
 

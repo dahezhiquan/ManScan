@@ -394,9 +394,11 @@ func (s *State) AppendEvent(event TaskLogEvent) {
 	}
 	s.writeProgressSnapshotLocked()
 
-	subscribers := make([]chan TaskLogEvent, 0, len(s.subscribers))
 	for ch := range s.subscribers {
-		subscribers = append(subscribers, ch)
+		select {
+		case ch <- event:
+		default:
+		}
 	}
 	logger := s.diagnosticLogger
 	s.mu.Unlock()
@@ -406,12 +408,6 @@ func (s *State) AppendEvent(event TaskLogEvent) {
 		logger.Error("scan task scanner error", "task_id", s.ID, "event_type", event.Type, "diagnostic", event.Message)
 	}
 
-	for _, ch := range subscribers {
-		select {
-		case ch <- event:
-		default:
-		}
-	}
 }
 
 func isScannerDiagnostic(eventType string) bool {
@@ -800,16 +796,11 @@ func (s *State) MarkFinished(status string, finishedAt time.Time, message string
 	}
 	s.writeProgressSnapshotLocked()
 
-	subscribers := make([]chan TaskLogEvent, 0, len(s.subscribers))
 	for ch := range s.subscribers {
-		subscribers = append(subscribers, ch)
 		delete(s.subscribers, ch)
-	}
-	s.mu.Unlock()
-
-	for _, ch := range subscribers {
 		close(ch)
 	}
+	s.mu.Unlock()
 }
 
 func (s *State) SyncScannerErrors() int64 {
