@@ -344,6 +344,9 @@ func (e *ClusterExecuter) Execute(ctx *scan.ScanContext) (bool, error) {
 // ExecuteWithResults executes the protocol requests and returns results instead of writing them.
 func (e *ClusterExecuter) ExecuteWithResults(ctx *scan.ScanContext) ([]*output.ResultEvent, error) {
 	scanCtx := scan.NewScanContext(ctx.Context(), ctx.Input)
+	// Preserve the caller's result hooks and collected events for each original
+	// template while keeping this invocation's returned results separate.
+	scanCtx.OnResult = ctx.LogEvent
 	dynamicValues := make(map[string]interface{})
 
 	inputItem := ctx.Input.Clone()

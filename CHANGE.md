@@ -1,3 +1,14 @@
+## 2026-11-27 18:29 修复自动扫描聚类结果传递与指纹回调
+
+- 变动目录：`pkg/protocols/common/automaticscan/`、`pkg/templates/`。
+- 变动文件：
+  - `pkg/protocols/common/automaticscan/util.go`：移除聚类分支中对 `finalTemplates` 的同名局部变量声明，实际返回聚类后的执行列表，并保留聚类前模板用于请求预估。
+  - `pkg/protocols/common/automaticscan/automaticscan.go`：按命中结果中的原始模板 ID 和名称提取指纹标签；保留每个目标聚类前的有效模板列表，用于加载日志和跨目标去重后的插件数量统计。
+  - `pkg/templates/cluster.go`：聚类执行器的 `ExecuteWithResults` 将每个原始模板的命中事件传回调用方扫描上下文，保持指纹回调与结果收集完整。
+  - `pkg/protocols/common/automaticscan/automaticscan_test.go`：模板数量去重测试使用原始模板列表。
+  - `pkg/protocols/common/automaticscan/clustering_test.go`：通过本地 HTTP 服务覆盖开启和关闭聚类时的实际请求次数、原始模板结果、指纹标签到漏洞模板的映射、插件数量以及聚类前后请求预估。
+- 修改目的或影响：自动指纹及后续漏洞扫描实际复用可聚类请求，避免只计算聚类却继续执行原始列表；保留原始检测规则及插件数量语义，不改变 `daily_clustering`、`daily` 默认标签及显式关闭聚类的行为。
+
 ## 2026-11-27 自动映射额外加载 daily 模板
 
 - 变动目录：`pkg/protocols/common/automaticscan/`。

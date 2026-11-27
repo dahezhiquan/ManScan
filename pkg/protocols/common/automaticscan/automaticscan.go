@@ -72,6 +72,7 @@ type Service struct {
 type mappedTarget struct {
 	input                      *contextargs.MetaInput
 	finalTemplates             []*templates.Template
+	preClusterTemplates        []*templates.Template
 	preClusterRequests         int64
 	usedCachedWappalyzer       bool
 	skipHTTPDetectionTemplates bool
@@ -346,14 +347,15 @@ func (s *Service) mapTarget(input *contextargs.MetaInput) mappedTarget {
 		gologger.Error().Msgf("%v Error loading templates: %s\n", input.Input, err)
 		return mappedTarget{input: input, usedCachedWappalyzer: usedCachedWappalyzer, skipHTTPDetectionTemplates: skipHTTPDetectionTemplates}
 	}
-	s.opts.Logger.Info().Msgf("%s 已加载漏洞模版数量：%d", input.Input, len(finalTemplates))
 	preClusterTemplates := loadStats.PreClusterTemplates
 	if skipHTTPDetectionTemplates {
 		preClusterTemplates = loadStats.PreClusterNonHTTPTemplates
 	}
+	s.opts.Logger.Info().Msgf("%s 已加载漏洞模版数量：%d", input.Input, len(preClusterTemplates))
 	return mappedTarget{
 		input:                      input,
 		finalTemplates:             finalTemplates,
+		preClusterTemplates:        preClusterTemplates,
 		preClusterRequests:         getRequestCountForInput(preClusterTemplates, input.Input),
 		usedCachedWappalyzer:       usedCachedWappalyzer,
 		skipHTTPDetectionTemplates: skipHTTPDetectionTemplates,
@@ -409,7 +411,8 @@ func (s *Service) setMappedRequestTotal(targets []mappedTarget) {
 func mappedTemplateCount(targets []mappedTarget) int64 {
 	templateIDs := make(map[string]struct{})
 	for _, target := range targets {
-		for _, template := range target.finalTemplates {
+		// Count original detection rules, not the merged execution units.
+		for _, template := range target.preClusterTemplates {
 			if template == nil {
 				continue
 			}
@@ -598,7 +601,7 @@ func (s *Service) getTagsUsingDetectionTemplates(input *contextargs.MetaInput, s
 							// ex:   tags: js,mssql,detect,network
 
 							// A good trick for this is check if tag is present in template-id
-							if !strings.Contains(template.ID, tag) && !strings.Contains(strings.ToLower(template.Info.Name), tag) {
+							if !strings.Contains(v.TemplateID, tag) && !strings.Contains(strings.ToLower(v.Info.Name), tag) {
 								// unlikely this is relevant
 								continue
 							}

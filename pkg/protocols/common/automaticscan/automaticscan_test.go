@@ -86,11 +86,11 @@ func TestAutomaticFingerprintTagsMessage(t *testing.T) {
 
 func TestMappedTemplateCountDeduplicatesAcrossTargets(t *testing.T) {
 	targets := []mappedTarget{
-		{finalTemplates: []*templates.Template{
+		{preClusterTemplates: []*templates.Template{
 			{ID: "http-misconfig"},
 			{ID: "xss"},
 		}},
-		{finalTemplates: []*templates.Template{
+		{preClusterTemplates: []*templates.Template{
 			{ID: "http-misconfig"},
 			{Path: "/custom/ssrf.yaml"},
 			nil,
